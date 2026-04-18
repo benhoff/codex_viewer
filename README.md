@@ -154,6 +154,11 @@ If you move the repo or want to run under a different user, edit the unit files 
 
 For non-systemd local runs, use `.env` instead.
 
-For development, the wrapper scripts support a reload mode that watches the app source and restarts the child process on changes. The env file currently enables that with `CODEX_VIEWER_DEV_RELOAD=1`.
+For development, the wrapper scripts support separate reload modes for the web server and the agent daemon:
 
-This reload mode watches application files, templates, and built assets. Changes to systemd unit files or the env file itself still require a normal `systemctl restart`.
+- `CODEX_VIEWER_SERVER_DEV_RELOAD=1`: restarts the web server on Python, template, and asset changes
+- `CODEX_VIEWER_AGENT_DEV_RELOAD=1`: restarts the daemon only on agent-relevant Python and env changes
+
+The older `CODEX_VIEWER_DEV_RELOAD` variables still act as a fallback, but the split settings are the intended configuration now.
+
+Changes to systemd unit files still require a normal `systemctl restart`.

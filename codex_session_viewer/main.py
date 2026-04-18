@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import argparse
 import json
-import logging
-import signal
 import sqlite3
-import threading
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,7 +17,6 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import uvicorn
 
 from .agents import fetch_remote_agent_health, upsert_remote_agent_status
 from .config import Settings
@@ -50,7 +45,7 @@ from .projects import (
     query_group_rows,
     upsert_project_override,
 )
-from .remote_sync import RestartRequired, sync_sessions_remote
+from .runtime import export_markdown, get_events
 
 
 def template_filters() -> Jinja2Templates:
@@ -237,55 +232,6 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
     return turns
 
 
-def get_events(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
-    return connection.execute(
-        """
-        SELECT *
-        FROM events
-        WHERE session_id = ?
-        ORDER BY event_index ASC
-        """,
-        (session_id,),
-    ).fetchall()
-
-
-def export_markdown(session: sqlite3.Row, events: list[sqlite3.Row]) -> str:
-    lines = [
-        f"# {session['summary']}",
-        "",
-        f"- Session ID: `{session['id']}`",
-        f"- Timestamp: `{session['session_timestamp'] or session['started_at'] or 'unknown'}`",
-        f"- CWD: `{session['cwd'] or 'unknown'}`",
-        f"- Host: `{session['source_host'] or 'unknown'}`",
-        f"- Model Provider: `{session['model_provider'] or 'unknown'}`",
-        "",
-        "## Timeline",
-        "",
-    ]
-
-    for event in events:
-        lines.append(f"### {event['title']}")
-        lines.append("")
-        lines.append(f"- Kind: `{event['kind']}`")
-        if event["role"]:
-            lines.append(f"- Role: `{event['role']}`")
-        if event["timestamp"]:
-            lines.append(f"- Timestamp: `{event['timestamp']}`")
-        if event["tool_name"]:
-            lines.append(f"- Tool: `{event['tool_name']}`")
-        if event["command_text"]:
-            lines.append(f"- Command: `{event['command_text']}`")
-        if event["call_id"]:
-            lines.append(f"- Call ID: `{event['call_id']}`")
-        lines.append("")
-        lines.append("~~~text")
-        lines.append(event["detail_text"] or event["display_text"] or "")
-        lines.append("~~~")
-        lines.append("")
-
-    return "\n".join(lines).strip() + "\n"
-
-
 async def parse_form_fields(request: Request) -> dict[str, str]:
     body = await request.body()
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
@@ -305,13 +251,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or Settings.from_env(PROJECT_ROOT)
     app_settings.ensure_directories()
     init_db(app_settings.database_path)
+    static_dir = PROJECT_ROOT / "codex_session_viewer" / "static"
+    static_dir.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="Codex Session Viewer", version="0.1.0")
     templates = template_filters()
 
     app.mount(
         "/static",
-        StaticFiles(directory=str(PROJECT_ROOT / "codex_session_viewer" / "static")),
+        StaticFiles(directory=str(static_dir), check_dir=False),
         name="static",
     )
 
@@ -668,132 +616,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-
-
-def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start: bool = False) -> int:
-    logger = logging.getLogger("codex_session_viewer.daemon")
-    stop_event = threading.Event()
-    interval_seconds = max(1, interval_seconds)
-
-    def _request_shutdown(signum: int, _frame: object) -> None:
-        logger.info("Received signal %s, shutting down agent daemon", signum)
-        stop_event.set()
-
-    signal.signal(signal.SIGTERM, _request_shutdown)
-    signal.signal(signal.SIGINT, _request_shutdown)
-
-    if settings.sync_mode == "remote":
-        logger.info(
-            "Starting agent daemon with interval=%ss roots=%s target=%s mode=remote",
-            interval_seconds,
-            ",".join(str(path) for path in settings.session_roots),
-            settings.server_base_url or "unconfigured",
-        )
-    else:
-        init_db(settings.database_path)
-        logger.info(
-            "Starting agent daemon with interval=%ss roots=%s db=%s mode=local",
-            interval_seconds,
-            ",".join(str(path) for path in settings.session_roots),
-            settings.database_path,
-        )
-
-    first_run = True
-    while not stop_event.is_set():
-        force = rebuild_on_start and first_run
-        try:
-            if settings.sync_mode == "remote":
-                stats = sync_sessions_remote(settings, force=force)
-            else:
-                stats = sync_sessions(settings, force=force)
-        except RestartRequired as exc:
-            logger.info("Agent update completed, restarting daemon: %s", exc)
-            return 75
-        logger.info("Sync pass finished: %s", json.dumps(stats, sort_keys=True))
-        first_run = False
-        if stop_event.wait(interval_seconds):
-            break
-
-    logger.info("Agent daemon stopped")
-    return 0
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="View and export Codex sessions")
-    subparsers = parser.add_subparsers(dest="command", required=False)
-
-    serve = subparsers.add_parser("serve", help="Run the FastAPI server")
-    serve.add_argument("--host")
-    serve.add_argument("--port", type=int)
-    serve.add_argument("--no-sync", action="store_true")
-
-    subparsers.add_parser("sync", help="Import rollout files into SQLite")
-    sync = subparsers.choices["sync"]
-    sync.add_argument("--rebuild", action="store_true")
-
-    daemon = subparsers.add_parser("daemon", help="Run the background sync daemon")
-    daemon.add_argument("--interval", type=int)
-    daemon.add_argument("--rebuild-on-start", action="store_true")
-
-    export = subparsers.add_parser("export", help="Export one imported session")
-    export.add_argument("session_id")
-    export.add_argument("--format", choices=["json", "markdown"], default="json")
-
-    return parser.parse_args()
-
-
-def cli() -> int:
-    args = parse_args()
-    settings = Settings.from_env(PROJECT_ROOT)
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-
-    if args.command in {None, "serve"}:
-        if getattr(args, "no_sync", False):
-            settings.sync_on_start = False
-        uvicorn.run(
-            create_app(settings),
-            host=getattr(args, "host", None) or settings.server_host,
-            port=getattr(args, "port", None) or settings.server_port,
-            reload=False,
-            log_level=settings.log_level.lower(),
-        )
-        return 0
-
-    if args.command == "sync":
-        settings.ensure_directories()
-        init_db(settings.database_path)
-        stats = sync_sessions(settings, force=getattr(args, "rebuild", False))
-        print(json.dumps(stats, indent=2))
-        return 0
-
-    if args.command == "daemon":
-        interval_seconds = getattr(args, "interval", None) or settings.sync_interval_seconds
-        return run_sync_daemon(
-            settings,
-            interval_seconds=interval_seconds,
-            rebuild_on_start=getattr(args, "rebuild_on_start", False) or settings.daemon_rebuild_on_start,
-        )
-
-    if args.command == "export":
-        settings.ensure_directories()
-        init_db(settings.database_path)
-        with connect(settings.database_path) as connection:
-            session = fetch_session_with_project(connection, args.session_id)
-            if session is None:
-                raise SystemExit(f"Unknown session: {args.session_id}")
-            events = get_events(connection, args.session_id)
-
-        if args.format == "json":
-            print(json.dumps({"session": dict(session), "events": [dict(row) for row in events]}, indent=2))
-        else:
-            print(export_markdown(session, events))
-        return 0
-
-    raise SystemExit(f"Unsupported command: {args.command}")
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli())
