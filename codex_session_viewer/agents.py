@@ -35,12 +35,23 @@ def upsert_remote_agent_status(
     last_skip_count: int = 0,
     last_fail_count: int = 0,
     last_error: str | None = None,
+    acknowledged_raw_resend_token: str | None = None,
+    last_raw_resend_at: str | None = None,
 ) -> None:
     seen_at = last_seen_at or utc_now_iso()
     row = connection.execute(
-        "SELECT source_host FROM remote_agents WHERE source_host = ?",
+        """
+        SELECT
+            source_host,
+            requested_raw_resend_token,
+            acknowledged_raw_resend_token
+        FROM remote_agents
+        WHERE source_host = ?
+        """,
         (source_host,),
     ).fetchone()
+    existing_ack_token = trimmed(row["acknowledged_raw_resend_token"]) if row is not None else None
+    ack_token = trimmed(acknowledged_raw_resend_token) or existing_ack_token
     values = (
         agent_version,
         sync_api_version,
@@ -55,6 +66,8 @@ def upsert_remote_agent_status(
         last_skip_count,
         last_fail_count,
         trimmed(last_error),
+        ack_token,
+        trimmed(last_raw_resend_at),
     )
     if row is None:
         connection.execute(
@@ -73,8 +86,10 @@ def upsert_remote_agent_status(
                 last_upload_count,
                 last_skip_count,
                 last_fail_count,
-                last_error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_error,
+                acknowledged_raw_resend_token,
+                last_raw_resend_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (source_host, *values),
         )
@@ -96,11 +111,105 @@ def upsert_remote_agent_status(
             last_upload_count = ?,
             last_skip_count = ?,
             last_fail_count = ?,
-            last_error = ?
+            last_error = ?,
+            acknowledged_raw_resend_token = ?,
+            last_raw_resend_at = ?
         WHERE source_host = ?
         """,
         (*values, source_host),
     )
+
+
+def request_remote_raw_resend(
+    connection: sqlite3.Connection,
+    source_host: str,
+    note: str | None = None,
+) -> str:
+    token = utc_now_iso()
+    requested_at = token
+    row = connection.execute(
+        "SELECT source_host FROM remote_agents WHERE source_host = ?",
+        (source_host,),
+    ).fetchone()
+    if row is None:
+        connection.execute(
+            """
+            INSERT INTO remote_agents (
+                source_host,
+                agent_version,
+                sync_api_version,
+                sync_mode,
+                update_state,
+                last_seen_at,
+                last_upload_count,
+                last_skip_count,
+                last_fail_count,
+                requested_raw_resend_token,
+                requested_raw_resend_at,
+                requested_raw_resend_note
+            ) VALUES (?, '', '', '', 'awaiting_contact', ?, 0, 0, 0, ?, ?, ?)
+            """,
+            (
+                source_host,
+                requested_at,
+                token,
+                requested_at,
+                trimmed(note),
+            ),
+        )
+        return token
+
+    connection.execute(
+        """
+        UPDATE remote_agents
+        SET
+            requested_raw_resend_token = ?,
+            requested_raw_resend_at = ?,
+            requested_raw_resend_note = ?
+        WHERE source_host = ?
+        """,
+        (
+            token,
+            requested_at,
+            trimmed(note),
+            source_host,
+        ),
+    )
+    return token
+
+
+def fetch_pending_remote_actions(
+    connection: sqlite3.Connection,
+    source_host: str,
+) -> dict[str, dict[str, str]]:
+    row = connection.execute(
+        """
+        SELECT
+            requested_raw_resend_token,
+            requested_raw_resend_at,
+            requested_raw_resend_note,
+            acknowledged_raw_resend_token
+        FROM remote_agents
+        WHERE source_host = ?
+        """,
+        (source_host,),
+    ).fetchone()
+    if row is None:
+        return {}
+
+    requested_token = trimmed(row["requested_raw_resend_token"])
+    acknowledged_token = trimmed(row["acknowledged_raw_resend_token"])
+    if not requested_token or requested_token == acknowledged_token:
+        return {}
+
+    action: dict[str, str] = {
+        "token": requested_token,
+        "requested_at": trimmed(row["requested_raw_resend_at"]) or "",
+    }
+    note = trimmed(row["requested_raw_resend_note"])
+    if note:
+        action["note"] = note
+    return {"resend_raw": action}
 
 
 def build_remote_agent_health(rows: list[sqlite3.Row], settings: Settings) -> list[dict[str, Any]]:
@@ -113,6 +222,12 @@ def build_remote_agent_health(rows: list[sqlite3.Row], settings: Settings) -> li
 
         api_mismatch = sync_api_version != settings.sync_api_version
         version_mismatch = agent_version != settings.expected_agent_version
+        requested_raw_resend_token = trimmed(row["requested_raw_resend_token"])
+        acknowledged_raw_resend_token = trimmed(row["acknowledged_raw_resend_token"])
+        pending_raw_resend = bool(
+            requested_raw_resend_token
+            and requested_raw_resend_token != acknowledged_raw_resend_token
+        )
         stale = False
         last_seen_at = trimmed(row["last_seen_at"])
         if last_seen_at:
@@ -135,6 +250,10 @@ def build_remote_agent_health(rows: list[sqlite3.Row], settings: Settings) -> li
                 "last_skip_count": int(row["last_skip_count"] or 0),
                 "last_fail_count": int(row["last_fail_count"] or 0),
                 "last_error": trimmed(row["last_error"]),
+                "pending_raw_resend": pending_raw_resend,
+                "requested_raw_resend_at": trimmed(row["requested_raw_resend_at"]),
+                "requested_raw_resend_note": trimmed(row["requested_raw_resend_note"]),
+                "last_raw_resend_at": trimmed(row["last_raw_resend_at"]),
                 "api_mismatch": api_mismatch,
                 "version_mismatch": version_mismatch,
                 "stale": stale,

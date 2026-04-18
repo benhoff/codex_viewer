@@ -63,7 +63,7 @@
   }
 
   .rendered-markdown {
-    @apply min-w-0 text-[0.82rem] leading-6 text-stone-800;
+    @apply min-w-0 text-[0.95rem] leading-7 text-stone-800;
     overflow-wrap: anywhere;
     word-break: break-word;
   }
@@ -110,13 +110,13 @@
   }
 
   .rendered-markdown code {
-    @apply rounded bg-white/80 px-1.5 py-0.5 text-[0.78rem] text-stone-900;
+    @apply rounded bg-white/80 px-1.5 py-0.5 text-[0.88rem] text-stone-900;
     overflow-wrap: anywhere;
     word-break: break-word;
   }
 
   .rendered-markdown pre {
-    @apply max-w-full overflow-x-hidden whitespace-pre-wrap break-words rounded-[1rem] bg-white/90 p-3 text-[0.78rem] leading-6 text-stone-800;
+    @apply max-w-full overflow-x-hidden whitespace-pre-wrap break-words rounded-[1rem] bg-white/90 p-3 text-[0.88rem] leading-7 text-stone-800;
     overflow-wrap: anywhere;
     word-break: break-word;
   }

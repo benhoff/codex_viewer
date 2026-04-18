@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
+
+from .session_status import terminal_turn_summary
 
 
 OVERRIDE_SELECT = """
@@ -29,46 +33,79 @@ def trimmed(value: object) -> str | None:
     return stripped or None
 
 
-def project_detail_href(group_key: str) -> str:
-    key = trimmed(group_key) or ""
-    if key.startswith("github:"):
-        slug = key.split(":", 1)[1]
-        if "/" in slug:
-            org, repo = slug.split("/", 1)
-            return f"/projects/github/{quote(org, safe='')}/{quote(repo, safe='')}"
-    if key.startswith("directory:"):
-        parts = key.split(":", 2)
-        if len(parts) == 3:
-            host = parts[1]
-            directory = parts[2].lstrip("/")
-            return f"/projects/directory/{quote(host, safe='')}/{quote(directory, safe='/')}"
-    return f"/projects/key/{quote(key, safe='')}"
+def slugify_project_segment(value: str | None, fallback: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
+    return normalized or fallback
 
 
-def project_edit_href(group_key: str) -> str:
-    key = trimmed(group_key) or ""
-    return f"/projects/edit?key={quote(key, safe='')}"
+def project_route_segments(project: "GroupedProject") -> tuple[str, str]:
+    if project.inferred_kind == "github":
+        owner = project.organization or "project"
+    else:
+        owner = project.hosts[0] if project.hosts else project.organization or "project"
+
+    project_name = project.repository or project.display_label or "project"
+    return (
+        slugify_project_segment(owner, "project"),
+        slugify_project_segment(project_name, "project"),
+    )
 
 
-def group_key_from_project_path(
-    root: str,
-    project: str,
-    key: str | None = None,
-) -> str:
-    if root == "github":
-        if not key:
-            raise ValueError("Missing repository component for github project route")
-        repo = key
-        return f"github:{project}/{repo}".lower()
-    if root == "directory":
-        if not key:
-            raise ValueError("Missing directory component for directory project route")
-        directory = key
-        directory_path = f"/{directory.lstrip('/')}" if directory else "unknown-directory"
-        return f"directory:{project}:{directory_path}"
-    if root == "key":
-        return project
-    raise ValueError(f"Unsupported project route root: {root}")
+def project_short_key(group_key: str) -> str:
+    key = trimmed(group_key) or "project"
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+
+
+def project_detail_href_for_route(owner_slug: str, project_slug: str) -> str:
+    return f"/projects/{quote(owner_slug, safe='')}/{quote(project_slug, safe='')}"
+
+
+def project_edit_href(detail_href: str) -> str:
+    return f"{detail_href.rstrip('/')}/edit"
+
+
+def assign_project_detail_hrefs(projects: list["GroupedProject"]) -> None:
+    by_route: dict[tuple[str, str], list[GroupedProject]] = {}
+    for project in projects:
+        by_route.setdefault(project_route_segments(project), []).append(project)
+
+    for (owner_slug, project_slug), grouped_projects in by_route.items():
+        if len(grouped_projects) == 1:
+            grouped_projects[0].detail_href = project_detail_href_for_route(owner_slug, project_slug)
+            continue
+
+        for project in grouped_projects:
+            project.detail_href = project_detail_href_for_route(
+                owner_slug,
+                f"{project_slug}--{project_short_key(project.key)}",
+            )
+
+
+def build_project_route_map(projects: list["GroupedProject"]) -> dict[str, str]:
+    route_projects = [
+        GroupedProject(
+            key=project.key,
+            organization=project.organization,
+            repository=project.repository,
+            display_label=project.display_label,
+            remote_url=project.remote_url,
+            inferred_kind=project.inferred_kind,
+            latest_timestamp=project.latest_timestamp,
+            latest_session_id=project.latest_session_id,
+            latest_summary=project.latest_summary,
+            session_count=project.session_count,
+            event_count=project.event_count,
+            host_count=project.host_count,
+            hosts=list(project.hosts),
+            directories=list(project.directories),
+            source_project_count=project.source_project_count,
+            manual_override=project.manual_override,
+            detail_href="",
+        )
+        for project in projects
+    ]
+    assign_project_detail_hrefs(route_projects)
+    return {project.key: project.detail_href for project in route_projects}
 
 
 def joined_session_query(where_clause: str = "", order_clause: str = "") -> str:
@@ -164,6 +201,43 @@ def effective_project_fields(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any
     }
 
 
+def fetch_session_stream_summaries(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+) -> dict[str, str]:
+    ids = sorted({session_id for session_id in session_ids if trimmed(session_id)})
+    if not ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            session_id,
+            event_index,
+            record_type,
+            payload_type,
+            kind,
+            role,
+            display_text
+        FROM events
+        WHERE session_id IN ({placeholders})
+        ORDER BY session_id ASC, event_index ASC
+        """,
+        ids,
+    ).fetchall()
+
+    events_by_session: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        events_by_session.setdefault(row["session_id"], []).append(row)
+
+    return {
+        session_id: summary
+        for session_id, events in events_by_session.items()
+        if (summary := terminal_turn_summary(events)) is not None
+    }
+
+
 def query_group_rows(
     connection: sqlite3.Connection,
     q: str | None = None,
@@ -224,11 +298,15 @@ class GroupedProject:
     detail_href: str
 
 
-def build_grouped_projects(rows: list[sqlite3.Row], limit: int | None = None) -> list[GroupedProject]:
+def _collect_grouped_projects(
+    rows: list[sqlite3.Row],
+    summary_overrides: dict[str, str] | None = None,
+) -> list[GroupedProject]:
     grouped: dict[str, dict[str, Any]] = {}
 
     for row in rows:
         project = effective_project_fields(row)
+        row_summary = (summary_overrides or {}).get(row["id"], row["summary"])
         group = grouped.setdefault(
             project["effective_group_key"],
             {
@@ -240,7 +318,7 @@ def build_grouped_projects(rows: list[sqlite3.Row], limit: int | None = None) ->
                 "inferred_kind": project["effective_project_kind"],
                 "latest_timestamp": row["session_timestamp"] or row["started_at"] or row["imported_at"],
                 "latest_session_id": row["id"],
-                "latest_summary": row["summary"],
+                "latest_summary": row_summary,
                 "session_count": 0,
                 "event_count": 0,
                 "hosts": set(),
@@ -254,7 +332,7 @@ def build_grouped_projects(rows: list[sqlite3.Row], limit: int | None = None) ->
         if timestamp and (group["latest_timestamp"] is None or timestamp > group["latest_timestamp"]):
             group["latest_timestamp"] = timestamp
             group["latest_session_id"] = row["id"]
-            group["latest_summary"] = row["summary"]
+            group["latest_summary"] = row_summary
 
         group["session_count"] += 1
         group["event_count"] += int(row["event_count"] or 0)
@@ -265,7 +343,7 @@ def build_grouped_projects(rows: list[sqlite3.Row], limit: int | None = None) ->
         group["source_project_keys"].add(project["inferred_project_key"])
         group["manual_override"] = group["manual_override"] or project["manual_override"]
 
-    projects = [
+    return [
         GroupedProject(
             key=group["key"],
             organization=group["organization"],
@@ -283,10 +361,28 @@ def build_grouped_projects(rows: list[sqlite3.Row], limit: int | None = None) ->
             directories=sorted(group["directories"]),
             source_project_count=len(group["source_project_keys"]),
             manual_override=group["manual_override"],
-            detail_href=project_detail_href(group["key"]),
+            detail_href="",
         )
         for group in grouped.values()
     ]
+
+
+def build_grouped_projects(
+    rows: list[sqlite3.Row],
+    limit: int | None = None,
+    route_rows: list[sqlite3.Row] | None = None,
+    summary_overrides: dict[str, str] | None = None,
+) -> list[GroupedProject]:
+    projects = _collect_grouped_projects(rows, summary_overrides=summary_overrides)
+    route_projects = projects if route_rows is None else _collect_grouped_projects(route_rows)
+    route_map = build_project_route_map(route_projects)
+    for project in projects:
+        project.detail_href = route_map.get(
+            project.key,
+            project_detail_href_for_route(
+                *project_route_segments(project),
+            ),
+        )
 
     projects.sort(key=lambda item: item.latest_timestamp or "", reverse=True)
     if limit is not None:
@@ -329,14 +425,17 @@ def fetch_group_detail(
     group_key: str,
 ) -> dict[str, Any] | None:
     rows = query_group_rows(connection)
+    summary_overrides = fetch_session_stream_summaries(connection, [row["id"] for row in rows])
     matching_rows = [
         row for row in rows if effective_project_fields(row)["effective_group_key"] == group_key
     ]
     if not matching_rows:
         return None
 
-    grouped_projects = build_grouped_projects(matching_rows)
-    group = grouped_projects[0]
+    all_grouped_projects = build_grouped_projects(rows, summary_overrides=summary_overrides)
+    group = next((item for item in all_grouped_projects if item.key == group_key), None)
+    if group is None:
+        return None
 
     source_groups: list[dict[str, Any]] = []
     by_source: dict[str, dict[str, Any]] = {}
@@ -368,7 +467,7 @@ def fetch_group_detail(
         source_group["sessions"].append(
             {
                 "id": row["id"],
-                "summary": row["summary"],
+                "summary": summary_overrides.get(row["id"], row["summary"]),
                 "session_timestamp": row["session_timestamp"] or row["started_at"] or row["imported_at"],
                 "event_count": row["event_count"],
                 "host": project["source_host"],
@@ -392,6 +491,30 @@ def fetch_group_detail(
         "group": group,
         "source_groups": source_groups,
     }
+
+
+def resolve_project_detail_href(
+    connection: sqlite3.Connection,
+    group_key: str,
+) -> str:
+    groups = build_grouped_projects(query_group_rows(connection))
+    for group in groups:
+        if group.key == group_key:
+            return group.detail_href
+    return f"/groups?key={quote(group_key, safe='')}"
+
+
+def resolve_group_key_from_detail_path(
+    connection: sqlite3.Connection,
+    owner_slug: str,
+    project_slug: str,
+) -> str | None:
+    target = project_detail_href_for_route(owner_slug, project_slug)
+    groups = build_grouped_projects(query_group_rows(connection))
+    for group in groups:
+        if group.detail_href == target:
+            return group.key
+    return None
 
 
 def fetch_group_source_project_keys(

@@ -58,6 +58,11 @@ REMOTE_AGENT_COLUMN_DEFS = {
     "last_skip_count": "INTEGER NOT NULL DEFAULT 0",
     "last_fail_count": "INTEGER NOT NULL DEFAULT 0",
     "last_error": "TEXT",
+    "requested_raw_resend_token": "TEXT",
+    "requested_raw_resend_at": "TEXT",
+    "requested_raw_resend_note": "TEXT",
+    "acknowledged_raw_resend_token": "TEXT",
+    "last_raw_resend_at": "TEXT",
 }
 
 SESSION_COLUMNS = list(SESSION_COLUMN_DEFS.keys())
@@ -175,7 +180,12 @@ CREATE TABLE IF NOT EXISTS remote_agents (
     last_upload_count INTEGER NOT NULL DEFAULT 0,
     last_skip_count INTEGER NOT NULL DEFAULT 0,
     last_fail_count INTEGER NOT NULL DEFAULT 0,
-    last_error TEXT
+    last_error TEXT,
+    requested_raw_resend_token TEXT,
+    requested_raw_resend_at TEXT,
+    requested_raw_resend_note TEXT,
+    acknowledged_raw_resend_token TEXT,
+    last_raw_resend_at TEXT
 );
 """
 

@@ -23,6 +23,9 @@
               {% if remote.last_sync_at %}
                 · last sync <span title="{{ remote.last_sync_at|full_timestamp }}">{{ remote.last_sync_at|humanize_timestamp }}</span>
               {% endif %}
+              {% if remote.last_raw_resend_at %}
+                · last raw resend <span title="{{ remote.last_raw_resend_at|full_timestamp }}">{{ remote.last_raw_resend_at|humanize_timestamp }}</span>
+              {% endif %}
             </p>
           </div>
 
@@ -32,6 +35,9 @@
             {% endif %}
             {% if remote.version_mismatch %}
               <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Version drift</span>
+            {% endif %}
+            {% if remote.pending_raw_resend %}
+              <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-900">Raw resend pending</span>
             {% endif %}
             {% if remote.stale %}
               <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-50">Stale</span>
@@ -59,6 +65,31 @@
             <p class="text-xs uppercase tracking-[0.2em] text-stone-500">Last Pass</p>
             <p class="mt-2 text-lg font-semibold text-stone-900">{{ remote.last_upload_count }} up / {{ remote.last_skip_count }} skip / {{ remote.last_fail_count }} fail</p>
           </div>
+        </div>
+
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="text-sm text-stone-600">
+            {% if remote.pending_raw_resend and remote.requested_raw_resend_at %}
+              Raw resend requested <span title="{{ remote.requested_raw_resend_at|full_timestamp }}">{{ remote.requested_raw_resend_at|humanize_timestamp }}</span>{% if remote.requested_raw_resend_note %} · {{ remote.requested_raw_resend_note }}{% endif %}.
+            {% elif remote.last_raw_resend_at %}
+              Last raw resend completed <span title="{{ remote.last_raw_resend_at|full_timestamp }}">{{ remote.last_raw_resend_at|humanize_timestamp }}</span>.
+            {% else %}
+              No raw resend has been requested yet.
+            {% endif %}
+          </div>
+
+          <form action="/remotes/actions" method="post">
+            <input type="hidden" name="source_host" value="{{ remote.source_host }}" />
+            <input type="hidden" name="return_to" value="{{ return_to }}" />
+            <button
+              type="submit"
+              name="action"
+              value="request_raw_resend"
+              class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white"
+            >
+              Request raw resend
+            </button>
+          </form>
         </div>
 
         {% if remote.update_message or remote.last_error %}

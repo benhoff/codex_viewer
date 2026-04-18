@@ -72,7 +72,9 @@ def json_request(
         raise RemoteSyncError(f"Remote sync request failed: {exc.reason}") from exc
 
 
-def fetch_remote_manifest(settings: Settings) -> tuple[dict[str, dict[str, object]], set[str], dict[str, Any]]:
+def fetch_remote_manifest(
+    settings: Settings,
+) -> tuple[dict[str, dict[str, object]], set[str], dict[str, Any], dict[str, Any]]:
     payload = json_request(
         settings,
         "GET",
@@ -96,7 +98,10 @@ def fetch_remote_manifest(settings: Settings) -> tuple[dict[str, dict[str, objec
     server = payload.get("server")
     if not isinstance(server, dict):
         server = {}
-    return by_path, ignored_keys, server
+    actions = payload.get("actions")
+    if not isinstance(actions, dict):
+        actions = {}
+    return by_path, ignored_keys, server, actions
 
 
 def remote_entry_needs_upload(
@@ -135,6 +140,10 @@ def upload_session(settings: Settings, payload: dict[str, object]) -> dict[str, 
     return json_request(settings, "POST", "/api/sync/session", payload)
 
 
+def upload_raw_session(settings: Settings, payload: dict[str, object]) -> dict[str, Any]:
+    return json_request(settings, "POST", "/api/sync/session-raw", payload)
+
+
 def send_remote_heartbeat(
     settings: Settings,
     *,
@@ -144,6 +153,8 @@ def send_remote_heartbeat(
     stats: dict[str, int] | None = None,
     last_error: str | None = None,
     last_sync_at: str | None = None,
+    acknowledged_raw_resend_token: str | None = None,
+    last_raw_resend_at: str | None = None,
 ) -> None:
     payload = {
         "source_host": settings.source_host,
@@ -159,6 +170,8 @@ def send_remote_heartbeat(
         "last_skip_count": int((stats or {}).get("skipped", 0)),
         "last_fail_count": int((stats or {}).get("failed", 0)),
         "last_error": last_error,
+        "acknowledged_raw_resend_token": acknowledged_raw_resend_token,
+        "last_raw_resend_at": last_raw_resend_at,
     }
     json_request(settings, "POST", "/api/sync/heartbeat", payload)
 
@@ -209,13 +222,37 @@ def run_local_update_command(settings: Settings) -> str:
     return output or "Update command completed successfully"
 
 
+def build_raw_upload_payload(
+    settings: Settings,
+    *,
+    source_root: Path,
+    path: Path,
+    file_size: int,
+    file_mtime_ns: int,
+) -> dict[str, object]:
+    return {
+        "source_host": settings.source_host,
+        "source_root": str(source_root),
+        "source_path": str(path),
+        "file_size": file_size,
+        "file_mtime_ns": file_mtime_ns,
+        "raw_jsonl": path.read_text(encoding="utf-8"),
+    }
+
+
 def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, int]:
     logger = logging.getLogger("codex_session_viewer.remote_sync")
-    manifest, ignored_keys, server_meta = ({}, set(), {}) if force else fetch_remote_manifest(settings)
+    manifest, ignored_keys, server_meta, actions = ({}, set(), {}, {}) if force else fetch_remote_manifest(settings)
     uploaded = 0
     skipped = 0
     failed = 0
     compatibility = evaluate_server_compatibility(settings, server_meta)
+    resend_raw_action = actions.get("resend_raw") if isinstance(actions.get("resend_raw"), dict) else None
+    raw_resend_token = (
+        str(resend_raw_action.get("token") or "").strip()
+        if resend_raw_action is not None
+        else ""
+    )
 
     if compatibility["needs_update"] and settings.agent_update_command:
         try:
@@ -259,23 +296,40 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
 
     for source_root, path in iter_session_files(settings.session_roots):
         stat = path.stat()
-        needs_upload, reason = remote_entry_needs_upload(
-            manifest.get(str(path)),
-            source_path=path,
-            file_size=stat.st_size,
-            file_mtime_ns=stat.st_mtime_ns,
-            force=force,
-        )
-        if not needs_upload:
-            skipped += 1
-            continue
-
-        parsed = parse_session_file(path, source_root, settings.source_host)
-        if parsed.inferred_project_key in ignored_keys:
-            skipped += 1
-            continue
         try:
-            response = upload_session(settings, parsed_session_to_payload(parsed))
+            if raw_resend_token:
+                parsed = parse_session_file(path, source_root, settings.source_host)
+                if parsed.inferred_project_key in ignored_keys:
+                    skipped += 1
+                    continue
+                response = upload_raw_session(
+                    settings,
+                    build_raw_upload_payload(
+                        settings,
+                        source_root=source_root,
+                        path=path,
+                        file_size=stat.st_size,
+                        file_mtime_ns=stat.st_mtime_ns,
+                    ),
+                )
+                reason = f"raw-resend:{raw_resend_token}"
+            else:
+                needs_upload, reason = remote_entry_needs_upload(
+                    manifest.get(str(path)),
+                    source_path=path,
+                    file_size=stat.st_size,
+                    file_mtime_ns=stat.st_mtime_ns,
+                    force=force,
+                )
+                if not needs_upload:
+                    skipped += 1
+                    continue
+
+                parsed = parse_session_file(path, source_root, settings.source_host)
+                if parsed.inferred_project_key in ignored_keys:
+                    skipped += 1
+                    continue
+                response = upload_session(settings, parsed_session_to_payload(parsed))
             if response.get("status") == "ignored":
                 skipped += 1
                 continue
@@ -295,5 +349,7 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
         stats=stats,
         last_error="Upload failures occurred" if failed else None,
         last_sync_at=sync_completed_at,
+        acknowledged_raw_resend_token=raw_resend_token if raw_resend_token and failed == 0 else None,
+        last_raw_resend_at=sync_completed_at if raw_resend_token and failed == 0 else None,
     )
     return stats

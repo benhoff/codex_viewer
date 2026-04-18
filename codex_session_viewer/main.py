@@ -19,12 +19,18 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .agents import fetch_remote_agent_health, upsert_remote_agent_status
+from .agents import (
+    fetch_pending_remote_actions,
+    fetch_remote_agent_health,
+    request_remote_raw_resend,
+    upsert_remote_agent_status,
+)
 from .config import Settings
 from .db import connect, init_db
 from .git_utils import normalize_github_remote
 from .importer import (
     fetch_host_sync_manifest,
+    parse_session_text,
     parsed_session_from_payload,
     shorten,
     strip_codex_wrappers,
@@ -39,16 +45,25 @@ from .projects import (
     effective_project_fields,
     fetch_group_detail,
     fetch_group_source_project_keys,
+    fetch_session_stream_summaries,
     fetch_session_with_project,
-    group_key_from_project_path,
     ignored_project_keys,
     project_edit_href,
     ignore_project_keys,
-    project_detail_href,
     query_group_rows,
+    resolve_group_key_from_detail_path,
+    resolve_project_detail_href,
     upsert_project_override,
 )
 from .runtime import export_markdown, get_events
+from .session_status import (
+    abort_display_label,
+    is_assistant_final_message,
+    is_assistant_update,
+    is_turn_aborted,
+    is_user_turn_start,
+    terminal_turn_summary,
+)
 
 
 STATIC_ROOT = PROJECT_ROOT / "codex_session_viewer" / "static"
@@ -147,23 +162,8 @@ def styled_event(event: sqlite3.Row | dict[str, object]) -> dict[str, object]:
     return row
 
 
-def is_user_turn_start(event: sqlite3.Row | dict[str, object], prefer_event_msg: bool) -> bool:
-    row = event
-    if row["kind"] != "message" or row["role"] != "user":
-        return False
-    if prefer_event_msg:
-        return row["record_type"] == "event_msg" and row["payload_type"] == "user_message"
-    return row["record_type"] == "response_item" and row["payload_type"] == "message"
-
-
 def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
-    prefer_event_msg = any(
-        row["kind"] == "message"
-        and row["role"] == "user"
-        and row["record_type"] == "event_msg"
-        and row["payload_type"] == "user_message"
-        for row in events
-    )
+    prefer_event_msg = any(is_user_turn_start(row, True) for row in events)
 
     turns: list[dict[str, object]] = []
     current: dict[str, object] | None = None
@@ -171,17 +171,33 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
     def finalize_turn(turn: dict[str, object]) -> dict[str, object]:
         assistant_messages: list[sqlite3.Row] = turn["assistant_messages"]  # type: ignore[assignment]
         assistant_updates: list[sqlite3.Row] = turn["assistant_updates"]  # type: ignore[assignment]
+        aborted_events: list[sqlite3.Row] = turn["aborted_events"]  # type: ignore[assignment]
         all_events: list[sqlite3.Row] = turn["events"]  # type: ignore[assignment]
 
         final_response_event = assistant_messages[-1] if assistant_messages else None
-        if final_response_event is None and assistant_updates:
-            final_response_event = assistant_updates[-1]
+        update_event = assistant_updates[-1] if assistant_updates else None
+        abort_event = aborted_events[-1] if aborted_events else None
+
+        response_state = "missing"
+        response_label = "Turn Outcome"
 
         response_text = ""
         response_timestamp = None
         if final_response_event is not None:
             response_text = str(final_response_event["display_text"] or "")
             response_timestamp = final_response_event["timestamp"]
+            response_state = "final"
+            response_label = "Final Response"
+        elif abort_event is not None:
+            response_text = abort_display_label(abort_event)
+            response_timestamp = abort_event["timestamp"]
+            response_state = "canceled"
+        elif update_event is not None:
+            final_response_event = update_event
+            response_text = str(update_event["display_text"] or "")
+            response_timestamp = update_event["timestamp"]
+            response_state = "update"
+            response_label = "Latest Update"
 
         prompt_text = str(turn["prompt_text"])
         prompt_excerpt = shorten(prompt_text, 220)
@@ -195,6 +211,11 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
             if (
                 final_response_event is not None
                 and event["event_index"] == final_response_event["event_index"]
+            ):
+                skip = True
+            if (
+                abort_event is not None
+                and event["event_index"] == abort_event["event_index"]
             ):
                 skip = True
             if (
@@ -215,6 +236,8 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
             "response_text": response_text,
             "response_excerpt": response_excerpt,
             "response_timestamp": response_timestamp,
+            "response_state": response_state,
+            "response_label": response_label,
             "detail_events": detail_events,
             "work_count": len(detail_events),
         }
@@ -233,6 +256,7 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
                 "events": [],
                 "assistant_messages": [],
                 "assistant_updates": [],
+                "aborted_events": [],
             }
             continue
 
@@ -240,11 +264,12 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
             continue
 
         current["events"].append(event)
-        if event["kind"] == "message" and event["role"] == "assistant":
-            if event["record_type"] == "response_item" and event["payload_type"] == "message":
-                current["assistant_messages"].append(event)
-            elif event["record_type"] == "event_msg" and event["payload_type"] == "agent_message":
-                current["assistant_updates"].append(event)
+        if is_assistant_final_message(event):
+            current["assistant_messages"].append(event)
+        elif is_assistant_update(event):
+            current["assistant_updates"].append(event)
+        elif is_turn_aborted(event):
+            current["aborted_events"].append(event)
 
     if current is not None:
         turns.append(finalize_turn(current))
@@ -298,8 +323,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         host: str | None = Query(default=None),
     ) -> HTMLResponse:
         with connect(app_settings.database_path) as connection:
+            all_rows = query_group_rows(connection)
             rows = query_group_rows(connection, q=q, host=host)
-            repo_groups = build_grouped_projects(rows)
+            summary_overrides = fetch_session_stream_summaries(connection, [row["id"] for row in rows])
+            repo_groups = build_grouped_projects(
+                rows,
+                route_rows=all_rows,
+                summary_overrides=summary_overrides,
+            )
             groups = repo_groups[: app_settings.page_size]
             stats = dashboard_stats(rows)
         return templates.TemplateResponse(
@@ -330,8 +361,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return RedirectResponse(url="/", status_code=303)
 
         with connect(app_settings.database_path) as connection:
+            all_rows = query_group_rows(connection)
             rows = query_group_rows(connection, q=search_query)
-            groups = build_grouped_projects(rows)
+            summary_overrides = fetch_session_stream_summaries(connection, [row["id"] for row in rows])
+            groups = build_grouped_projects(
+                rows,
+                route_rows=all_rows,
+                summary_overrides=summary_overrides,
+            )
 
         return templates.TemplateResponse(
             request,
@@ -357,8 +394,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "request": request,
                 "settings": app_settings,
                 "remotes": remotes,
+                "return_to": str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""),
+                "search_query": "",
             },
         )
+
+    @app.post("/remotes/actions")
+    async def remote_action(request: Request) -> RedirectResponse:
+        fields = await parse_form_fields(request)
+        source_host = fields.get("source_host", "").strip()
+        action = fields.get("action", "").strip()
+        if not source_host:
+            raise HTTPException(status_code=400, detail="Missing remote host")
+        if action != "request_raw_resend":
+            raise HTTPException(status_code=400, detail="Unsupported remote action")
+
+        with connect(app_settings.database_path) as connection:
+            request_remote_raw_resend(
+                connection,
+                source_host,
+                note="Requested from remotes view",
+            )
+
+        return RedirectResponse(url=fields.get("return_to") or "/remotes", status_code=303)
 
     @app.post("/refresh")
     def refresh() -> RedirectResponse:
@@ -367,7 +425,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/groups", response_class=HTMLResponse)
     def group_detail_legacy(key: str = Query(...)) -> RedirectResponse:
-        return RedirectResponse(url=project_detail_href(key), status_code=308)
+        with connect(app_settings.database_path) as connection:
+            detail_href = resolve_project_detail_href(connection, key)
+        return RedirectResponse(url=detail_href, status_code=308)
 
     def render_group_detail(request: Request, key: str) -> HTMLResponse:
         with connect(app_settings.database_path) as connection:
@@ -381,7 +441,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "request": request,
                 "group": detail["group"],
                 "source_groups": detail["source_groups"],
-                "edit_href": project_edit_href(detail["group"]["key"]),
+                "edit_href": project_edit_href(detail["group"].detail_href),
             },
         )
 
@@ -402,19 +462,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/projects/key/{key:path}", response_class=HTMLResponse)
-    def group_detail_by_key(request: Request, key: str) -> HTMLResponse:
-        return render_group_detail(request, key)
+    def group_detail_by_key(key: str) -> RedirectResponse:
+        with connect(app_settings.database_path) as connection:
+            detail_href = resolve_project_detail_href(connection, key)
+        return RedirectResponse(url=detail_href, status_code=308)
 
     @app.get("/projects/edit", response_class=HTMLResponse)
-    def group_edit_view(request: Request, key: str = Query(...)) -> HTMLResponse:
-        return render_group_edit(request, key)
+    def group_edit_query_legacy(key: str = Query(...)) -> RedirectResponse:
+        with connect(app_settings.database_path) as connection:
+            detail_href = resolve_project_detail_href(connection, key)
+        return RedirectResponse(url=project_edit_href(detail_href), status_code=308)
 
-    @app.get("/projects/{root}/{project}/{key:path}", response_class=HTMLResponse)
-    def group_detail(request: Request, root: str, project: str, key: str) -> HTMLResponse:
-        try:
-            group_key = group_key_from_project_path(root, project, key)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    @app.get("/projects/github/{org}/{repo:path}", response_class=HTMLResponse)
+    def group_detail_github_legacy(org: str, repo: str) -> RedirectResponse:
+        with connect(app_settings.database_path) as connection:
+            group_key = f"github:{org}/{repo}".lower()
+            detail_href = resolve_project_detail_href(connection, group_key)
+        return RedirectResponse(url=detail_href, status_code=308)
+
+    @app.get("/projects/directory/{host}/{directory:path}", response_class=HTMLResponse)
+    def group_detail_directory_legacy(host: str, directory: str) -> RedirectResponse:
+        with connect(app_settings.database_path) as connection:
+            group_key = f"directory:{host}:/{directory.lstrip('/')}"
+            detail_href = resolve_project_detail_href(connection, group_key)
+        return RedirectResponse(url=detail_href, status_code=308)
+
+    @app.get("/projects/{owner_slug}/{project_slug}/edit", response_class=HTMLResponse)
+    def group_edit(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
+        with connect(app_settings.database_path) as connection:
+            group_key = resolve_group_key_from_detail_path(connection, owner_slug, project_slug)
+        if group_key is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        return render_group_edit(request, group_key)
+
+    @app.get("/projects/{owner_slug}/{project_slug}", response_class=HTMLResponse)
+    def group_detail(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
+        with connect(app_settings.database_path) as connection:
+            group_key = resolve_group_key_from_detail_path(connection, owner_slug, project_slug)
+        if group_key is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
         return render_group_detail(request, group_key)
 
     @app.post("/overrides")
@@ -465,9 +551,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     override_remote_url=normalized["canonical_url"],
                     override_display_label=f"{normalized['org']}/{normalized['repo']}",
                 )
+            detail_href = resolve_project_detail_href(connection, normalized["group_key"])
 
         return RedirectResponse(
-            url=project_detail_href(normalized["group_key"]),
+            url=detail_href,
             status_code=303,
         )
 
@@ -498,8 +585,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
             events = get_events(connection, session_id)
+            group_href = resolve_project_detail_href(connection, effective_project_fields(session)["effective_group_key"])
         project = effective_project_fields(session)
         turns = build_turns(events)
+        session_display_summary = terminal_turn_summary(events) or str(session["summary"])
 
         secondary_events = [
             styled_event(event)
@@ -513,8 +602,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             context={
                 "request": request,
                 "session": session,
+                "session_display_summary": session_display_summary,
                 "project": project,
-                "group_href": project_detail_href(project["effective_group_key"]),
+                "group_href": group_href,
                 "turns": turns,
                 "secondary_events": secondary_events,
                 "source_roots": [str(path) for path in app_settings.session_roots],
@@ -573,11 +663,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with connect(app_settings.database_path) as connection:
             sessions = fetch_host_sync_manifest(connection, host)
             ignored_keys = sorted(ignored_project_keys(connection))
+            actions = fetch_pending_remote_actions(connection, host)
         return JSONResponse(
             {
                 "host": host,
                 "sessions": sessions,
                 "ignored_project_keys": ignored_keys,
+                "actions": actions,
                 "server": {
                     "app_version": app_settings.app_version,
                     "sync_api_version": app_settings.sync_api_version,
@@ -617,6 +709,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 last_skip_count=int(payload.get("last_skip_count") or 0),
                 last_fail_count=int(payload.get("last_fail_count") or 0),
                 last_error=str(payload.get("last_error") or "") or None,
+                acknowledged_raw_resend_token=str(payload.get("acknowledged_raw_resend_token") or "") or None,
+                last_raw_resend_at=str(payload.get("last_raw_resend_at") or "") or None,
             )
         return JSONResponse({"status": "ok", "source_host": source_host})
 
@@ -649,6 +743,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {
                 "status": "ok",
+                "session_id": parsed.session_id,
+                "source_host": parsed.source_host,
+                "event_count": parsed.event_count,
+                "content_sha256": parsed.content_sha256,
+            }
+        )
+
+    @app.post("/api/sync/session-raw")
+    async def sync_session_raw(request: Request) -> JSONResponse:
+        require_sync_api_auth(request, app_settings)
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Raw sync payload must be an object")
+
+        source_host = str(payload.get("source_host") or "").strip()
+        source_root = str(payload.get("source_root") or "").strip()
+        source_path = str(payload.get("source_path") or "").strip()
+        raw_jsonl = payload.get("raw_jsonl")
+        file_size = payload.get("file_size")
+        file_mtime_ns = payload.get("file_mtime_ns")
+        header_host = request.headers.get("x-codex-viewer-host", "").strip()
+
+        if not source_host or not source_root or not source_path or not isinstance(raw_jsonl, str):
+            raise HTTPException(status_code=400, detail="Raw sync payload is missing required fields")
+        if header_host and header_host != source_host:
+            raise HTTPException(status_code=400, detail="Source host header did not match raw sync payload")
+        if not isinstance(file_size, int) or not isinstance(file_mtime_ns, int):
+            raise HTTPException(status_code=400, detail="Raw sync payload is missing file metadata")
+
+        try:
+            parsed = parse_session_text(
+                raw_jsonl,
+                Path(source_path),
+                Path(source_root),
+                source_host,
+                file_size=file_size,
+                file_mtime_ns=file_mtime_ns,
+            )
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        with connect(app_settings.database_path) as connection:
+            if parsed.inferred_project_key in ignored_project_keys(connection):
+                return JSONResponse(
+                    {
+                        "status": "ignored",
+                        "session_id": parsed.session_id,
+                        "source_host": parsed.source_host,
+                        "inferred_project_key": parsed.inferred_project_key,
+                    }
+                )
+            upsert_parsed_session(connection, parsed)
+
+        return JSONResponse(
+            {
+                "status": "ok",
+                "mode": "raw",
                 "session_id": parsed.session_id,
                 "source_host": parsed.source_host,
                 "event_count": parsed.event_count,

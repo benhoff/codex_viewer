@@ -300,8 +300,15 @@ def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEv
     )
 
 
-def parse_session_file(source_path: Path, source_root: Path, source_host: str) -> ParsedSession:
-    stat = source_path.stat()
+def _parse_session_lines(
+    lines: Iterable[str],
+    source_path: Path,
+    source_root: Path,
+    source_host: str,
+    *,
+    file_size: int,
+    file_mtime_ns: int,
+) -> ParsedSession:
     imported_at = utc_now_iso()
     content_hash = hashlib.sha256()
     raw_meta: dict[str, object] | None = None
@@ -313,33 +320,34 @@ def parse_session_file(source_path: Path, source_root: Path, source_host: str) -
     search_parts: list[str] = []
     warning: str | None = None
 
-    with source_path.open("r", encoding="utf-8") as handle:
-        for idx, line in enumerate(handle):
-            content_hash.update(line.encode("utf-8"))
-            record = json.loads(line)
-            record_type = record.get("type")
-            if record_type == "session_meta" and isinstance(record.get("payload"), dict):
-                raw_meta = record["payload"]
-                started_at = raw_meta.get("timestamp") if isinstance(raw_meta.get("timestamp"), str) else started_at
-                continue
+    for idx, line in enumerate(lines):
+        if not line.strip():
+            continue
+        content_hash.update(line.encode("utf-8"))
+        record = json.loads(line)
+        record_type = record.get("type")
+        if record_type == "session_meta" and isinstance(record.get("payload"), dict):
+            raw_meta = record["payload"]
+            started_at = raw_meta.get("timestamp") if isinstance(raw_meta.get("timestamp"), str) else started_at
+            continue
 
-            normalized = normalize_event(record, idx)
-            if normalized is None:
-                continue
+        normalized = normalize_event(record, idx)
+        if normalized is None:
+            continue
 
-            ended_at = normalized.timestamp or ended_at
-            events.append(normalized)
+        ended_at = normalized.timestamp or ended_at
+        events.append(normalized)
 
-            if normalized.kind == "message" and normalized.role == "user" and normalized.display_text:
-                cleaned_prompt = strip_codex_wrappers(normalized.display_text)
-                if normalized.record_type == "event_msg":
-                    user_messages.append(cleaned_prompt or normalized.display_text)
-                elif cleaned_prompt and not user_messages:
-                    user_messages.append(cleaned_prompt)
-            if normalized.kind == "message" and normalized.role == "assistant" and normalized.display_text:
-                assistant_messages.append(normalized.display_text)
-            if normalized.display_text:
-                search_parts.append(normalized.display_text)
+        if normalized.kind == "message" and normalized.role == "user" and normalized.display_text:
+            cleaned_prompt = strip_codex_wrappers(normalized.display_text)
+            if normalized.record_type == "event_msg":
+                user_messages.append(cleaned_prompt or normalized.display_text)
+            elif cleaned_prompt and not user_messages:
+                user_messages.append(cleaned_prompt)
+        if normalized.kind == "message" and normalized.role == "assistant" and normalized.display_text:
+            assistant_messages.append(normalized.display_text)
+        if normalized.display_text:
+            search_parts.append(normalized.display_text)
 
     if raw_meta is None:
         raise ValueError(f"{source_path} does not contain a session_meta record")
@@ -389,8 +397,8 @@ def parse_session_file(source_path: Path, source_root: Path, source_host: str) -
         session_id=session_id,
         source_path=source_path,
         source_root=source_root,
-        file_size=stat.st_size,
-        file_mtime_ns=stat.st_mtime_ns,
+        file_size=file_size,
+        file_mtime_ns=file_mtime_ns,
         content_sha256=content_hash.hexdigest(),
         session_timestamp=session_timestamp,
         started_at=started_at,
@@ -423,6 +431,39 @@ def parse_session_file(source_path: Path, source_root: Path, source_host: str) -
         imported_at=imported_at,
         updated_at=imported_at,
         events=events,
+    )
+
+
+def parse_session_file(source_path: Path, source_root: Path, source_host: str) -> ParsedSession:
+    stat = source_path.stat()
+    with source_path.open("r", encoding="utf-8") as handle:
+        return _parse_session_lines(
+            handle,
+            source_path,
+            source_root,
+            source_host,
+            file_size=stat.st_size,
+            file_mtime_ns=stat.st_mtime_ns,
+        )
+
+
+def parse_session_text(
+    raw_jsonl: str,
+    source_path: Path,
+    source_root: Path,
+    source_host: str,
+    *,
+    file_size: int | None = None,
+    file_mtime_ns: int | None = None,
+) -> ParsedSession:
+    content_bytes = raw_jsonl.encode("utf-8")
+    return _parse_session_lines(
+        raw_jsonl.splitlines(keepends=True),
+        source_path,
+        source_root,
+        source_host,
+        file_size=file_size if file_size is not None else len(content_bytes),
+        file_mtime_ns=file_mtime_ns if file_mtime_ns is not None else 0,
     )
 
 
