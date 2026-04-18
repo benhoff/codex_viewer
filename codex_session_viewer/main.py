@@ -19,6 +19,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .api_tokens import (
+    create_api_token,
+    delete_api_token,
+    find_active_api_token,
+    list_api_tokens,
+    revoke_api_token,
+    touch_api_token_usage,
+)
 from .agents import (
     fetch_pending_remote_actions,
     fetch_remote_agent_health,
@@ -157,9 +165,33 @@ def kind_style(kind: str, role: str | None = None) -> str:
     return "stone"
 
 
+def event_preview_text(text: str, *, max_lines: int = 8, max_chars: int = 700) -> tuple[str, bool]:
+    normalized = text.strip()
+    if not normalized:
+        return "", False
+
+    lines = normalized.splitlines()
+    truncated_by_lines = len(lines) > max_lines
+    preview_lines = lines[:max_lines]
+    preview = "\n".join(preview_lines).rstrip()
+
+    truncated_by_chars = len(preview) > max_chars
+    if truncated_by_chars:
+        preview = preview[: max_chars - 1].rstrip()
+
+    truncated = truncated_by_lines or truncated_by_chars or len(normalized) > len(preview)
+    if truncated:
+        preview = preview.rstrip() + "\n…"
+    return preview, truncated
+
+
 def styled_event(event: sqlite3.Row | dict[str, object]) -> dict[str, object]:
     row = dict(event)
     row["style"] = kind_style(str(row.get("kind") or ""), row.get("role"))
+    display_text = str(row.get("display_text") or "")
+    preview_text, preview_truncated = event_preview_text(display_text)
+    row["preview_text"] = preview_text
+    row["preview_truncated"] = preview_truncated
     return row
 
 
@@ -310,13 +342,26 @@ async def parse_form_fields(request: Request) -> dict[str, str]:
     return {key: values[-1] if values else "" for key, values in parsed.items()}
 
 
+def request_bearer_token(request: Request) -> str | None:
+    authorization = request.headers.get("authorization", "").strip()
+    if not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization[7:].strip()
+    return token or None
+
+
 def require_sync_api_auth(request: Request, settings: Settings) -> None:
-    expected = settings.sync_api_token
-    if not expected:
-        return
-    authorization = request.headers.get("authorization", "")
-    if authorization != f"Bearer {expected}":
+    bearer_token = request_bearer_token(request)
+    if not bearer_token:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    source_host = request.headers.get("x-codex-viewer-host", "").strip() or None
+    with connect(settings.database_path) as connection:
+        token_row = find_active_api_token(connection, bearer_token or "")
+        if token_row is not None:
+            with write_transaction(connection):
+                touch_api_token_usage(connection, token_row["id"], source_host)
+            return
+    raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -425,6 +470,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "search_query": "",
             },
         )
+
+    def render_settings_page(
+        request: Request,
+        *,
+        created_token: dict[str, str] | None = None,
+    ) -> HTMLResponse:
+        with connect(app_settings.database_path) as connection:
+            api_tokens = list_api_tokens(connection)
+        return templates.TemplateResponse(
+            request,
+            name="settings.html",
+            context={
+                "request": request,
+                "settings": app_settings,
+                "api_tokens": api_tokens,
+                "created_token": created_token,
+                "search_query": "",
+            },
+        )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_page(request: Request) -> HTMLResponse:
+        return render_settings_page(request)
+
+    @app.post("/settings/api-tokens")
+    async def create_settings_api_token(request: Request) -> HTMLResponse:
+        fields = await parse_form_fields(request)
+        label = fields.get("label", "")
+        with connect(app_settings.database_path) as connection:
+            with write_transaction(connection):
+                created_token = create_api_token(connection, label)
+        return render_settings_page(request, created_token=created_token)
+
+    @app.post("/settings/api-tokens/actions")
+    async def settings_api_token_action(request: Request) -> RedirectResponse:
+        fields = await parse_form_fields(request)
+        token_id = fields.get("token_id", "").strip()
+        action = fields.get("action", "").strip()
+        if not token_id:
+            raise HTTPException(status_code=400, detail="Missing token id")
+        if action not in {"revoke", "delete"}:
+            raise HTTPException(status_code=400, detail="Unsupported token action")
+
+        with connect(app_settings.database_path) as connection:
+            with write_transaction(connection):
+                if action == "revoke":
+                    revoke_api_token(connection, token_id)
+                else:
+                    delete_api_token(connection, token_id)
+
+        return RedirectResponse(url="/settings", status_code=303)
 
     @app.post("/remotes/actions")
     async def remote_action(request: Request) -> RedirectResponse:

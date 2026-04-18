@@ -189,6 +189,17 @@ CREATE TABLE IF NOT EXISTS remote_agents (
     acknowledged_raw_resend_token TEXT,
     last_raw_resend_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    token_prefix TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    last_used_source_host TEXT,
+    revoked_at TEXT
+);
 """
 
 INDEX_SQL = """
@@ -208,6 +219,12 @@ ON events(session_id, kind);
 
 CREATE INDEX IF NOT EXISTS idx_remote_agents_last_seen
 ON remote_agents(last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_created_at
+ON api_tokens(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_last_used_at
+ON api_tokens(last_used_at DESC);
 """
 
 WRITE_LOCK = threading.RLock()

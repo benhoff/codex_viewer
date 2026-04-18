@@ -107,7 +107,7 @@ Shell or systemd-provided environment variables still win over values from these
 - `CODEX_VIEWER_HOST`: bind address for the FastAPI server
 - `CODEX_VIEWER_PORT`: bind port for the FastAPI server
 - `CODEX_VIEWER_SERVER_URL`: base URL for remote daemon uploads, such as `http://viewer.internal:8000`
-- `CODEX_VIEWER_SYNC_API_TOKEN`: bearer token shared by the daemon and the server for `/api/sync/*`
+- `CODEX_VIEWER_SYNC_API_TOKEN`: bearer token the daemon sends for `/api/sync/*`; create this token from the server's `/settings` page
 - `CODEX_VIEWER_APP_VERSION`: version string the current server or agent reports for itself
 - `CODEX_VIEWER_API_VERSION`: sync protocol version shared by the server and agents
 - `CODEX_VIEWER_EXPECTED_AGENT_VERSION`: version the server expects agents to be running
@@ -124,6 +124,7 @@ Shell or systemd-provided environment variables still win over values from these
 
 - The server owns SQLite and exposes `/api/sync/manifest` and `/api/sync/session`.
 - The server also exposes `/api/sync/heartbeat` and a `/remotes` UI page for agent health.
+- The server validates sync requests only against managed tokens created in `/settings`.
 - Each daemon asks the server for the manifest for its own `CODEX_VIEWER_SOURCE_HOST`.
 - The manifest includes `source_path`, file size, file mtime, content hash, declared `event_count`, actual `stored_event_count`, the current server app version, the expected agent version, and the sync API version.
 - The daemon re-uploads a full session when the server is missing it, when file metadata changed, when the server is missing the stored hash, or when `stored_event_count` does not match `event_count`.

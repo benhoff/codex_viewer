@@ -140,11 +140,26 @@
                           <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500">{{ event.timestamp }}</p>
                         {% endif %}
                       </div>
-                      <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-[1rem] bg-white/90 p-3 text-[0.95rem] leading-6 text-stone-800 sm:leading-7">{{ event.display_text }}</pre>
-                      {% if event.detail_text and event.detail_text != event.display_text %}
+                      {% if event.preview_text %}
+                        <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-[1rem] bg-white/90 p-3 text-[0.95rem] leading-6 text-stone-800 sm:leading-7">{{ event.preview_text }}</pre>
+                      {% endif %}
+                      {% if event.preview_truncated or (event.detail_text and event.detail_text != event.display_text) %}
                         <details class="mt-3 rounded-[1rem] bg-white/70 p-3 text-sm text-stone-700">
-                          <summary class="cursor-pointer font-semibold text-stone-700">Show full detail</summary>
-                          <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.92rem] leading-6 text-stone-700 sm:leading-7">{{ event.detail_text }}</pre>
+                          <summary class="cursor-pointer font-semibold text-stone-700">
+                            {% if event.preview_truncated and event.detail_text and event.detail_text != event.display_text %}
+                              Show full event and detail
+                            {% elif event.preview_truncated %}
+                              Show full event
+                            {% else %}
+                              Show full detail
+                            {% endif %}
+                          </summary>
+                          {% if event.preview_truncated %}
+                            <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.92rem] leading-6 text-stone-700 sm:leading-7">{{ event.display_text }}</pre>
+                          {% endif %}
+                          {% if event.detail_text and event.detail_text != event.display_text %}
+                            <pre class="{% if event.preview_truncated %}mt-4{% else %}mt-3{% endif %} overflow-x-auto whitespace-pre-wrap break-words text-[0.92rem] leading-6 text-stone-700 sm:leading-7">{{ event.detail_text }}</pre>
+                          {% endif %}
                         </details>
                       {% endif %}
                     </article>
