@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}Codex Session Viewer{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}" />
+    <link rel="stylesheet" href="{{ static_asset_url(request, 'app.css') }}" />
   </head>
   <body class="min-h-screen bg-[#f5efe4] text-stone-900 antialiased selection:bg-amber-300/70">
     <div class="fixed inset-0 -z-10 overflow-hidden">

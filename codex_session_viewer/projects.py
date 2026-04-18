@@ -45,6 +45,11 @@ def project_detail_href(group_key: str) -> str:
     return f"/projects/key/{quote(key, safe='')}"
 
 
+def project_edit_href(group_key: str) -> str:
+    key = trimmed(group_key) or ""
+    return f"/projects/edit?key={quote(key, safe='')}"
+
+
 def group_key_from_project_path(
     root: str,
     project: str,

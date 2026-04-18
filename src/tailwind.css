@@ -61,4 +61,67 @@
   .project-pane-scroll.is-scrollable.is-scrolled::-webkit-scrollbar-thumb {
     background: rgba(120, 113, 108, 0.45);
   }
+
+  .rendered-markdown {
+    @apply min-w-0 text-[0.82rem] leading-6 text-stone-800;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .rendered-markdown > * + * {
+    @apply mt-3;
+  }
+
+  .rendered-markdown h1 {
+    @apply text-2xl font-semibold text-stone-900;
+  }
+
+  .rendered-markdown h2 {
+    @apply text-xl font-semibold text-stone-900;
+  }
+
+  .rendered-markdown h3,
+  .rendered-markdown h4,
+  .rendered-markdown h5,
+  .rendered-markdown h6 {
+    @apply text-lg font-semibold text-stone-900;
+  }
+
+  .rendered-markdown ul {
+    @apply list-disc pl-5;
+  }
+
+  .rendered-markdown ol {
+    @apply list-decimal pl-5;
+  }
+
+  .rendered-markdown li + li {
+    @apply mt-1;
+  }
+
+  .rendered-markdown a {
+    @apply text-sky-900 underline decoration-sky-300 underline-offset-2;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .rendered-markdown blockquote {
+    @apply border-l-4 border-emerald-200 pl-4 text-stone-700;
+  }
+
+  .rendered-markdown code {
+    @apply rounded bg-white/80 px-1.5 py-0.5 text-[0.78rem] text-stone-900;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .rendered-markdown pre {
+    @apply max-w-full overflow-x-hidden whitespace-pre-wrap break-words rounded-[1rem] bg-white/90 p-3 text-[0.78rem] leading-6 text-stone-800;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .rendered-markdown pre code {
+    @apply whitespace-pre-wrap break-words bg-transparent p-0 text-inherit;
+  }
 }

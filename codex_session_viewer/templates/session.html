@@ -138,7 +138,11 @@
                     <span class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-emerald-700">{{ turn.response_timestamp }}</span>
                   {% endif %}
                 </div>
-                <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.82rem] leading-6 text-stone-800">{{ turn.response_text or "No assistant response captured." }}</pre>
+                {% if turn.response_text %}
+                  <div class="rendered-markdown mt-3">{{ turn.response_text|render_markdown }}</div>
+                {% else %}
+                  <p class="mt-3 text-[0.82rem] leading-6 text-stone-800">No assistant response captured.</p>
+                {% endif %}
               </div>
 
               {% if turn.detail_events %}

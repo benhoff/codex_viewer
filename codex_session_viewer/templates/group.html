@@ -4,9 +4,14 @@
 
 {% block content %}
   <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-    <a href="/" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
-      Back to projects
-    </a>
+    <div class="flex flex-wrap gap-3">
+      <a href="/" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+        Back to projects
+      </a>
+      <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
+        Edit
+      </a>
+    </div>
   </div>
 
   <section class="mb-8 rounded-[2rem] border border-stone-900/10 bg-white/75 p-6 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur">
@@ -37,29 +42,6 @@
         <p class="mt-2 text-2xl font-semibold text-stone-900">{{ group.source_project_count }}</p>
       </div>
     </div>
-
-    <form action="/projects/github-url" method="post" class="mt-6 grid gap-3 rounded-[1.6rem] border border-stone-900/10 bg-stone-50/80 p-4 sm:grid-cols-[1fr,auto] sm:items-end">
-      <input type="hidden" name="group_key" value="{{ group.key }}" />
-      <label class="block">
-        <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">GitHub URL</span>
-        <input
-          type="text"
-          name="github_url"
-          value="{{ group.remote_url or '' }}"
-          placeholder="https://github.com/org/repo or git@github.com:org/repo.git"
-          class="w-full rounded-2xl border border-stone-900/10 bg-white px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-        />
-      </label>
-      <button
-        type="submit"
-        class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
-      >
-        Set GitHub URL
-      </button>
-      <p class="sm:col-span-2 text-sm leading-6 text-stone-600">
-        HTTPS and SSH GitHub remotes normalize to the same project identity. Setting this applies the canonical GitHub org/repo to every source in this project group.
-      </p>
-    </form>
   </section>
 
   <section class="grid gap-6 xl:grid-cols-[1.3fr,1fr]">
@@ -79,86 +61,6 @@
               {{ source_group.sessions|length }} sessions
             </span>
           </div>
-
-          <form action="/overrides" method="post" class="mt-6 grid gap-3">
-            <input type="hidden" name="match_project_key" value="{{ source_group.inferred_project_key }}" />
-            <input type="hidden" name="return_to" value="{{ group.detail_href }}" />
-
-            <label class="block">
-              <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Manual Group Key</span>
-              <input
-                type="text"
-                name="override_group_key"
-                value="{{ source_group.override_group_key }}"
-                placeholder="same key on multiple sources merges them"
-                class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-              />
-            </label>
-
-            <div class="grid gap-3 sm:grid-cols-2">
-              <label class="block">
-                <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Organization</span>
-                <input
-                  type="text"
-                  name="override_organization"
-                  value="{{ source_group.override_organization }}"
-                  placeholder="{{ source_group.organization }}"
-                  class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-                />
-              </label>
-              <label class="block">
-                <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Repository</span>
-                <input
-                  type="text"
-                  name="override_repository"
-                  value="{{ source_group.override_repository }}"
-                  placeholder="{{ source_group.repository }}"
-                  class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-                />
-              </label>
-            </div>
-
-            <label class="block">
-              <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Remote URL Override</span>
-              <input
-                type="text"
-                name="override_remote_url"
-                value="{{ source_group.override_remote_url }}"
-                placeholder="{{ source_group.github_remote_url or source_group.cwd }}"
-                class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-              />
-            </label>
-
-            <label class="block">
-              <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Display Label</span>
-              <input
-                type="text"
-                name="override_display_label"
-                value="{{ source_group.override_display_label }}"
-                placeholder="{{ source_group.display_label }}"
-                class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-              />
-            </label>
-
-            <div class="flex flex-wrap gap-3">
-              <button
-                type="submit"
-                name="action"
-                value="save"
-                class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
-              >
-                Save Override
-              </button>
-              <button
-                type="submit"
-                name="action"
-                value="clear"
-                class="rounded-2xl border border-stone-900/10 bg-white px-5 py-3 text-sm font-semibold text-stone-700 transition hover:border-stone-900/20 hover:bg-stone-50"
-              >
-                Clear Override
-              </button>
-            </div>
-          </form>
 
           <div class="mt-6 space-y-3">
             {% for session in source_group.sessions %}

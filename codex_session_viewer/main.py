@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+from functools import lru_cache
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs, quote, urlencode
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -30,6 +31,7 @@ from .importer import (
     sync_sessions,
     upsert_parsed_session,
 )
+from .markdown_utils import render_markdown
 from .projects import (
     build_grouped_projects,
     dashboard_stats,
@@ -40,6 +42,7 @@ from .projects import (
     fetch_session_with_project,
     group_key_from_project_path,
     ignored_project_keys,
+    project_edit_href,
     ignore_project_keys,
     project_detail_href,
     query_group_rows,
@@ -48,12 +51,29 @@ from .projects import (
 from .runtime import export_markdown, get_events
 
 
+STATIC_ROOT = PROJECT_ROOT / "codex_session_viewer" / "static"
+
+
+@lru_cache(maxsize=128)
+def asset_version_key(path: str, app_version: str) -> str:
+    candidate = STATIC_ROOT / path.lstrip("/")
+    if candidate.exists():
+        return f"{app_version}-{candidate.stat().st_mtime_ns}"
+    return app_version
+
+
+def versioned_static_url(request: Request, path: str, app_version: str) -> str:
+    base_url = str(request.url_for("static", path=path))
+    return f"{base_url}?{urlencode({'v': asset_version_key(path, app_version)})}"
+
+
 def template_filters() -> Jinja2Templates:
     templates = Jinja2Templates(directory=str(PROJECT_ROOT / "codex_session_viewer" / "templates"))
     env = templates.env
     env.filters["shorten"] = shorten
     env.filters["humanize_timestamp"] = humanize_timestamp
     env.filters["full_timestamp"] = full_timestamp
+    env.filters["render_markdown"] = render_markdown
     return templates
 
 
@@ -251,11 +271,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or Settings.from_env(PROJECT_ROOT)
     app_settings.ensure_directories()
     init_db(app_settings.database_path)
-    static_dir = PROJECT_ROOT / "codex_session_viewer" / "static"
+    static_dir = STATIC_ROOT
     static_dir.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="Codex Session Viewer", version="0.1.0")
     templates = template_filters()
+    templates.env.globals["static_asset_url"] = (
+        lambda request, path: versioned_static_url(request, path, app_settings.app_version)
+    )
 
     app.mount(
         "/static",
@@ -358,12 +381,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "request": request,
                 "group": detail["group"],
                 "source_groups": detail["source_groups"],
+                "edit_href": project_edit_href(detail["group"]["key"]),
+            },
+        )
+
+    def render_group_edit(request: Request, key: str) -> HTMLResponse:
+        with connect(app_settings.database_path) as connection:
+            detail = fetch_group_detail(connection, key)
+            if detail is None:
+                raise HTTPException(status_code=404, detail="Project group not found")
+        return templates.TemplateResponse(
+            request,
+            name="group_edit.html",
+            context={
+                "request": request,
+                "group": detail["group"],
+                "source_groups": detail["source_groups"],
+                "edit_return_to": str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""),
             },
         )
 
     @app.get("/projects/key/{key:path}", response_class=HTMLResponse)
     def group_detail_by_key(request: Request, key: str) -> HTMLResponse:
         return render_group_detail(request, key)
+
+    @app.get("/projects/edit", response_class=HTMLResponse)
+    def group_edit_view(request: Request, key: str = Query(...)) -> HTMLResponse:
+        return render_group_edit(request, key)
 
     @app.get("/projects/{root}/{project}/{key:path}", response_class=HTMLResponse)
     def group_detail(request: Request, root: str, project: str, key: str) -> HTMLResponse:
