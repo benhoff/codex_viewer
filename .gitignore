@@ -1,6 +1,10 @@
 .deps/
 .venv/
 .codex
+.env
+.env.local
+.env.development
+.env.development.local
 __pycache__/
 *.pyc
 node_modules/

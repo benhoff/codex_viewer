@@ -24,5 +24,41 @@
   details > summary::-webkit-details-marker {
     display: none;
   }
-}
 
+  .project-pane-scroll {
+    scrollbar-width: none;
+    scrollbar-gutter: stable;
+  }
+
+  .project-pane-scroll::-webkit-scrollbar {
+    width: 0;
+  }
+
+  .project-pane-scroll.is-scrollable:hover,
+  .project-pane-scroll.is-scrollable:focus-within,
+  .project-pane-scroll.is-scrollable.is-scrolled {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(120, 113, 108, 0.55) transparent;
+  }
+
+  .project-pane-scroll.is-scrollable:hover::-webkit-scrollbar,
+  .project-pane-scroll.is-scrollable:focus-within::-webkit-scrollbar,
+  .project-pane-scroll.is-scrollable.is-scrolled::-webkit-scrollbar {
+    width: 0.55rem;
+  }
+
+  .project-pane-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .project-pane-scroll::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: transparent;
+  }
+
+  .project-pane-scroll.is-scrollable:hover::-webkit-scrollbar-thumb,
+  .project-pane-scroll.is-scrollable:focus-within::-webkit-scrollbar-thumb,
+  .project-pane-scroll.is-scrollable.is-scrolled::-webkit-scrollbar-thumb {
+    background: rgba(120, 113, 108, 0.45);
+  }
+}

@@ -4,18 +4,16 @@ set -euo pipefail
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+source "${PROJECT_ROOT}/scripts/lib-env.sh"
+codex_load_env "${PROJECT_ROOT}"
+
 export PYTHONPATH="${PROJECT_ROOT}/.deps${PYTHONPATH:+:${PYTHONPATH}}"
 
 cmd=(
   /usr/bin/python3
   -m codex_session_viewer
   daemon
-  --interval "${CODEX_VIEWER_SYNC_INTERVAL:-30}"
 )
-
-if [[ "${CODEX_VIEWER_DAEMON_REBUILD_ON_START:-0}" == "1" ]]; then
-  cmd+=(--rebuild-on-start)
-fi
 
 if [[ "${CODEX_VIEWER_DEV_RELOAD:-0}" == "1" ]]; then
   # Development mode restarts the daemon when shared app or project config changes.

@@ -61,6 +61,26 @@ REMOTE_AGENT_COLUMN_DEFS = {
 }
 
 SESSION_COLUMNS = list(SESSION_COLUMN_DEFS.keys())
+EVENT_COLUMNS = [
+    "id",
+    "session_id",
+    "event_index",
+    "timestamp",
+    "record_type",
+    "payload_type",
+    "kind",
+    "role",
+    "title",
+    "display_text",
+    "detail_text",
+    "tool_name",
+    "call_id",
+    "command_text",
+    "exit_code",
+    "record_json",
+]
+LEGACY_SESSION_TABLES = ("sessions_legacy", "__sessions_rebuild__")
+LEGACY_EVENT_TABLES = ("events_legacy", "__events_rebuild__")
 
 SESSION_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -103,7 +123,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 """
 
-OTHER_TABLES_SQL = """
+EVENT_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -122,7 +142,9 @@ CREATE TABLE IF NOT EXISTS events (
     exit_code INTEGER,
     record_json TEXT NOT NULL
 );
+"""
 
+OTHER_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS project_overrides (
     match_project_key TEXT PRIMARY KEY,
     override_group_key TEXT,
@@ -215,7 +237,8 @@ def sessions_need_rebuild(connection: sqlite3.Connection) -> bool:
 
 def rebuild_sessions_table(connection: sqlite3.Connection) -> None:
     existing_columns = table_columns(connection, "sessions")
-    connection.execute("ALTER TABLE sessions RENAME TO sessions_legacy")
+    connection.execute("DROP TABLE IF EXISTS __sessions_rebuild__")
+    connection.execute("ALTER TABLE sessions RENAME TO __sessions_rebuild__")
     connection.execute(SESSION_TABLE_SQL)
 
     insert_columns = ", ".join(SESSION_COLUMNS)
@@ -224,9 +247,74 @@ def rebuild_sessions_table(connection: sqlite3.Connection) -> None:
         for column in SESSION_COLUMNS
     )
     connection.execute(
-        f"INSERT INTO sessions ({insert_columns}) SELECT {select_columns} FROM sessions_legacy"
+        f"INSERT INTO sessions ({insert_columns}) SELECT {select_columns} FROM __sessions_rebuild__"
     )
-    connection.execute("DROP TABLE sessions_legacy")
+    connection.execute("DROP TABLE __sessions_rebuild__")
+
+
+def events_need_rebuild(connection: sqlite3.Connection) -> bool:
+    if not table_exists(connection, "events"):
+        return False
+    foreign_keys = connection.execute("PRAGMA foreign_key_list(events)").fetchall()
+    if not foreign_keys:
+        return True
+    session_foreign_keys = [row for row in foreign_keys if row["from"] == "session_id"]
+    if not session_foreign_keys:
+        return True
+    return any(row["table"] != "sessions" or row["to"] != "id" for row in session_foreign_keys)
+
+
+def rebuild_events_table(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "events"):
+        connection.execute(EVENT_TABLE_SQL)
+        return
+
+    existing_columns = table_columns(connection, "events")
+    connection.execute("DROP TABLE IF EXISTS __events_rebuild__")
+    connection.execute("ALTER TABLE events RENAME TO __events_rebuild__")
+    connection.execute(EVENT_TABLE_SQL)
+
+    insert_columns = ", ".join(EVENT_COLUMNS)
+    select_columns = ", ".join(
+        column if column in existing_columns else f"{default_event_select(column)} AS {column}"
+        for column in EVENT_COLUMNS
+    )
+    connection.execute(
+        f"INSERT INTO events ({insert_columns}) SELECT {select_columns} FROM __events_rebuild__"
+    )
+    connection.execute("DROP TABLE __events_rebuild__")
+
+
+def recover_legacy_sessions(connection: sqlite3.Connection) -> None:
+    insert_columns = ", ".join(SESSION_COLUMNS)
+    for table_name in LEGACY_SESSION_TABLES:
+        if not table_exists(connection, table_name):
+            continue
+        existing_columns = table_columns(connection, table_name)
+        select_columns = ", ".join(
+            column if column in existing_columns else f"{default_select(column)} AS {column}"
+            for column in SESSION_COLUMNS
+        )
+        connection.execute(
+            f"INSERT OR IGNORE INTO sessions ({insert_columns}) SELECT {select_columns} FROM {table_name}"
+        )
+        connection.execute(f"DROP TABLE {table_name}")
+
+
+def recover_legacy_events(connection: sqlite3.Connection) -> None:
+    insert_columns = ", ".join(EVENT_COLUMNS)
+    for table_name in LEGACY_EVENT_TABLES:
+        if not table_exists(connection, table_name):
+            continue
+        existing_columns = table_columns(connection, table_name)
+        select_columns = ", ".join(
+            column if column in existing_columns else f"{default_event_select(column)} AS {column}"
+            for column in EVENT_COLUMNS
+        )
+        connection.execute(
+            f"INSERT OR IGNORE INTO events ({insert_columns}) SELECT {select_columns} FROM {table_name}"
+        )
+        connection.execute(f"DROP TABLE {table_name}")
 
 
 def default_select(column_name: str) -> str:
@@ -255,6 +343,22 @@ def default_select(column_name: str) -> str:
     return "NULL"
 
 
+def default_event_select(column_name: str) -> str:
+    if column_name in {
+        "session_id",
+        "record_type",
+        "kind",
+        "title",
+        "display_text",
+        "detail_text",
+        "record_json",
+    }:
+        return "''"
+    if column_name == "event_index":
+        return "0"
+    return "NULL"
+
+
 def ensure_session_columns(connection: sqlite3.Connection) -> None:
     session_columns = table_columns(connection, "sessions")
     for column_name, column_def in SESSION_COLUMN_DEFS.items():
@@ -279,10 +383,17 @@ def init_db(database_path: Path) -> None:
     with connect(database_path) as connection:
         connection.execute("PRAGMA foreign_keys = OFF")
         connection.execute(SESSION_TABLE_SQL)
+        connection.execute(EVENT_TABLE_SQL)
         connection.executescript(OTHER_TABLES_SQL)
         ensure_session_columns(connection)
         ensure_remote_agent_columns(connection)
+        recover_legacy_sessions(connection)
+        recover_legacy_events(connection)
+        rebuilt_sessions = False
         if sessions_need_rebuild(connection):
             rebuild_sessions_table(connection)
+            rebuilt_sessions = True
+        if rebuilt_sessions or events_need_rebuild(connection):
+            rebuild_events_table(connection)
         connection.executescript(INDEX_SQL)
         connection.execute("PRAGMA foreign_keys = ON")

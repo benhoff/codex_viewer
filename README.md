@@ -16,6 +16,18 @@ A small FastAPI app that centralizes Codex rollout sessions into a server-owned 
 
 ## Run
 
+0. Create a local env file if you are not using systemd:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   For a development-oriented setup, you can start from:
+
+   ```bash
+   cp .env.development.example .env
+   ```
+
 1. Install Python dependencies into the repo:
 
    ```bash
@@ -65,9 +77,28 @@ PYTHONPATH=.deps python3 -m codex_session_viewer daemon --interval 30
 
 In `remote` mode, the daemon does not write rollout data into local SQLite. It asks the server for a per-host manifest and uploads any missing or mismatched sessions back to the server.
 
+The wrapper scripts also load local env files now, so you can run:
+
+```bash
+./scripts/start-server.sh
+./scripts/start-agent-daemon.sh
+```
+
+without relying on the systemd env file.
+
 ## Configuration
 
+Env files are loaded in this order:
+
+- `.env`
+- `.env.<CODEX_VIEWER_ENV>`
+- `.env.local`
+- `.env.<CODEX_VIEWER_ENV>.local`
+
+Shell or systemd-provided environment variables still win over values from these files.
+
 - `CODEX_SESSION_ROOTS`: comma-separated list of rollout roots to index
+- `CODEX_VIEWER_ENV`: optional env profile name such as `development`
 - `CODEX_VIEWER_SYNC_MODE`: `local` for direct SQLite import, `remote` for daemon-to-server upload
 - `CODEX_VIEWER_DB`: override the SQLite database path
 - `CODEX_VIEWER_DATA_DIR`: override the data directory
@@ -120,6 +151,8 @@ sudo systemctl enable --now codex-session-agent.service codex-session-viewer.ser
 ```
 
 If you move the repo or want to run under a different user, edit the unit files and [deploy/systemd/codex-session-viewer.env](/home/wulfuser/codex_viewer/deploy/systemd/codex-session-viewer.env) first.
+
+For non-systemd local runs, use `.env` instead.
 
 For development, the wrapper scripts support a reload mode that watches the app source and restarts the child process on changes. The env file currently enables that with `CODEX_VIEWER_DEV_RELOAD=1`.
 

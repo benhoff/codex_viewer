@@ -100,9 +100,6 @@ def humanize_timestamp(value: str | None) -> str:
     if days < 7:
         return f"{days} days ago"
     local = parsed.astimezone()
-    now_local = now.astimezone()
-    if local.year == now_local.year:
-        return local.strftime("%b %d").replace(" 0", " ")
     return local.strftime("%b %d, %Y").replace(" 0", " ")
 
 
@@ -343,11 +340,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "groups": groups,
                 "repo_groups": sorted(
                     repo_groups,
-                    key=lambda item: (
-                        (item.organization or "").lower(),
-                        (item.repository or "").lower(),
-                        (item.display_label or "").lower(),
-                    ),
+                    key=lambda item: (item.display_label or "").lower(),
                 ),
                 "group_total": len(repo_groups),
                 "stats": stats,
@@ -355,6 +348,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "host": host or "",
                 "has_filters": bool((q or "").strip() or (host or "").strip()),
                 "return_to": str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""),
+                "search_query": "",
+            },
+        )
+
+    @app.get("/search", response_class=HTMLResponse)
+    def search_results(request: Request, q: str | None = Query(default=None)) -> HTMLResponse:
+        search_query = (q or "").strip()
+        if not search_query:
+            return RedirectResponse(url="/", status_code=303)
+
+        with connect(app_settings.database_path) as connection:
+            rows = query_group_rows(connection, q=search_query)
+            groups = build_grouped_projects(rows)
+
+        return templates.TemplateResponse(
+            request,
+            name="search.html",
+            context={
+                "request": request,
+                "groups": groups,
+                "group_total": len(groups),
+                "q": search_query,
+                "return_to": str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""),
+                "search_query": search_query,
             },
         )
 
@@ -757,7 +774,7 @@ def cli() -> int:
         return run_sync_daemon(
             settings,
             interval_seconds=interval_seconds,
-            rebuild_on_start=getattr(args, "rebuild_on_start", False),
+            rebuild_on_start=getattr(args, "rebuild_on_start", False) or settings.daemon_rebuild_on_start,
         )
 
     if args.command == "export":
