@@ -1,0 +1,8 @@
+.deps/
+.venv/
+.codex
+__pycache__/
+*.pyc
+node_modules/
+data/
+codex_session_viewer/static/app.css

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Codex Session Viewer{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}" />
+  </head>
+  <body class="min-h-screen bg-[#f5efe4] text-stone-900 antialiased selection:bg-amber-300/70">
+    <div class="fixed inset-0 -z-10 overflow-hidden">
+      <div class="absolute left-[-10%] top-[-15%] h-80 w-80 rounded-full bg-rose-300/40 blur-3xl"></div>
+      <div class="absolute right-[-5%] top-[10%] h-96 w-96 rounded-full bg-sky-300/30 blur-3xl"></div>
+      <div class="absolute bottom-[-10%] left-[20%] h-96 w-96 rounded-full bg-amber-200/60 blur-3xl"></div>
+      <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.85),_transparent_45%),linear-gradient(180deg,_rgba(255,255,255,0.82),_rgba(245,239,228,0.96))]"></div>
+    </div>
+
+    <main class="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-6 sm:px-6 lg:px-8">
+      <nav class="mb-6 flex flex-wrap items-center gap-3">
+        <a href="/" class="rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">Projects</a>
+        <a href="/remotes" class="rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">Remotes</a>
+      </nav>
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

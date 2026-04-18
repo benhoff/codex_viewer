@@ -1,0 +1,12 @@
+{
+  "name": "codex-session-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/tailwind.css -o ./codex_session_viewer/static/app.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}
+

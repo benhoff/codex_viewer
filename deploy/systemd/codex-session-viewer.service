@@ -1,0 +1,19 @@
+[Unit]
+Description=Codex Session Viewer FastAPI server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wulfuser
+Group=wulfuser
+WorkingDirectory=/home/wulfuser/codex_viewer
+EnvironmentFile=-/home/wulfuser/codex_viewer/deploy/systemd/codex-session-viewer.env
+ExecStart=/home/wulfuser/codex_viewer/scripts/start-server.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+
