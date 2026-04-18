@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import logging
 import signal
@@ -7,8 +8,6 @@ import sqlite3
 import threading
 
 from .config import Settings
-from .db import init_db
-from .importer import sync_sessions
 from .remote_sync import RestartRequired, sync_sessions_remote
 
 
@@ -65,6 +64,7 @@ def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start:
     logger = logging.getLogger("codex_session_viewer.daemon")
     stop_event = threading.Event()
     interval_seconds = max(1, interval_seconds)
+    daemon_settings = replace(settings, sync_mode="remote")
 
     def _request_shutdown(signum: int, _frame: object) -> None:
         logger.info("Received signal %s, shutting down agent daemon", signum)
@@ -73,30 +73,18 @@ def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start:
     signal.signal(signal.SIGTERM, _request_shutdown)
     signal.signal(signal.SIGINT, _request_shutdown)
 
-    if settings.sync_mode == "remote":
-        logger.info(
-            "Starting agent daemon with interval=%ss roots=%s target=%s mode=remote",
-            interval_seconds,
-            ",".join(str(path) for path in settings.session_roots),
-            settings.server_base_url or "unconfigured",
-        )
-    else:
-        init_db(settings.database_path)
-        logger.info(
-            "Starting agent daemon with interval=%ss roots=%s db=%s mode=local",
-            interval_seconds,
-            ",".join(str(path) for path in settings.session_roots),
-            settings.database_path,
-        )
+    logger.info(
+        "Starting agent daemon with interval=%ss roots=%s target=%s mode=remote",
+        interval_seconds,
+        ",".join(str(path) for path in daemon_settings.session_roots),
+        daemon_settings.server_base_url or "unconfigured",
+    )
 
     first_run = True
     while not stop_event.is_set():
         force = rebuild_on_start and first_run
         try:
-            if settings.sync_mode == "remote":
-                stats = sync_sessions_remote(settings, force=force)
-            else:
-                stats = sync_sessions(settings, force=force)
+            stats = sync_sessions_remote(daemon_settings, force=force)
         except RestartRequired as exc:
             logger.info("Agent update completed, restarting daemon: %s", exc)
             return 75

@@ -49,6 +49,10 @@ def is_assistant_update(event: sqlite3.Row | dict[str, object]) -> bool:
     )
 
 
+def is_task_complete(event: sqlite3.Row | dict[str, object]) -> bool:
+    return event["record_type"] == "event_msg" and event["payload_type"] == "task_complete"
+
+
 def is_turn_aborted(event: sqlite3.Row | dict[str, object]) -> bool:
     return event["record_type"] == "event_msg" and event["payload_type"] == "turn_aborted"
 
@@ -66,27 +70,27 @@ def terminal_turn_summary(events: Sequence[sqlite3.Row | dict[str, object]]) -> 
 
     prefer_event_msg = prefers_event_msg_user_turns(events)
     turn_open = False
-    saw_final_response = False
+    saw_completion = False
     abort_event: sqlite3.Row | dict[str, object] | None = None
 
     for event in events:
         if is_user_turn_start(event, prefer_event_msg):
             turn_open = True
-            saw_final_response = False
+            saw_completion = False
             abort_event = None
             continue
 
         if not turn_open:
             continue
 
-        if is_assistant_final_message(event):
-            saw_final_response = True
+        if is_task_complete(event):
+            saw_completion = True
             abort_event = None
             continue
 
-        if is_turn_aborted(event) and not saw_final_response:
+        if is_turn_aborted(event) and not saw_completion:
             abort_event = event
 
-    if turn_open and abort_event is not None and not saw_final_response:
+    if turn_open and abort_event is not None and not saw_completion:
         return abort_display_label(abort_event)
     return None

@@ -8,6 +8,7 @@ source "${PROJECT_ROOT}/scripts/lib-env.sh"
 codex_load_env "${PROJECT_ROOT}"
 
 export PYTHONPATH="${PROJECT_ROOT}/.deps${PYTHONPATH:+:${PYTHONPATH}}"
+export CODEX_VIEWER_SYNC_MODE="remote"
 
 cmd=(
   /usr/bin/python3

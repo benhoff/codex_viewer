@@ -26,7 +26,7 @@ from .agents import (
     upsert_remote_agent_status,
 )
 from .config import Settings
-from .db import connect, init_db
+from .db import connect, init_db, write_transaction
 from .git_utils import normalize_github_remote
 from .importer import (
     fetch_host_sync_manifest,
@@ -60,6 +60,7 @@ from .session_status import (
     abort_display_label,
     is_assistant_final_message,
     is_assistant_update,
+    is_task_complete,
     is_turn_aborted,
     is_user_turn_start,
     terminal_turn_summary,
@@ -171,10 +172,19 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
     def finalize_turn(turn: dict[str, object]) -> dict[str, object]:
         assistant_messages: list[sqlite3.Row] = turn["assistant_messages"]  # type: ignore[assignment]
         assistant_updates: list[sqlite3.Row] = turn["assistant_updates"]  # type: ignore[assignment]
+        completion_events: list[sqlite3.Row] = turn["completion_events"]  # type: ignore[assignment]
         aborted_events: list[sqlite3.Row] = turn["aborted_events"]  # type: ignore[assignment]
         all_events: list[sqlite3.Row] = turn["events"]  # type: ignore[assignment]
 
-        final_response_event = assistant_messages[-1] if assistant_messages else None
+        completion_event = completion_events[-1] if completion_events else None
+        final_response_event = None
+        if completion_event is not None:
+            completed_messages = [
+                event
+                for event in assistant_messages
+                if event["event_index"] < completion_event["event_index"]
+            ]
+            final_response_event = completed_messages[-1] if completed_messages else completion_event
         update_event = assistant_updates[-1] if assistant_updates else None
         abort_event = aborted_events[-1] if aborted_events else None
 
@@ -183,15 +193,23 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
 
         response_text = ""
         response_timestamp = None
-        if final_response_event is not None:
-            response_text = str(final_response_event["display_text"] or "")
-            response_timestamp = final_response_event["timestamp"]
+        if completion_event is not None:
+            if final_response_event is completion_event:
+                response_text = str(completion_event["detail_text"] or completion_event["display_text"] or "")
+            else:
+                response_text = str(final_response_event["display_text"] or "")
+            response_timestamp = completion_event["timestamp"] or final_response_event["timestamp"]
             response_state = "final"
             response_label = "Final Response"
         elif abort_event is not None:
             response_text = abort_display_label(abort_event)
             response_timestamp = abort_event["timestamp"]
             response_state = "canceled"
+        elif final_response_event is not None:
+            response_text = str(final_response_event["display_text"] or "")
+            response_timestamp = final_response_event["timestamp"]
+            response_state = "update"
+            response_label = "Latest Update"
         elif update_event is not None:
             final_response_event = update_event
             response_text = str(update_event["display_text"] or "")
@@ -209,7 +227,13 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
             if event["kind"] == "message" and event["role"] == "user":
                 skip = True
             if (
+                completion_event is not None
+                and event["event_index"] == completion_event["event_index"]
+            ):
+                skip = True
+            if (
                 final_response_event is not None
+                and final_response_event is not completion_event
                 and event["event_index"] == final_response_event["event_index"]
             ):
                 skip = True
@@ -256,6 +280,7 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
                 "events": [],
                 "assistant_messages": [],
                 "assistant_updates": [],
+                "completion_events": [],
                 "aborted_events": [],
             }
             continue
@@ -268,6 +293,8 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
             current["assistant_messages"].append(event)
         elif is_assistant_update(event):
             current["assistant_updates"].append(event)
+        elif is_task_complete(event):
+            current["completion_events"].append(event)
         elif is_turn_aborted(event):
             current["aborted_events"].append(event)
 
@@ -410,11 +437,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="Unsupported remote action")
 
         with connect(app_settings.database_path) as connection:
-            request_remote_raw_resend(
-                connection,
-                source_host,
-                note="Requested from remotes view",
-            )
+            with write_transaction(connection):
+                request_remote_raw_resend(
+                    connection,
+                    source_host,
+                    note="Requested from remotes view",
+                )
 
         return RedirectResponse(url=fields.get("return_to") or "/remotes", status_code=303)
 
@@ -511,18 +539,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="Missing project key")
 
         with connect(app_settings.database_path) as connection:
-            if fields.get("action") == "clear":
-                upsert_project_override(connection, match_project_key, None, None, None, None, None)
-            else:
-                upsert_project_override(
-                    connection=connection,
-                    match_project_key=match_project_key,
-                    override_group_key=fields.get("override_group_key"),
-                    override_organization=fields.get("override_organization"),
-                    override_repository=fields.get("override_repository"),
-                    override_remote_url=fields.get("override_remote_url"),
-                    override_display_label=fields.get("override_display_label"),
-                )
+            with write_transaction(connection):
+                if fields.get("action") == "clear":
+                    upsert_project_override(connection, match_project_key, None, None, None, None, None)
+                else:
+                    upsert_project_override(
+                        connection=connection,
+                        match_project_key=match_project_key,
+                        override_group_key=fields.get("override_group_key"),
+                        override_organization=fields.get("override_organization"),
+                        override_repository=fields.get("override_repository"),
+                        override_remote_url=fields.get("override_remote_url"),
+                        override_display_label=fields.get("override_display_label"),
+                    )
 
         return RedirectResponse(url=fields.get("return_to") or "/", status_code=303)
 
@@ -538,20 +567,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="GitHub URL must be an HTTPS or SSH github.com remote")
 
         with connect(app_settings.database_path) as connection:
-            project_keys = fetch_group_source_project_keys(connection, group_key)
-            if not project_keys:
-                raise HTTPException(status_code=404, detail="Project group not found")
-            for match_project_key in project_keys:
-                upsert_project_override(
-                    connection=connection,
-                    match_project_key=match_project_key,
-                    override_group_key=normalized["group_key"],
-                    override_organization=normalized["org"],
-                    override_repository=normalized["repo"],
-                    override_remote_url=normalized["canonical_url"],
-                    override_display_label=f"{normalized['org']}/{normalized['repo']}",
-                )
-            detail_href = resolve_project_detail_href(connection, normalized["group_key"])
+            with write_transaction(connection):
+                project_keys = fetch_group_source_project_keys(connection, group_key)
+                if not project_keys:
+                    raise HTTPException(status_code=404, detail="Project group not found")
+                for match_project_key in project_keys:
+                    upsert_project_override(
+                        connection=connection,
+                        match_project_key=match_project_key,
+                        override_group_key=normalized["group_key"],
+                        override_organization=normalized["org"],
+                        override_repository=normalized["repo"],
+                        override_remote_url=normalized["canonical_url"],
+                        override_display_label=f"{normalized['org']}/{normalized['repo']}",
+                    )
+                detail_href = resolve_project_detail_href(connection, normalized["group_key"])
 
         return RedirectResponse(
             url=detail_href,
@@ -569,12 +599,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="Unsupported project action")
 
         with connect(app_settings.database_path) as connection:
-            project_keys = fetch_group_source_project_keys(connection, group_key)
-            if not project_keys:
-                raise HTTPException(status_code=404, detail="Project group not found")
-            delete_sessions_for_project_keys(connection, project_keys)
-            if action == "ignore":
-                ignore_project_keys(connection, project_keys)
+            with write_transaction(connection):
+                project_keys = fetch_group_source_project_keys(connection, group_key)
+                if not project_keys:
+                    raise HTTPException(status_code=404, detail="Project group not found")
+                delete_sessions_for_project_keys(connection, project_keys)
+                if action == "ignore":
+                    ignore_project_keys(connection, project_keys)
 
         return RedirectResponse(url=fields.get("return_to") or "/", status_code=303)
 
@@ -587,14 +618,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             events = get_events(connection, session_id)
             group_href = resolve_project_detail_href(connection, effective_project_fields(session)["effective_group_key"])
         project = effective_project_fields(session)
-        turns = build_turns(events)
+        turns = list(reversed(build_turns(events)))
         session_display_summary = terminal_turn_summary(events) or str(session["summary"])
-
-        secondary_events = [
-            styled_event(event)
-            for event in events
-            if event["kind"] in {"system", "context", "telemetry", "reasoning"}
-        ]
 
         return templates.TemplateResponse(
             request,
@@ -606,7 +631,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "project": project,
                 "group_href": group_href,
                 "turns": turns,
-                "secondary_events": secondary_events,
                 "source_roots": [str(path) for path in app_settings.session_roots],
             },
         )
@@ -694,24 +718,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="Heartbeat payload is missing source_host")
 
         with connect(app_settings.database_path) as connection:
-            upsert_remote_agent_status(
-                connection,
-                source_host=source_host,
-                agent_version=str(payload.get("agent_version") or ""),
-                sync_api_version=str(payload.get("sync_api_version") or ""),
-                sync_mode=str(payload.get("sync_mode") or ""),
-                update_state=str(payload.get("update_state") or ""),
-                update_message=str(payload.get("update_message") or "") or None,
-                server_version_seen=str(payload.get("server_version_seen") or "") or None,
-                server_api_version_seen=str(payload.get("server_api_version_seen") or "") or None,
-                last_sync_at=str(payload.get("last_sync_at") or "") or None,
-                last_upload_count=int(payload.get("last_upload_count") or 0),
-                last_skip_count=int(payload.get("last_skip_count") or 0),
-                last_fail_count=int(payload.get("last_fail_count") or 0),
-                last_error=str(payload.get("last_error") or "") or None,
-                acknowledged_raw_resend_token=str(payload.get("acknowledged_raw_resend_token") or "") or None,
-                last_raw_resend_at=str(payload.get("last_raw_resend_at") or "") or None,
-            )
+            with write_transaction(connection):
+                upsert_remote_agent_status(
+                    connection,
+                    source_host=source_host,
+                    agent_version=str(payload.get("agent_version") or ""),
+                    sync_api_version=str(payload.get("sync_api_version") or ""),
+                    sync_mode=str(payload.get("sync_mode") or ""),
+                    update_state=str(payload.get("update_state") or ""),
+                    update_message=str(payload.get("update_message") or "") or None,
+                    server_version_seen=str(payload.get("server_version_seen") or "") or None,
+                    server_api_version_seen=str(payload.get("server_api_version_seen") or "") or None,
+                    last_sync_at=str(payload.get("last_sync_at") or "") or None,
+                    last_upload_count=int(payload.get("last_upload_count") or 0),
+                    last_skip_count=int(payload.get("last_skip_count") or 0),
+                    last_fail_count=int(payload.get("last_fail_count") or 0),
+                    last_error=str(payload.get("last_error") or "") or None,
+                    acknowledged_raw_resend_token=str(payload.get("acknowledged_raw_resend_token") or "") or None,
+                    last_raw_resend_at=str(payload.get("last_raw_resend_at") or "") or None,
+                )
         return JSONResponse({"status": "ok", "source_host": source_host})
 
     @app.post("/api/sync/session")
@@ -729,16 +754,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         with connect(app_settings.database_path) as connection:
-            if parsed.inferred_project_key in ignored_project_keys(connection):
-                return JSONResponse(
-                    {
-                        "status": "ignored",
-                        "session_id": parsed.session_id,
-                        "source_host": parsed.source_host,
-                        "inferred_project_key": parsed.inferred_project_key,
-                    }
-                )
-            upsert_parsed_session(connection, parsed)
+            with write_transaction(connection):
+                if parsed.inferred_project_key in ignored_project_keys(connection):
+                    return JSONResponse(
+                        {
+                            "status": "ignored",
+                            "session_id": parsed.session_id,
+                            "source_host": parsed.source_host,
+                            "inferred_project_key": parsed.inferred_project_key,
+                        }
+                    )
+                upsert_parsed_session(connection, parsed)
 
         return JSONResponse(
             {
@@ -788,16 +814,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         with connect(app_settings.database_path) as connection:
-            if parsed.inferred_project_key in ignored_project_keys(connection):
-                return JSONResponse(
-                    {
-                        "status": "ignored",
-                        "session_id": parsed.session_id,
-                        "source_host": parsed.source_host,
-                        "inferred_project_key": parsed.inferred_project_key,
-                    }
-                )
-            upsert_parsed_session(connection, parsed)
+            with write_transaction(connection):
+                if parsed.inferred_project_key in ignored_project_keys(connection):
+                    return JSONResponse(
+                        {
+                            "status": "ignored",
+                            "session_id": parsed.session_id,
+                            "source_host": parsed.source_host,
+                            "inferred_project_key": parsed.inferred_project_key,
+                        }
+                    )
+                upsert_parsed_session(connection, parsed)
 
         return JSONResponse(
             {

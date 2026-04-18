@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import sqlite3
+import threading
 from pathlib import Path
 
 
@@ -208,12 +210,30 @@ CREATE INDEX IF NOT EXISTS idx_remote_agents_last_seen
 ON remote_agents(last_seen_at DESC);
 """
 
+WRITE_LOCK = threading.RLock()
+
 
 def connect(database_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database_path)
+    connection = sqlite3.connect(database_path, timeout=30.0)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 30000")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA synchronous = NORMAL")
     return connection
+
+
+@contextmanager
+def write_transaction(connection: sqlite3.Connection):
+    with WRITE_LOCK:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            yield connection
+        except Exception:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
 
 
 def table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
@@ -392,18 +412,19 @@ def ensure_remote_agent_columns(connection: sqlite3.Connection) -> None:
 def init_db(database_path: Path) -> None:
     with connect(database_path) as connection:
         connection.execute("PRAGMA foreign_keys = OFF")
-        connection.execute(SESSION_TABLE_SQL)
-        connection.execute(EVENT_TABLE_SQL)
-        connection.executescript(OTHER_TABLES_SQL)
-        ensure_session_columns(connection)
-        ensure_remote_agent_columns(connection)
-        recover_legacy_sessions(connection)
-        recover_legacy_events(connection)
-        rebuilt_sessions = False
-        if sessions_need_rebuild(connection):
-            rebuild_sessions_table(connection)
-            rebuilt_sessions = True
-        if rebuilt_sessions or events_need_rebuild(connection):
-            rebuild_events_table(connection)
-        connection.executescript(INDEX_SQL)
+        with write_transaction(connection):
+            connection.execute(SESSION_TABLE_SQL)
+            connection.execute(EVENT_TABLE_SQL)
+            connection.executescript(OTHER_TABLES_SQL)
+            ensure_session_columns(connection)
+            ensure_remote_agent_columns(connection)
+            recover_legacy_sessions(connection)
+            recover_legacy_events(connection)
+            rebuilt_sessions = False
+            if sessions_need_rebuild(connection):
+                rebuild_sessions_table(connection)
+                rebuilt_sessions = True
+            if rebuilt_sessions or events_need_rebuild(connection):
+                rebuild_events_table(connection)
+            connection.executescript(INDEX_SQL)
         connection.execute("PRAGMA foreign_keys = ON")

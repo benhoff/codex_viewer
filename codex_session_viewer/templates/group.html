@@ -20,7 +20,7 @@
     <p class="mt-4 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
       {{ group.organization }} / {{ group.repository }}
     </p>
-    {% if group.remote_url %}
+    {% if group.remote_url and not group.remote_url.startswith('/') %}
       <p class="mt-2 break-all text-sm leading-6 text-stone-500">{{ group.remote_url }}</p>
     {% endif %}
 
@@ -50,9 +50,8 @@
         <section class="rounded-[2rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">{{ source_group.inferred_project_kind }}</p>
-              <h2 class="mt-2 text-2xl font-semibold text-stone-900">{{ source_group.inferred_project_label }}</h2>
-              <p class="mt-2 text-sm text-stone-600">{{ source_group.source_host }}{% if source_group.cwd %} · {{ source_group.cwd }}{% endif %}</p>
+              <h2 class="text-2xl font-semibold text-stone-900">{{ source_group.inferred_project_label }}</h2>
+              <p class="mt-2 text-sm text-stone-600">{{ source_group.source_host }}</p>
               {% if source_group.github_remote_url %}
                 <p class="mt-2 break-all text-xs text-stone-500">{{ source_group.github_remote_url }}</p>
               {% endif %}
@@ -69,7 +68,7 @@
                   <p class="text-sm font-semibold text-stone-900">{{ session.summary }}</p>
                   <span class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-stone-500" title="{{ session.session_timestamp|full_timestamp }}">{{ session.session_timestamp|humanize_timestamp }}</span>
                 </div>
-                <p class="mt-2 text-xs text-stone-600">{{ session.host }}{% if session.cwd %} · {{ session.cwd }}{% endif %}</p>
+                <p class="mt-2 text-xs text-stone-600">{{ session.host }}</p>
               </a>
             {% endfor %}
           </div>
@@ -83,15 +82,6 @@
         <div class="mt-4 flex flex-wrap gap-2">
           {% for host in group.hosts %}
             <span class="rounded-full border border-stone-900/10 bg-stone-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-stone-600">{{ host }}</span>
-          {% endfor %}
-        </div>
-      </section>
-
-      <section class="rounded-[2rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
-        <h2 class="font-display text-2xl text-stone-900">Directories</h2>
-        <div class="mt-4 space-y-2 text-sm text-stone-600">
-          {% for directory in group.directories %}
-            <div class="break-all rounded-[1rem] bg-stone-50 px-4 py-3">{{ directory }}</div>
           {% endfor %}
         </div>
       </section>

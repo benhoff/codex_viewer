@@ -18,7 +18,7 @@
     <p class="text-xs font-semibold uppercase tracking-[0.28em] text-stone-500">Edit Project</p>
     <h1 class="mt-3 max-w-4xl font-display text-4xl leading-tight text-stone-900 sm:text-5xl">{{ group.display_label }}</h1>
     <p class="mt-4 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
-      Manage the canonical GitHub identity and any manual grouping or label overrides for the underlying source directories.
+      Manage the canonical GitHub identity and any manual grouping or label overrides for the underlying sources.
     </p>
 
     <form action="/projects/github-url" method="post" class="mt-6 grid gap-3 rounded-[1.6rem] border border-stone-900/10 bg-stone-50/80 p-4 sm:grid-cols-[1fr,auto] sm:items-end">
@@ -50,9 +50,8 @@
       <section class="rounded-[2rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">{{ source_group.inferred_project_kind }}</p>
-            <h2 class="mt-2 text-2xl font-semibold text-stone-900">{{ source_group.inferred_project_label }}</h2>
-            <p class="mt-2 text-sm text-stone-600">{{ source_group.source_host }}{% if source_group.cwd %} · {{ source_group.cwd }}{% endif %}</p>
+            <h2 class="text-2xl font-semibold text-stone-900">{{ source_group.inferred_project_label }}</h2>
+            <p class="mt-2 text-sm text-stone-600">{{ source_group.source_host }}</p>
             {% if source_group.github_remote_url %}
               <p class="mt-2 break-all text-xs text-stone-500">{{ source_group.github_remote_url }}</p>
             {% endif %}
@@ -106,7 +105,7 @@
               type="text"
               name="override_remote_url"
               value="{{ source_group.override_remote_url }}"
-              placeholder="{{ source_group.github_remote_url or source_group.cwd }}"
+              placeholder="{{ source_group.github_remote_url or group.remote_url or '' }}"
               class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
             />
           </label>

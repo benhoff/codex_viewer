@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import Settings
-from .db import connect
+from .db import connect, write_transaction
 from .git_utils import infer_project_identity, resolve_git_info
 from .projects import project_is_ignored
 
@@ -817,49 +817,50 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
     skipped = 0
 
     with connect(settings.database_path) as connection:
-        if force:
-            connection.execute("DELETE FROM events")
-            connection.execute("DELETE FROM sessions")
+        with write_transaction(connection):
+            if force:
+                connection.execute("DELETE FROM events")
+                connection.execute("DELETE FROM sessions")
 
-        existing_rows = connection.execute(
-            """
-            SELECT id, source_path, file_size, file_mtime_ns, content_sha256, source_host
-            FROM sessions
-            """
-        ).fetchall()
-        existing_by_source = {
-            (row["source_host"], row["source_path"]): {
-                "id": row["id"],
-                "file_size": row["file_size"],
-                "file_mtime_ns": row["file_mtime_ns"],
-                "content_sha256": row["content_sha256"],
-                "source_host": row["source_host"],
+            existing_rows = connection.execute(
+                """
+                SELECT id, source_path, file_size, file_mtime_ns, content_sha256, source_host
+                FROM sessions
+                """
+            ).fetchall()
+            existing_by_source = {
+                (row["source_host"], row["source_path"]): {
+                    "id": row["id"],
+                    "file_size": row["file_size"],
+                    "file_mtime_ns": row["file_mtime_ns"],
+                    "content_sha256": row["content_sha256"],
+                    "source_host": row["source_host"],
+                }
+                for row in existing_rows
             }
-            for row in existing_rows
-        }
 
-        for source_root, path in iter_session_files(settings.session_roots):
-            stat = path.stat()
-            record = existing_by_source.get((settings.source_host, str(path)))
-            if (
-                not force
-                and record
-                and record["file_size"] == stat.st_size
-                and record["file_mtime_ns"] == stat.st_mtime_ns
-                and record["source_host"] == settings.source_host
-            ):
-                skipped += 1
-                continue
+            for source_root, path in iter_session_files(settings.session_roots):
+                stat = path.stat()
+                record = existing_by_source.get((settings.source_host, str(path)))
+                if (
+                    not force
+                    and record
+                    and record["file_size"] == stat.st_size
+                    and record["file_mtime_ns"] == stat.st_mtime_ns
+                    and record["source_host"] == settings.source_host
+                ):
+                    skipped += 1
+                    continue
 
-            parsed = parse_session_file(path, source_root, settings.source_host)
-            if project_is_ignored(connection, parsed.inferred_project_key):
-                skipped += 1
-                continue
-            upsert_parsed_session(connection, parsed)
+                parsed = parse_session_file(path, source_root, settings.source_host)
+                if project_is_ignored(connection, parsed.inferred_project_key):
+                    skipped += 1
+                    continue
+                upsert_parsed_session(connection, parsed)
 
-            if record:
-                updated += 1
-            else:
-                imported += 1
+                if record:
+                    updated += 1
+                else:
+                    imported += 1
 
     return {"imported": imported, "updated": updated, "skipped": skipped}

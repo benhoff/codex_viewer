@@ -1,134 +1,101 @@
 {% extends "base.html" %}
 
-{% block title %}{{ session_display_summary }} | Codex Viewer{% endblock %}
+{% block title %}{{ project.repository or project.display_label }} | Codex Viewer{% endblock %}
 
 {% block content %}
-  <div class="mb-6 flex flex-wrap gap-3">
-    <a href="/" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
-      Back to projects
-    </a>
-    <a href="{{ group_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
-      Back to repo
-    </a>
-  </div>
-
-  <section class="relative left-1/2 mb-8 w-screen -translate-x-1/2 px-4 sm:px-6 lg:px-8">
-    <div class="rounded-[2rem] border border-stone-900/10 bg-white/75 p-6 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:p-8 lg:p-10">
-    <p class="text-sm font-semibold uppercase tracking-[0.24em] text-stone-500">{{ session.session_timestamp or session.started_at or "Unknown time" }}</p>
-    <h1 class="mt-4 font-display text-4xl leading-[1.08] text-stone-900 sm:text-5xl lg:text-6xl xl:text-[4.25rem]">{{ session_display_summary }}</h1>
-    <p class="mt-5 max-w-5xl text-base leading-8 text-stone-600 sm:text-lg">{{ session.cwd or "No working directory recorded" }}</p>
-    <div class="mt-5 flex flex-wrap gap-3">
-      <span class="rounded-full bg-stone-900 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-stone-50">{{ project.display_label }}</span>
-      <span class="rounded-full bg-rose-100 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-rose-800">{{ project.source_host }}</span>
-      {% if project.remote_url %}
-        <span class="rounded-full bg-sky-100 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-sky-800">{{ project.organization }}/{{ project.repository }}</span>
-      {% endif %}
+  <div class="mx-auto w-full max-w-5xl">
+    <div class="mb-5 flex flex-wrap gap-2 sm:gap-3">
+      <a href="/" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+        Back to projects
+      </a>
+      <a href="{{ group_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+        Back to repo
+      </a>
     </div>
 
-    <div class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <div class="rounded-[1.3rem] bg-stone-900 p-5 text-stone-50">
-        <p class="text-xs uppercase tracking-[0.22em] text-stone-300">Events</p>
-        <p class="mt-3 text-3xl font-semibold">{{ session.event_count }}</p>
-      </div>
-      <div class="rounded-[1.3rem] bg-rose-50 p-5">
-        <p class="text-xs uppercase tracking-[0.22em] text-rose-500">Prompts</p>
-        <p class="mt-3 text-3xl font-semibold text-stone-900">{{ session.user_message_count }}</p>
-      </div>
-      <div class="rounded-[1.3rem] bg-emerald-50 p-5">
-        <p class="text-xs uppercase tracking-[0.22em] text-emerald-600">Replies</p>
-        <p class="mt-3 text-3xl font-semibold text-stone-900">{{ session.assistant_message_count }}</p>
-      </div>
-      <div class="rounded-[1.3rem] bg-sky-50 p-5">
-        <p class="text-xs uppercase tracking-[0.22em] text-sky-600">Tool Calls</p>
-        <p class="mt-3 text-3xl font-semibold text-stone-900">{{ session.tool_call_count }}</p>
-      </div>
-    </div>
+    <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:mb-8 sm:p-6 lg:p-7">
+      {% set session_when = session.session_timestamp or session.started_at %}
+      <div class="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div class="min-w-0 flex-1">
+          <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500" {% if session_when %}title="{{ session_when|full_timestamp }}"{% endif %}>{{ session_when|humanize_timestamp }}</p>
+          <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.9rem]">{{ project.repository or project.display_label }}</h1>
+          <div class="mt-4 flex flex-wrap gap-2">
+            <span class="rounded-full bg-stone-900 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-50">{{ project.display_label }}</span>
+            <span class="rounded-full bg-rose-100 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-rose-800">{{ project.source_host }}</span>
+            {% if project.remote_url %}
+              <span class="rounded-full bg-sky-100 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-sky-800">{{ project.organization }}/{{ project.repository }}</span>
+            {% endif %}
+          </div>
+        </div>
 
-    <dl class="mt-8 grid gap-5 text-base text-stone-600 sm:grid-cols-2 xl:grid-cols-3">
-      <div>
-        <dt class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Session ID</dt>
-        <dd class="mt-2 break-all leading-7">{{ session.id }}</dd>
+        <div class="grid w-full grid-cols-2 gap-3 lg:w-[20rem]">
+          <div class="rounded-[1.15rem] bg-stone-900 p-4 text-stone-50">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-300">Events</p>
+            <p class="mt-2 text-2xl font-semibold">{{ session.event_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-rose-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-rose-500">Prompts</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ session.user_message_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-emerald-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-emerald-600">Replies</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ session.assistant_message_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-sky-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-sky-600">Tool Calls</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ session.tool_call_count }}</p>
+          </div>
+        </div>
       </div>
-      <div>
-        <dt class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Origin</dt>
-        <dd class="mt-2 leading-7">{{ session.originator or "unknown" }} / {{ session.cli_version or "unknown" }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Provider</dt>
-        <dd class="mt-2 leading-7">{{ session.model_provider or "unknown" }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Host</dt>
-        <dd class="mt-2 leading-7">{{ session.source_host or "unknown" }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Project</dt>
-        <dd class="mt-2 leading-7">{{ project.display_label }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Source File</dt>
-        <dd class="mt-2 break-all leading-7">{{ session.source_path }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Remote</dt>
-        <dd class="mt-2 break-all leading-7">{{ project.remote_url or "No GitHub remote inferred" }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Imported At</dt>
-        <dd class="mt-2 leading-7">{{ session.imported_at }}</dd>
-      </div>
-      <div>
-        <dt class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Roots</dt>
-        <dd class="mt-2 leading-7">{{ source_roots|join(", ") }}</dd>
-      </div>
-    </dl>
-    </div>
-  </section>
+    </section>
 
-  <section class="grid gap-6 xl:grid-cols-[1.55fr,0.95fr]">
-    <div class="rounded-[2rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+    <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
       <div class="mb-5 flex items-center justify-between gap-3">
-        <h2 class="font-display text-3xl text-stone-900">Turns</h2>
-        <p class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">{{ turns|length }} prompt / response pairs</p>
+        <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Turns</h2>
+        <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ turns|length }} prompt / response pairs</p>
       </div>
 
       <div class="space-y-4">
         {% for turn in turns %}
-          <details class="rounded-[1.5rem] border border-stone-200 bg-stone-50/70 p-4 sm:p-5">
+          <details class="rounded-[1.35rem] border border-stone-200 bg-stone-50/70 p-4 sm:p-5">
             <summary class="cursor-pointer list-none">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">Turn {{ turn.number }}</span>
+                  <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-50">Turn {{ turn.number }}</span>
                   {% if turn.work_count %}
-                    <span class="rounded-full bg-white px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-500">{{ turn.work_count }} work items</span>
+                    <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ turn.work_count }} work items</span>
                   {% endif %}
                 </div>
                 {% if turn.prompt_timestamp %}
-                  <p class="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">{{ turn.prompt_timestamp }}</p>
+                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500">{{ turn.prompt_timestamp }}</p>
                 {% endif %}
               </div>
 
               <div class="mt-4 grid gap-3">
                 <div class="rounded-[1.2rem] border border-rose-200 bg-rose-50/90 p-4">
-                  <p class="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-rose-700">User Prompt</p>
-                  <p class="mt-2 text-base leading-7 text-stone-800">{{ turn.prompt_excerpt }}</p>
+                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-rose-700">User Prompt</p>
+                  <p class="mt-2 text-[0.98rem] leading-6 text-stone-800 sm:text-base sm:leading-7">{{ turn.prompt_excerpt }}</p>
                 </div>
                 <div class="rounded-[1.2rem] border p-4 {% if turn.response_state == 'canceled' %}border-amber-200 bg-amber-50/90{% elif turn.response_state == 'update' %}border-sky-200 bg-sky-50/90{% else %}border-emerald-200 bg-emerald-50/90{% endif %}">
-                  <p class="text-[0.7rem] font-semibold uppercase tracking-[0.2em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">{{ turn.response_label }}</p>
-                  <p class="mt-2 text-base leading-7 text-stone-800">{{ turn.response_excerpt }}</p>
+                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">{{ turn.response_label }}</p>
+                  {% if turn.response_state == 'canceled' %}
+                    <p class="mt-2 text-[0.98rem] leading-6 text-stone-800 sm:text-base sm:leading-7">{{ turn.response_excerpt }}</p>
+                  {% else %}
+                    <div class="rendered-markdown mt-2 max-h-32 overflow-hidden">{{ turn.response_excerpt|render_markdown }}</div>
+                  {% endif %}
                 </div>
               </div>
             </summary>
 
             <div class="mt-5 space-y-4">
               <div class="rounded-[1.2rem] border border-rose-200 bg-rose-50/90 p-4">
-                <p class="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-rose-700">Full Prompt</p>
-                <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-stone-800">{{ turn.prompt_text }}</pre>
+                <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-rose-700">Full Prompt</p>
+                <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ turn.prompt_text }}</pre>
               </div>
 
               <div class="rounded-[1.2rem] border p-4 {% if turn.response_state == 'canceled' %}border-amber-200 bg-amber-50/90{% elif turn.response_state == 'update' %}border-sky-200 bg-sky-50/90{% else %}border-emerald-200 bg-emerald-50/90{% endif %}">
                 <div class="flex flex-wrap items-center justify-between gap-3">
-                  <p class="text-[0.7rem] font-semibold uppercase tracking-[0.2em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">
+                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">
                     {% if turn.response_state == 'canceled' %}
                       Turn Outcome
                     {% elif turn.response_state == 'update' %}
@@ -138,46 +105,46 @@
                     {% endif %}
                   </p>
                   {% if turn.response_timestamp %}
-                    <span class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">{{ turn.response_timestamp }}</span>
+                    <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">{{ turn.response_timestamp }}</span>
                   {% endif %}
                 </div>
                 {% if turn.response_text %}
                   {% if turn.response_state == 'canceled' %}
-                    <p class="mt-3 text-[0.95rem] leading-7 text-stone-800">{{ turn.response_text }}</p>
+                    <p class="mt-3 text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ turn.response_text }}</p>
                   {% else %}
                     <div class="rendered-markdown mt-3">{{ turn.response_text|render_markdown }}</div>
                   {% endif %}
                 {% else %}
-                  <p class="mt-3 text-[0.95rem] leading-7 text-stone-800">No assistant response captured.</p>
+                  <p class="mt-3 text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">No assistant response captured.</p>
                 {% endif %}
               </div>
 
               {% if turn.detail_events %}
                 <div class="space-y-3">
-                  <p class="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Work Log</p>
+                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Work Log</p>
                   {% for event in turn.detail_events %}
                     <article class="rounded-[1.2rem] border p-4 {% if event.style == 'sky' %}border-sky-200 bg-sky-50/80{% elif event.style == 'cyan' %}border-cyan-200 bg-cyan-50/80{% elif event.style == 'amber' %}border-amber-200 bg-amber-50/80{% elif event.style == 'emerald' %}border-emerald-200 bg-emerald-50/80{% else %}border-stone-200 bg-white/80{% endif %}">
                       <div class="flex flex-wrap items-center justify-between gap-3">
                         <div class="flex flex-wrap items-center gap-2">
-                          <span class="rounded-full bg-white/80 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-600">{{ event.title }}</span>
+                          <span class="rounded-full bg-white/80 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ event.title }}</span>
                           {% if event.call_id %}
-                            <span class="rounded-full bg-white/80 px-3 py-1 text-[0.65rem] font-medium text-stone-500">{{ event.call_id|shorten(24) }}</span>
+                            <span class="rounded-full bg-white/80 px-3 py-1 text-[0.68rem] font-medium text-stone-500">{{ event.call_id|shorten(24) }}</span>
                           {% endif %}
                           {% if event.exit_code is not none %}
-                            <span class="rounded-full px-3 py-1 text-[0.65rem] font-semibold {% if event.exit_code == 0 %}bg-emerald-100 text-emerald-700{% else %}bg-rose-100 text-rose-700{% endif %}">
+                            <span class="rounded-full px-3 py-1 text-[0.68rem] font-semibold {% if event.exit_code == 0 %}bg-emerald-100 text-emerald-700{% else %}bg-rose-100 text-rose-700{% endif %}">
                               exit {{ event.exit_code }}
                             </span>
                           {% endif %}
                         </div>
                         {% if event.timestamp %}
-                          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">{{ event.timestamp }}</p>
+                          <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500">{{ event.timestamp }}</p>
                         {% endif %}
                       </div>
-                      <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-[1rem] bg-white/90 p-3 text-[0.9rem] leading-7 text-stone-800">{{ event.display_text }}</pre>
+                      <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-[1rem] bg-white/90 p-3 text-[0.95rem] leading-6 text-stone-800 sm:leading-7">{{ event.display_text }}</pre>
                       {% if event.detail_text and event.detail_text != event.display_text %}
                         <details class="mt-3 rounded-[1rem] bg-white/70 p-3 text-sm text-stone-700">
                           <summary class="cursor-pointer font-semibold text-stone-700">Show full detail</summary>
-                          <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.88rem] leading-7 text-stone-700">{{ event.detail_text }}</pre>
+                          <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.92rem] leading-6 text-stone-700 sm:leading-7">{{ event.detail_text }}</pre>
                         </details>
                       {% endif %}
                     </article>
@@ -192,38 +159,6 @@
           </div>
         {% endfor %}
       </div>
-    </div>
-
-    <aside class="space-y-6">
-      <section class="rounded-[2rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
-        <div class="mb-4 flex items-center justify-between gap-3">
-          <h2 class="font-display text-3xl text-stone-900">System Events</h2>
-          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">{{ secondary_events|length }}</p>
-        </div>
-
-        <div class="space-y-3">
-          {% for event in secondary_events %}
-            <details class="rounded-[1.25rem] border border-stone-200 bg-stone-50/80 p-4">
-              <summary class="cursor-pointer list-none">
-                <div class="flex items-start justify-between gap-3">
-                  <div>
-                    <p class="text-base font-semibold text-stone-900">{{ event.title }}</p>
-                    <p class="mt-1 text-sm leading-6 text-stone-600">{{ event.display_text|shorten(140) }}</p>
-                  </div>
-                  {% if event.timestamp %}
-                    <span class="shrink-0 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ event.timestamp }}</span>
-                  {% endif %}
-                </div>
-              </summary>
-              <pre class="mt-4 overflow-x-auto whitespace-pre-wrap break-words rounded-[1rem] bg-white p-3 text-[0.9rem] leading-7 text-stone-700">{{ event.detail_text }}</pre>
-            </details>
-          {% else %}
-            <div class="rounded-[1.25rem] border border-dashed border-stone-900/15 bg-stone-50/60 p-4 text-sm text-stone-600">
-              No secondary events were captured.
-            </div>
-          {% endfor %}
-        </div>
-      </section>
-    </aside>
-  </section>
+    </section>
+  </div>
 {% endblock %}
