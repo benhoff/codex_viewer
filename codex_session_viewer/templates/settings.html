@@ -21,7 +21,17 @@
           </div>
           <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">{{ created_token.label }}</span>
         </div>
-        <pre class="mt-4 overflow-x-auto whitespace-pre-wrap break-all rounded-[1.2rem] bg-white/90 p-4 text-[0.95rem] leading-6 text-stone-900">{{ created_token.token }}</pre>
+        <pre id="created-token-value" class="mt-4 overflow-x-auto whitespace-pre-wrap break-all rounded-[1.2rem] bg-white/90 p-4 text-[0.95rem] leading-6 text-stone-900">{{ created_token.token }}</pre>
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            id="copy-created-token"
+            class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
+          >
+            Copy Token
+          </button>
+          <p id="copy-created-token-status" class="text-sm leading-6 text-emerald-900"></p>
+        </div>
       </section>
     {% endif %}
 
@@ -129,4 +139,39 @@
       {% endif %}
     </section>
   </div>
+{% endblock %}
+
+{% block scripts %}
+  {% if created_token %}
+    <script>
+      (() => {
+        const button = document.getElementById("copy-created-token");
+        const tokenElement = document.getElementById("created-token-value");
+        const status = document.getElementById("copy-created-token-status");
+        if (!button || !tokenElement || !status) {
+          return;
+        }
+
+        const token = tokenElement.textContent || "";
+
+        const updateStatus = (message) => {
+          status.textContent = message;
+        };
+
+        button.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(token);
+            updateStatus("Copied.");
+          } catch (_error) {
+            const range = document.createRange();
+            range.selectNodeContents(tokenElement);
+            const selection = window.getSelection();
+            selection?.removeAllRanges();
+            selection?.addRange(range);
+            updateStatus("Clipboard access failed. Token selected for manual copy.");
+          }
+        });
+      })();
+    </script>
+  {% endif %}
 {% endblock %}

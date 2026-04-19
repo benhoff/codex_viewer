@@ -38,10 +38,11 @@ from .db import connect, init_db, write_transaction
 from .git_utils import normalize_github_remote
 from .importer import (
     fetch_host_sync_manifest,
+    friendly_tool_title,
     parse_session_text,
+    parse_jsonish,
     parsed_session_from_payload,
-    shorten,
-    strip_codex_wrappers,
+    summarize_tool_call_input,
     sync_sessions,
     upsert_parsed_session,
 )
@@ -68,11 +69,13 @@ from .session_status import (
     abort_display_label,
     is_assistant_final_message,
     is_assistant_update,
+    legacy_terminal_assistant_event,
     is_task_complete,
     is_turn_aborted,
     is_user_turn_start,
     terminal_turn_summary,
 )
+from .text_utils import shorten, strip_codex_wrappers
 
 
 STATIC_ROOT = PROJECT_ROOT / "codex_session_viewer" / "static"
@@ -187,12 +190,280 @@ def event_preview_text(text: str, *, max_lines: int = 8, max_chars: int = 700) -
 
 def styled_event(event: sqlite3.Row | dict[str, object]) -> dict[str, object]:
     row = dict(event)
+    if str(row.get("kind") or "") == "tool_call":
+        tool_name = row.get("tool_name")
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            tool_name = row.get("title")
+        row["title"] = friendly_tool_title(tool_name if isinstance(tool_name, str) else None)
+        display_text, command_text = summarize_tool_call_input(
+            tool_name if isinstance(tool_name, str) else None,
+            row.get("display_text"),
+        )
+        if command_text and not row.get("command_text"):
+            row["command_text"] = command_text
+        if display_text:
+            row["display_text"] = display_text
     row["style"] = kind_style(str(row.get("kind") or ""), row.get("role"))
     display_text = str(row.get("display_text") or "")
     preview_text, preview_truncated = event_preview_text(display_text)
     row["preview_text"] = preview_text
     row["preview_truncated"] = preview_truncated
     return row
+
+
+def summarize_patch_changes(detail_text: str) -> tuple[str, str]:
+    parsed = parse_jsonish(detail_text)
+    if not isinstance(parsed, dict) or not parsed:
+        return "Patch applied", detail_text.strip()
+
+    paths = sorted(str(path) for path in parsed.keys())
+    basenames = [Path(path).name or path for path in paths]
+    summary_lines = [f"Updated {len(paths)} file{'s' if len(paths) != 1 else ''}"]
+    summary_lines.extend(basenames[:6])
+    if len(paths) > 6:
+        summary_lines.append(f"+{len(paths) - 6} more")
+    return "\n".join(summary_lines), detail_text.strip()
+
+
+def is_command_like_tool_call(event: dict[str, object]) -> bool:
+    return (
+        str(event.get("kind") or "") == "tool_call"
+        and str(event.get("tool_name") or "") in {"exec_command", "write_stdin"}
+        and bool(event.get("call_id"))
+    )
+
+
+def is_patch_tool_call(event: dict[str, object]) -> bool:
+    return (
+        str(event.get("kind") or "") == "tool_call"
+        and str(event.get("tool_name") or "") == "apply_patch"
+        and bool(event.get("call_id"))
+    )
+
+
+def merge_compound_tool_events(detail_events: list[dict[str, object]]) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    consumed: set[int] = set()
+
+    for index, event in enumerate(detail_events):
+        if index in consumed:
+            continue
+
+        if is_command_like_tool_call(event):
+            call_id = str(event.get("call_id") or "")
+            tool_name = str(event.get("tool_name") or "")
+            command_event: dict[str, object] | None = None
+            tool_result_event: dict[str, object] | None = None
+            command_index: int | None = None
+            tool_result_index: int | None = None
+
+            for later_index in range(index + 1, len(detail_events)):
+                if later_index in consumed:
+                    continue
+                candidate = detail_events[later_index]
+                if str(candidate.get("call_id") or "") != call_id:
+                    continue
+                if tool_name == "exec_command" and command_event is None and str(candidate.get("kind") or "") == "command":
+                    command_event = candidate
+                    command_index = later_index
+                    continue
+                if tool_result_event is None and str(candidate.get("kind") or "") == "tool_result":
+                    tool_result_event = candidate
+                    tool_result_index = later_index
+                    continue
+
+            if command_event is None and tool_result_event is None:
+                result.append(event)
+                continue
+
+            command_summary = str(event.get("display_text") or "").strip()
+            command_text = (
+                str(command_event.get("command_text") or "").strip()
+                if command_event is not None
+                else ""
+            ) or str(event.get("command_text") or "").strip()
+
+            output_text = ""
+            if command_event is not None:
+                output_candidate = str(command_event.get("detail_text") or "").strip()
+                if output_candidate and output_candidate != str(command_event.get("display_text") or "").strip():
+                    output_text = output_candidate
+            if not output_text and tool_result_event is not None:
+                output_candidate = str(tool_result_event.get("detail_text") or "").strip()
+                if output_candidate and output_candidate != str(tool_result_event.get("display_text") or "").strip():
+                    output_text = output_candidate
+
+            display_text = command_summary or command_text or "Shell command"
+            if output_text:
+                display_text = f"{display_text}\n\nOutput:\n{output_text}"
+
+            merged = dict(event)
+            merged["kind"] = "command"
+            merged["group_key"] = "command"
+            merged["style"] = kind_style("command")
+            merged["title"] = friendly_tool_title(tool_name)
+            merged["command_text"] = command_text or None
+            merged["exit_code"] = command_event.get("exit_code") if command_event is not None else None
+            merged["timestamp"] = (
+                command_event.get("timestamp")
+                if command_event is not None and command_event.get("timestamp")
+                else (
+                    tool_result_event.get("timestamp")
+                    if tool_result_event is not None and tool_result_event.get("timestamp")
+                    else event.get("timestamp")
+                )
+            )
+            merged["display_text"] = display_text.strip()
+            merged["detail_text"] = (output_text or command_text or str(event.get("detail_text") or "")).strip()
+            preview_text, preview_truncated = event_preview_text(str(merged["display_text"]))
+            merged["preview_text"] = preview_text
+            merged["preview_truncated"] = preview_truncated
+
+            result.append(merged)
+            consumed.add(index)
+            if command_index is not None:
+                consumed.add(command_index)
+            if tool_result_index is not None:
+                consumed.add(tool_result_index)
+            continue
+
+        if is_patch_tool_call(event):
+            call_id = str(event.get("call_id") or "")
+            patch_apply_event: dict[str, object] | None = None
+            tool_result_event: dict[str, object] | None = None
+            patch_apply_index: int | None = None
+            tool_result_index: int | None = None
+
+            for later_index in range(index + 1, len(detail_events)):
+                if later_index in consumed:
+                    continue
+                candidate = detail_events[later_index]
+                if str(candidate.get("call_id") or "") != call_id:
+                    continue
+                if (
+                    patch_apply_event is None
+                    and str(candidate.get("record_type") or "") == "event_msg"
+                    and str(candidate.get("payload_type") or "") == "patch_apply_end"
+                ):
+                    patch_apply_event = candidate
+                    patch_apply_index = later_index
+                    continue
+                if tool_result_event is None and str(candidate.get("kind") or "") == "tool_result":
+                    tool_result_event = candidate
+                    tool_result_index = later_index
+                    continue
+
+            if patch_apply_event is None and tool_result_event is None:
+                result.append(event)
+                continue
+
+            detail_text = (
+                str(patch_apply_event.get("detail_text") or "").strip()
+                if patch_apply_event is not None
+                else ""
+            )
+            display_text, merged_detail = summarize_patch_changes(detail_text)
+
+            if tool_result_event is not None:
+                tool_output = str(tool_result_event.get("detail_text") or "").strip()
+                if tool_output and tool_output != str(tool_result_event.get("display_text") or "").strip():
+                    merged_detail = f"{merged_detail}\n\nTool Output:\n{tool_output}".strip()
+
+            merged = dict(event)
+            merged["kind"] = "tool_call"
+            merged["group_key"] = "patch"
+            merged["style"] = kind_style("tool_call")
+            merged["title"] = "Patch"
+            merged["timestamp"] = (
+                patch_apply_event.get("timestamp")
+                if patch_apply_event is not None and patch_apply_event.get("timestamp")
+                else (
+                    tool_result_event.get("timestamp")
+                    if tool_result_event is not None and tool_result_event.get("timestamp")
+                    else event.get("timestamp")
+                )
+            )
+            merged["display_text"] = display_text.strip()
+            merged["detail_text"] = merged_detail.strip() or str(event.get("detail_text") or "").strip()
+            preview_text, preview_truncated = event_preview_text(str(merged["display_text"]))
+            merged["preview_text"] = preview_text
+            merged["preview_truncated"] = preview_truncated
+
+            result.append(merged)
+            consumed.add(index)
+            if patch_apply_index is not None:
+                consumed.add(patch_apply_index)
+            if tool_result_index is not None:
+                consumed.add(tool_result_index)
+            continue
+
+        if index in consumed:
+            continue
+
+        if not is_command_like_tool_call(event) and not is_patch_tool_call(event):
+            result.append(event)
+            continue
+
+    return result
+
+
+def work_entry_label(group_key: str, count: int) -> str:
+    labels = {
+        "patch": ("patch", "patches"),
+        "command": ("command", "commands"),
+        "tool_call": ("tool call", "tool calls"),
+        "tool_result": ("tool result", "tool results"),
+    }
+    singular, plural = labels.get(group_key, ("event", "events"))
+    label = singular if count == 1 else plural
+    return f"{count} {label}"
+
+
+def grouped_work_entries(detail_events: list[dict[str, object]]) -> list[dict[str, object]]:
+    detail_events = merge_compound_tool_events(detail_events)
+    groupable_keys = {"patch", "command"}
+    entries: list[dict[str, object]] = []
+    current_group_key: str | None = None
+    current_events: list[dict[str, object]] = []
+
+    def flush_group() -> None:
+        nonlocal current_group_key, current_events
+        if not current_events:
+            return
+        if len(current_events) == 1:
+            entries.append({"entry_type": "event", "event": current_events[0]})
+        else:
+            entries.append(
+                {
+                    "entry_type": "group",
+                    "kind": current_group_key,
+                    "style": current_events[0]["style"],
+                    "label": work_entry_label(str(current_group_key or ""), len(current_events)),
+                    "count": len(current_events),
+                    "events": list(current_events),
+                    "timestamp_start": current_events[0]["timestamp"],
+                    "timestamp_end": current_events[-1]["timestamp"],
+                }
+            )
+        current_group_key = None
+        current_events = []
+
+    for event in detail_events:
+        group_key = str(event.get("group_key") or event.get("kind") or "")
+        if group_key in groupable_keys:
+            if current_events and current_group_key == group_key:
+                current_events.append(event)
+                continue
+            flush_group()
+            current_group_key = group_key
+            current_events = [event]
+            continue
+
+        flush_group()
+        entries.append({"entry_type": "event", "event": event})
+
+    flush_group()
+    return entries
 
 
 def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
@@ -217,6 +488,10 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
                 if event["event_index"] < completion_event["event_index"]
             ]
             final_response_event = completed_messages[-1] if completed_messages else completion_event
+        elif all_events:
+            legacy_event = legacy_terminal_assistant_event(all_events)
+            if legacy_event is not None:
+                final_response_event = legacy_event
         update_event = assistant_updates[-1] if assistant_updates else None
         abort_event = aborted_events[-1] if aborted_events else None
 
@@ -233,15 +508,15 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
             response_timestamp = completion_event["timestamp"] or final_response_event["timestamp"]
             response_state = "final"
             response_label = "Final Response"
+        elif final_response_event is not None:
+            response_text = str(final_response_event["display_text"] or "")
+            response_timestamp = final_response_event["timestamp"]
+            response_state = "final"
+            response_label = "Final Response"
         elif abort_event is not None:
             response_text = abort_display_label(abort_event)
             response_timestamp = abort_event["timestamp"]
             response_state = "canceled"
-        elif final_response_event is not None:
-            response_text = str(final_response_event["display_text"] or "")
-            response_timestamp = final_response_event["timestamp"]
-            response_state = "update"
-            response_label = "Latest Update"
         elif update_event is not None:
             final_response_event = update_event
             response_text = str(update_event["display_text"] or "")
@@ -256,6 +531,16 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
         detail_events: list[dict[str, object]] = []
         for event in all_events:
             skip = False
+            if event["kind"] == "telemetry":
+                skip = True
+            if event["kind"] == "reasoning":
+                skip = True
+            if event["record_type"] == "turn_context":
+                skip = True
+            if event["record_type"] == "event_msg" and event["payload_type"] == "task_started":
+                skip = True
+            if event["record_type"] == "compacted":
+                skip = True
             if event["kind"] == "message" and event["role"] == "user":
                 skip = True
             if (
@@ -284,6 +569,8 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
                 continue
             detail_events.append(styled_event(event))
 
+        detail_entries = grouped_work_entries(detail_events)
+
         return {
             "number": turn["number"],
             "prompt_text": prompt_text,
@@ -295,7 +582,8 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
             "response_state": response_state,
             "response_label": response_label,
             "detail_events": detail_events,
-            "work_count": len(detail_events),
+            "detail_entries": detail_entries,
+            "work_count": len(detail_entries),
         }
 
     for event in events:
@@ -396,11 +684,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> HTMLResponse:
         with connect(app_settings.database_path) as connection:
             all_rows = query_group_rows(connection)
-            rows = query_group_rows(connection, q=q, host=host)
+            has_filters = bool((q or "").strip() or (host or "").strip())
+            rows = query_group_rows(connection, q=q, host=host) if has_filters else all_rows
             summary_overrides = fetch_session_stream_summaries(connection, [row["id"] for row in rows])
             repo_groups = build_grouped_projects(
                 rows,
-                route_rows=all_rows,
+                route_rows=all_rows if rows is not all_rows else rows,
                 summary_overrides=summary_overrides,
             )
             groups = repo_groups[: app_settings.page_size]
@@ -420,7 +709,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "stats": stats,
                 "q": q or "",
                 "host": host or "",
-                "has_filters": bool((q or "").strip() or (host or "").strip()),
+                "has_filters": has_filters,
                 "return_to": str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""),
                 "search_query": "",
             },
@@ -565,7 +854,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "request": request,
                 "group": detail["group"],
                 "source_groups": detail["source_groups"],
-                "edit_href": project_edit_href(detail["group"].detail_href),
+                "edit_href": project_edit_href(str(request.url.path)),
             },
         )
 
@@ -574,6 +863,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             detail = fetch_group_detail(connection, key)
             if detail is None:
                 raise HTTPException(status_code=404, detail="Project group not found")
+        detail["group"].detail_href = str(request.url.path).rsplit("/edit", 1)[0]
         return templates.TemplateResponse(
             request,
             name="group_edit.html",
@@ -726,6 +1016,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "session_display_summary": session_display_summary,
                 "project": project,
                 "group_href": group_href,
+                "edit_href": project_edit_href(group_href),
                 "turns": turns,
                 "source_roots": [str(path) for path in app_settings.session_roots],
             },

@@ -15,7 +15,10 @@ from .importer import (
     iter_session_files,
     parse_session_file,
     parsed_session_to_payload,
+    SessionParseError,
 )
+
+INVALID_SESSION_CACHE: dict[tuple[str, int, int], str] = {}
 
 
 class RemoteSyncError(RuntimeError):
@@ -240,6 +243,18 @@ def build_raw_upload_payload(
     }
 
 
+def invalid_session_cache_key(path: Path, file_size: int, file_mtime_ns: int) -> tuple[str, int, int]:
+    return (str(path), file_size, file_mtime_ns)
+
+
+def remember_invalid_session(path: Path, file_size: int, file_mtime_ns: int, message: str) -> None:
+    path_str = str(path)
+    stale_keys = [key for key in INVALID_SESSION_CACHE if key[0] == path_str and key[1:] != (file_size, file_mtime_ns)]
+    for key in stale_keys:
+        INVALID_SESSION_CACHE.pop(key, None)
+    INVALID_SESSION_CACHE[invalid_session_cache_key(path, file_size, file_mtime_ns)] = message
+
+
 def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, int]:
     logger = logging.getLogger("codex_session_viewer.remote_sync")
     manifest, ignored_keys, server_meta, actions = ({}, set(), {}, {}) if force else fetch_remote_manifest(settings)
@@ -296,6 +311,12 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
 
     for source_root, path in iter_session_files(settings.session_roots):
         stat = path.stat()
+        cached_parse_error = INVALID_SESSION_CACHE.get(
+            invalid_session_cache_key(path, stat.st_size, stat.st_mtime_ns)
+        )
+        if cached_parse_error is not None:
+            skipped += 1
+            continue
         try:
             if raw_resend_token:
                 parsed = parse_session_file(path, source_root, settings.source_host)
@@ -335,6 +356,10 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
                 continue
             uploaded += 1
             logger.info("Uploaded session %s from %s (%s)", parsed.session_id, path, reason)
+        except SessionParseError as exc:
+            skipped += 1
+            remember_invalid_session(path, stat.st_size, stat.st_mtime_ns, str(exc))
+            logger.warning("Skipping malformed session file %s", exc)
         except Exception:
             failed += 1
             logger.exception("Failed to upload session from %s", path)

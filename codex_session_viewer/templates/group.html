@@ -11,6 +11,14 @@
       <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
         Edit
       </a>
+      <form method="post" action="/projects/actions" onsubmit="return confirm('Delete this repo and all imported sessions from the viewer?');">
+        <input type="hidden" name="group_key" value="{{ group.key }}">
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="return_to" value="/">
+        <button type="submit" class="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-100">
+          Delete
+        </button>
+      </form>
     </div>
   </div>
 
@@ -65,10 +73,18 @@
             {% for session in source_group.sessions %}
               <a href="/sessions/{{ session.id }}" class="block rounded-[1.2rem] border border-stone-200 bg-stone-50/80 p-4 transition hover:border-stone-300 hover:bg-white">
                 <div class="flex flex-wrap items-center justify-between gap-3">
-                  <p class="text-sm font-semibold text-stone-900">{{ session.summary }}</p>
-                  <span class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-stone-500" title="{{ session.session_timestamp|full_timestamp }}">{{ session.session_timestamp|humanize_timestamp }}</span>
+                  <p class="text-sm font-semibold text-stone-900">{{ session.last_user_message or session.summary }}</p>
+                  {% set session_when = session.last_turn_timestamp or session.session_timestamp %}
+                  <span class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-stone-500" title="{{ session_when|full_timestamp }}">{{ session_when|humanize_timestamp }}</span>
                 </div>
-                <p class="mt-2 text-xs text-stone-600">{{ session.host }}</p>
+                <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-600">
+                  <span>{{ session.host }}</span>
+                  <span class="text-stone-400">•</span>
+                  <span>{{ session.turn_count }} turn{% if session.turn_count != 1 %}s{% endif %}</span>
+                </div>
+                {% if session.last_user_message and session.last_user_message != session.summary %}
+                  <p class="mt-2 text-xs leading-5 text-stone-500">Session summary: {{ session.summary }}</p>
+                {% endif %}
               </a>
             {% endfor %}
           </div>

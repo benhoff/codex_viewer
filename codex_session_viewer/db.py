@@ -225,6 +225,9 @@ ON api_tokens(created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_last_used_at
 ON api_tokens(last_used_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_project_overrides_override_group_key
+ON project_overrides(override_group_key);
 """
 
 WRITE_LOCK = threading.RLock()

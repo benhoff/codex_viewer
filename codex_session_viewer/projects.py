@@ -8,7 +8,8 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
-from .session_status import terminal_turn_summary
+from .session_status import is_user_turn_start, prefers_event_msg_user_turns, terminal_turn_summary
+from .text_utils import shorten, strip_codex_wrappers
 
 
 OVERRIDE_SELECT = """
@@ -19,6 +20,37 @@ OVERRIDE_SELECT = """
     o.override_display_label,
     o.created_at AS override_created_at,
     o.updated_at AS override_updated_at
+"""
+
+GROUP_ROW_SELECT = f"""
+    s.id,
+    s.session_timestamp,
+    s.started_at,
+    s.imported_at,
+    s.summary,
+    s.event_count,
+    s.source_host,
+    s.cwd,
+    s.cwd_name,
+    s.git_repository_url,
+    s.github_remote_url,
+    s.github_org,
+    s.github_repo,
+    s.github_slug,
+    s.inferred_project_kind,
+    s.inferred_project_key,
+    s.inferred_project_label,
+    {OVERRIDE_SELECT}
+"""
+
+GROUP_KEY_MATCH_SQL = """
+(
+    o.override_group_key = ?
+    OR (
+        (o.override_group_key IS NULL OR TRIM(o.override_group_key) = '')
+        AND s.inferred_project_key = ?
+    )
+)
 """
 
 
@@ -108,11 +140,14 @@ def build_project_route_map(projects: list["GroupedProject"]) -> dict[str, str]:
     return {project.key: project.detail_href for project in route_projects}
 
 
-def joined_session_query(where_clause: str = "", order_clause: str = "") -> str:
+def joined_session_query(
+    where_clause: str = "",
+    order_clause: str = "",
+    select_clause: str = "s.*, " + OVERRIDE_SELECT,
+) -> str:
     return f"""
         SELECT
-            s.*,
-            {OVERRIDE_SELECT}
+            {select_clause}
         FROM sessions AS s
         LEFT JOIN project_overrides AS o
             ON o.match_project_key = s.inferred_project_key
@@ -210,7 +245,7 @@ def fetch_session_stream_summaries(
         return {}
 
     placeholders = ", ".join("?" for _ in ids)
-    rows = connection.execute(
+    user_rows = connection.execute(
         f"""
         SELECT
             session_id,
@@ -222,20 +257,146 @@ def fetch_session_stream_summaries(
             display_text
         FROM events
         WHERE session_id IN ({placeholders})
+          AND kind = 'message'
+          AND role = 'user'
+          AND (
+            (record_type = 'event_msg' AND payload_type = 'user_message')
+            OR (record_type = 'response_item' AND payload_type = 'message')
+          )
         ORDER BY session_id ASC, event_index ASC
         """,
         ids,
     ).fetchall()
 
-    events_by_session: dict[str, list[sqlite3.Row]] = {}
+    user_events_by_session: dict[str, list[sqlite3.Row]] = {}
+    for row in user_rows:
+        user_events_by_session.setdefault(row["session_id"], []).append(row)
+
+    last_turn_starts: dict[str, int] = {}
+    for session_id, rows in user_events_by_session.items():
+        prefer_event_msg = prefers_event_msg_user_turns(rows)
+        for row in rows:
+            if is_user_turn_start(row, prefer_event_msg):
+                last_turn_starts[session_id] = int(row["event_index"])
+
+    if not last_turn_starts:
+        return {}
+
+    start_items = sorted(last_turn_starts.items())
+    start_values = ", ".join("(?, ?)" for _ in start_items)
+    start_params: list[object] = []
+    for session_id, event_index in start_items:
+        start_params.extend((session_id, event_index))
+
+    rows = connection.execute(
+        f"""
+        WITH last_turn(session_id, start_index) AS (
+            VALUES {start_values}
+        )
+        SELECT
+            e.session_id,
+            e.event_index,
+            e.record_type,
+            e.payload_type,
+            e.kind,
+            e.role,
+            e.display_text
+        FROM events AS e
+        INNER JOIN last_turn AS lt
+            ON lt.session_id = e.session_id
+           AND e.event_index >= lt.start_index
+        WHERE
+          (
+            (
+                e.kind = 'message'
+                AND e.role IN ('user', 'assistant')
+                AND (
+                    (e.record_type = 'event_msg' AND e.payload_type = 'user_message')
+                    OR (e.record_type = 'event_msg' AND e.payload_type = 'agent_message')
+                    OR (e.record_type = 'response_item' AND e.payload_type = 'message')
+                )
+            )
+            OR (
+                e.record_type = 'event_msg'
+                AND e.payload_type IN ('task_complete', 'turn_aborted')
+            )
+            OR e.kind IN ('tool_call', 'tool_result')
+          )
+        ORDER BY e.session_id ASC, e.event_index ASC
+        """,
+        start_params,
+    ).fetchall()
+
+    tail_events_by_session: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
-        events_by_session.setdefault(row["session_id"], []).append(row)
+        tail_events_by_session.setdefault(row["session_id"], []).append(row)
 
     return {
         session_id: summary
-        for session_id, events in events_by_session.items()
+        for session_id, events in tail_events_by_session.items()
         if (summary := terminal_turn_summary(events)) is not None
     }
+
+
+def fetch_session_user_turn_metadata(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+) -> dict[str, dict[str, str | int]]:
+    ids = sorted({session_id for session_id in session_ids if trimmed(session_id)})
+    if not ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            session_id,
+            event_index,
+            record_type,
+            payload_type,
+            kind,
+            role,
+            timestamp,
+            display_text
+        FROM events
+        WHERE session_id IN ({placeholders})
+          AND kind = 'message'
+          AND role = 'user'
+          AND (
+            (record_type = 'event_msg' AND payload_type = 'user_message')
+            OR (record_type = 'response_item' AND payload_type = 'message')
+          )
+        ORDER BY session_id ASC, event_index ASC
+        """,
+        ids,
+    ).fetchall()
+
+    rows_by_session: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        rows_by_session.setdefault(row["session_id"], []).append(row)
+
+    metadata: dict[str, dict[str, str | int]] = {}
+    for session_id, session_rows in rows_by_session.items():
+        prefer_event_msg = prefers_event_msg_user_turns(session_rows)
+        turn_count = 0
+        last_message = ""
+        last_timestamp = ""
+        for row in session_rows:
+            if not is_user_turn_start(row, prefer_event_msg):
+                continue
+            cleaned = strip_codex_wrappers(str(row["display_text"] or "")).strip()
+            if not cleaned:
+                continue
+            turn_count += 1
+            last_message = shorten(cleaned, 220)
+            last_timestamp = str(row["timestamp"] or "")
+        if turn_count or last_message:
+            metadata[session_id] = {
+                "message": last_message,
+                "timestamp": last_timestamp,
+                "turn_count": turn_count,
+            }
+    return metadata
 
 
 def query_group_rows(
@@ -272,8 +433,27 @@ def query_group_rows(
         joined_session_query(
             visible_session_where(conditions),
             "ORDER BY COALESCE(s.session_timestamp, s.started_at, s.imported_at) DESC",
+            GROUP_ROW_SELECT,
         ),
         params,
+    ).fetchall()
+
+
+def query_group_rows_for_key(
+    connection: sqlite3.Connection,
+    group_key: str,
+) -> list[sqlite3.Row]:
+    key = trimmed(group_key)
+    if not key:
+        return []
+
+    return connection.execute(
+        joined_session_query(
+            visible_session_where([GROUP_KEY_MATCH_SQL]),
+            "ORDER BY COALESCE(s.session_timestamp, s.started_at, s.imported_at) DESC",
+            GROUP_ROW_SELECT,
+        ),
+        (key, key),
     ).fetchall()
 
 
@@ -374,7 +554,7 @@ def build_grouped_projects(
     summary_overrides: dict[str, str] | None = None,
 ) -> list[GroupedProject]:
     projects = _collect_grouped_projects(rows, summary_overrides=summary_overrides)
-    route_projects = projects if route_rows is None else _collect_grouped_projects(route_rows)
+    route_projects = projects if route_rows is None or route_rows is rows else _collect_grouped_projects(route_rows)
     route_map = build_project_route_map(route_projects)
     for project in projects:
         project.detail_href = route_map.get(
@@ -391,20 +571,21 @@ def build_grouped_projects(
 
 
 def dashboard_stats(rows: list[sqlite3.Row]) -> dict[str, int]:
-    hosts = {
-        effective_project_fields(row)["source_host"]
-        for row in rows
-        if effective_project_fields(row)["source_host"]
-    }
-    organizations = {
-        effective_project_fields(row)["organization"]
-        for row in rows
-        if effective_project_fields(row)["organization"]
-    }
+    hosts: set[str] = set()
+    organizations: set[str] = set()
+    project_keys: set[str] = set()
+    for row in rows:
+        project = effective_project_fields(row)
+        if project["source_host"]:
+            hosts.add(project["source_host"])
+        if project["organization"]:
+            organizations.add(project["organization"])
+        if project["effective_group_key"]:
+            project_keys.add(project["effective_group_key"])
     return {
         "sessions": len(rows),
         "events": sum(int(row["event_count"] or 0) for row in rows),
-        "projects": len(build_grouped_projects(rows)),
+        "projects": len(project_keys),
         "hosts": len(hosts),
         "organizations": len(organizations),
     }
@@ -424,16 +605,15 @@ def fetch_group_detail(
     connection: sqlite3.Connection,
     group_key: str,
 ) -> dict[str, Any] | None:
-    rows = query_group_rows(connection)
-    summary_overrides = fetch_session_stream_summaries(connection, [row["id"] for row in rows])
-    matching_rows = [
-        row for row in rows if effective_project_fields(row)["effective_group_key"] == group_key
-    ]
+    matching_rows = query_group_rows_for_key(connection, group_key)
     if not matching_rows:
         return None
 
-    all_grouped_projects = build_grouped_projects(rows, summary_overrides=summary_overrides)
-    group = next((item for item in all_grouped_projects if item.key == group_key), None)
+    session_ids = [row["id"] for row in matching_rows]
+    summary_overrides = fetch_session_stream_summaries(connection, session_ids)
+    user_turn_metadata = fetch_session_user_turn_metadata(connection, session_ids)
+    grouped_projects = build_grouped_projects(matching_rows, summary_overrides=summary_overrides)
+    group = next((item for item in grouped_projects if item.key == group_key), None)
     if group is None:
         return None
 
@@ -468,6 +648,9 @@ def fetch_group_detail(
             {
                 "id": row["id"],
                 "summary": summary_overrides.get(row["id"], row["summary"]),
+                "last_user_message": user_turn_metadata.get(row["id"], {}).get("message", ""),
+                "last_turn_timestamp": user_turn_metadata.get(row["id"], {}).get("timestamp", ""),
+                "turn_count": int(user_turn_metadata.get(row["id"], {}).get("turn_count", 0) or 0),
                 "session_timestamp": row["session_timestamp"] or row["started_at"] or row["imported_at"],
                 "event_count": row["event_count"],
                 "host": project["source_host"],
@@ -477,13 +660,23 @@ def fetch_group_detail(
 
     for source_group in by_source.values():
         source_group["sessions"].sort(
-            key=lambda item: item["session_timestamp"] or "",
+            key=lambda item: (item["last_user_message"] or "").lower(),
+        )
+        source_group["sessions"].sort(
+            key=lambda item: item["last_turn_timestamp"] or item["session_timestamp"] or "",
             reverse=True,
         )
         source_groups.append(source_group)
 
     source_groups.sort(
-        key=lambda item: item["sessions"][0]["session_timestamp"] if item["sessions"] else "",
+        key=lambda item: (
+            (
+                item["sessions"][0]["last_turn_timestamp"]
+                or item["sessions"][0]["session_timestamp"]
+            )
+            if item["sessions"]
+            else ""
+        ),
         reverse=True,
     )
 

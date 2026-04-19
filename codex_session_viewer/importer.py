@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
+import logging
 import shlex
 import sqlite3
 from collections.abc import Iterable
@@ -14,24 +14,13 @@ from .config import Settings
 from .db import connect, write_transaction
 from .git_utils import infer_project_identity, resolve_git_info
 from .projects import project_is_ignored
+from .text_utils import shorten, strip_codex_wrappers
+
+logger = logging.getLogger("codex_session_viewer.importer")
 
 
 def utc_now_iso() -> str:
     return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
-
-
-def shorten(text: str, limit: int = 240) -> str:
-    clean = " ".join(text.split())
-    if len(clean) <= limit:
-        return clean
-    return clean[: limit - 1].rstrip() + "…"
-
-
-def strip_codex_wrappers(text: str) -> str:
-    cleaned = text
-    cleaned = re.sub(r"<environment_context>.*?</environment_context>", " ", cleaned, flags=re.DOTALL)
-    cleaned = re.sub(r"<turn_aborted>.*?</turn_aborted>", " ", cleaned, flags=re.DOTALL)
-    return " ".join(cleaned.split()).strip()
 
 
 def first_text_from_content(content: object) -> str:
@@ -67,6 +56,59 @@ def format_command(command: object) -> str:
     if isinstance(command, str):
         return command
     return ""
+
+
+def parse_jsonish(value: object) -> object | None:
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or text[0] not in "[{":
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def friendly_tool_title(tool_name: str | None) -> str:
+    mapping = {
+        "exec_command": "Shell Command",
+        "write_stdin": "Command Session",
+        "apply_patch": "Patch",
+        "view_image": "View Image",
+    }
+    return mapping.get((tool_name or "").strip(), tool_name or "Tool Call")
+
+
+def summarize_tool_call_input(tool_name: str | None, tool_input: object) -> tuple[str, str | None]:
+    raw_text = tool_input if isinstance(tool_input, str) else safe_json(tool_input)
+
+    if tool_name == "exec_command":
+        parsed = parse_jsonish(tool_input)
+        if isinstance(parsed, dict):
+            command_text = format_command(parsed.get("cmd"))
+            workdir = parsed.get("workdir")
+            workdir_name = Path(workdir).name if isinstance(workdir, str) and workdir.strip() else None
+            parts = [command_text or "Shell command"]
+            if workdir_name:
+                parts.append(f"in {workdir_name}")
+            return "\n".join(parts), command_text or None
+    if tool_name == "write_stdin":
+        parsed = parse_jsonish(tool_input)
+        if isinstance(parsed, dict):
+            session_id = parsed.get("session_id")
+            chars = parsed.get("chars")
+            if isinstance(chars, str) and chars:
+                label = "Send input to command session"
+            else:
+                label = "Continue command session"
+            if session_id not in (None, ""):
+                label = f"{label} {session_id}"
+            return label, None
+
+    return raw_text, None
 
 
 def summarize_token_count(payload: dict[str, object]) -> str:
@@ -150,6 +192,23 @@ class ParsedSession:
     events: list[NormalizedEvent]
 
 
+class SessionParseError(ValueError):
+    def __init__(
+        self,
+        source_path: Path,
+        message: str,
+        *,
+        line_number: int | None = None,
+        line_preview: str | None = None,
+    ) -> None:
+        detail = message
+        if line_number is not None:
+            detail = f"line {line_number}: {detail}"
+        if line_preview:
+            detail = f"{detail} [{line_preview}]"
+        super().__init__(f"{source_path}: {detail}")
+
+
 def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEvent | None:
     record_type = str(record.get("type") or "")
     payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
@@ -192,11 +251,14 @@ def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEv
         kind = "tool_call"
         tool_name = payload.get("name") if isinstance(payload.get("name"), str) else None
         call_id = payload.get("call_id") if isinstance(payload.get("call_id"), str) else None
-        title = tool_name or "Tool Call"
+        title = friendly_tool_title(tool_name)
         if payload_type == "function_call":
-            display_text = str(payload.get("arguments") or "")
+            raw_input = payload.get("arguments")
+            detail_text = str(raw_input or "")
         else:
-            display_text = safe_json(payload.get("input"))
+            raw_input = payload.get("input")
+            detail_text = safe_json(raw_input)
+        display_text, command_text = summarize_tool_call_input(tool_name, raw_input)
     elif record_type == "response_item" and payload_type in {"function_call_output", "custom_tool_call_output"}:
         kind = "tool_result"
         call_id = payload.get("call_id") if isinstance(payload.get("call_id"), str) else None
@@ -300,6 +362,16 @@ def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEv
     )
 
 
+def normalize_jsonl_line(line: str, line_number: int) -> str | None:
+    normalized = line
+    if line_number == 1:
+        normalized = normalized.lstrip("\ufeff")
+    normalized = normalized.rstrip("\r\n")
+    if not normalized.strip(" \t\x00"):
+        return None
+    return normalized.lstrip("\x00")
+
+
 def _parse_session_lines(
     lines: Iterable[str],
     source_path: Path,
@@ -321,10 +393,20 @@ def _parse_session_lines(
     warning: str | None = None
 
     for idx, line in enumerate(lines):
-        if not line.strip():
+        line_number = idx + 1
+        normalized_line = normalize_jsonl_line(line, line_number)
+        if normalized_line is None:
             continue
-        content_hash.update(line.encode("utf-8"))
-        record = json.loads(line)
+        content_hash.update(normalized_line.encode("utf-8"))
+        try:
+            record = json.loads(normalized_line)
+        except json.JSONDecodeError as exc:
+            raise SessionParseError(
+                source_path,
+                exc.msg,
+                line_number=line_number,
+                line_preview=shorten(normalized_line.replace("\n", " "), 120),
+            ) from exc
         record_type = record.get("type")
         if record_type == "session_meta" and isinstance(record.get("payload"), dict):
             raw_meta = record["payload"]
@@ -350,7 +432,7 @@ def _parse_session_lines(
             search_parts.append(normalized.display_text)
 
     if raw_meta is None:
-        raise ValueError(f"{source_path} does not contain a session_meta record")
+        raise SessionParseError(source_path, "does not contain a session_meta record")
 
     session_id = str(raw_meta.get("id") or source_path.stem)
     session_timestamp = raw_meta.get("timestamp") if isinstance(raw_meta.get("timestamp"), str) else started_at
@@ -852,7 +934,12 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
                     skipped += 1
                     continue
 
-                parsed = parse_session_file(path, source_root, settings.source_host)
+                try:
+                    parsed = parse_session_file(path, source_root, settings.source_host)
+                except SessionParseError as exc:
+                    logger.warning("Skipping malformed session file %s", exc)
+                    skipped += 1
+                    continue
                 if project_is_ignored(connection, parsed.inferred_project_key):
                     skipped += 1
                     continue
