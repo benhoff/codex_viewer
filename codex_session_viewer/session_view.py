@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -467,6 +468,29 @@ def grouped_work_entries(detail_events: list[dict[str, object]]) -> list[dict[st
     return entries
 
 
+def turn_context_details(events: list[sqlite3.Row]) -> tuple[str | None, str | None]:
+    model: str | None = None
+    effort: str | None = None
+    for event in events:
+        if str(event["record_type"] or "") != "turn_context":
+            continue
+        raw_record = str(event["record_json"] or "").strip()
+        if not raw_record:
+            continue
+        try:
+            record = json.loads(raw_record)
+        except json.JSONDecodeError:
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if isinstance(payload.get("model"), str) and payload["model"].strip():
+            model = payload["model"].strip()
+        if isinstance(payload.get("effort"), str) and payload["effort"].strip():
+            effort = payload["effort"].strip()
+    return model, effort
+
+
 def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
     prefer_event_msg = any(is_user_turn_start(row, True) for row in events)
 
@@ -528,6 +552,7 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
         prompt_text = str(turn["prompt_text"])
         prompt_excerpt = shorten(prompt_text, 220)
         response_excerpt = shorten(response_text, 280) if response_text else "No assistant response captured."
+        agent_model, agent_effort = turn_context_details(all_events)
 
         detail_events: list[dict[str, object]] = []
         for event in all_events:
@@ -571,6 +596,8 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
             "prompt_text": prompt_text,
             "prompt_excerpt": prompt_excerpt,
             "prompt_timestamp": turn["prompt_timestamp"],
+            "agent_model": agent_model,
+            "agent_effort": agent_effort,
             "response_text": response_text,
             "response_excerpt": response_excerpt,
             "response_timestamp": response_timestamp,

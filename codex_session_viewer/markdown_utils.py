@@ -10,7 +10,7 @@ from markupsafe import Markup
 _FENCE_RE = re.compile(r"^(```+|~~~+)\s*([A-Za-z0-9_+-]*)\s*$")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 _UNORDERED_RE = re.compile(r"^\s*[-+*]\s+(.*)$")
-_ORDERED_RE = re.compile(r"^\s*\d+\.\s+(.*)$")
+_ORDERED_RE = re.compile(r"^\s*(\d+)\.\s+(.*)$")
 _BLOCKQUOTE_RE = re.compile(r"^>\s?(.*)$")
 _CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -74,16 +74,19 @@ def render_markdown(value: str | None) -> Markup:
             continue
 
         if _UNORDERED_RE.match(line):
-            items, index = _collect_list(lines, index, ordered=False)
+            items, _, index = _collect_list(lines, index, ordered=False)
             blocks.append(
                 "<ul>" + "".join(f"<li>{_render_inline(item)}</li>" for item in items) + "</ul>"
             )
             continue
 
         if _ORDERED_RE.match(line):
-            items, index = _collect_list(lines, index, ordered=True)
+            items, start_number, index = _collect_list(lines, index, ordered=True)
+            start_attr = f' start="{start_number}"' if start_number and start_number > 1 else ""
             blocks.append(
-                "<ol>" + "".join(f"<li>{_render_inline(item)}</li>" for item in items) + "</ol>"
+                f"<ol{start_attr}>"
+                + "".join(f"<li>{_render_inline(item)}</li>" for item in items)
+                + "</ol>"
             )
             continue
 
@@ -107,11 +110,12 @@ def render_markdown(value: str | None) -> Markup:
     return Markup("\n".join(blocks))
 
 
-def _collect_list(lines: list[str], index: int, ordered: bool) -> tuple[list[str], int]:
+def _collect_list(lines: list[str], index: int, ordered: bool) -> tuple[list[str], int | None, int]:
     pattern = _ORDERED_RE if ordered else _UNORDERED_RE
     other_pattern = _UNORDERED_RE if ordered else _ORDERED_RE
     items: list[str] = []
     current_item: list[str] = []
+    start_number: int | None = None
 
     while index < len(lines):
         line = lines[index]
@@ -119,7 +123,10 @@ def _collect_list(lines: list[str], index: int, ordered: bool) -> tuple[list[str
         if match:
             if current_item:
                 items.append("\n".join(current_item).strip())
-            current_item = [match.group(1).strip()]
+            if ordered and start_number is None:
+                start_number = int(match.group(1))
+            content_index = 2 if ordered else 1
+            current_item = [match.group(content_index).strip()]
             index += 1
             continue
 
@@ -127,7 +134,15 @@ def _collect_list(lines: list[str], index: int, ordered: bool) -> tuple[list[str
             break
 
         if not line.strip():
-            index += 1
+            lookahead = index + 1
+            while lookahead < len(lines) and not lines[lookahead].strip():
+                lookahead += 1
+            if lookahead < len(lines) and pattern.match(lines[lookahead]):
+                items.append("\n".join(current_item).strip())
+                current_item = []
+                index = lookahead
+                continue
+            index = lookahead
             break
 
         if (
@@ -144,7 +159,7 @@ def _collect_list(lines: list[str], index: int, ordered: bool) -> tuple[list[str
 
     if current_item:
         items.append("\n".join(current_item).strip())
-    return items, index
+    return items, start_number, index
 
 
 def _render_inline(value: str) -> str:

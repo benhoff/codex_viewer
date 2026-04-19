@@ -79,6 +79,16 @@
               <div class="rounded-[1.2rem] border border-rose-200 bg-rose-50/90 p-4">
                 <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-rose-700">Full Prompt</p>
                 <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ turn.prompt_text }}</pre>
+                {% if turn.agent_model or turn.agent_effort %}
+                  <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-rose-200/80 pt-3 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-rose-700">
+                    {% if turn.agent_model %}
+                      <span class="rounded-full bg-white/80 px-3 py-1">{{ turn.agent_model }}</span>
+                    {% endif %}
+                    {% if turn.agent_effort %}
+                      <span class="rounded-full bg-white/80 px-3 py-1">Level: {{ turn.agent_effort }}</span>
+                    {% endif %}
+                  </div>
+                {% endif %}
               </div>
 
               <div class="rounded-[1.2rem] border p-4 {% if turn.response_state == 'canceled' %}border-amber-200 bg-amber-50/90{% elif turn.response_state == 'update' %}border-sky-200 bg-sky-50/90{% else %}border-emerald-200 bg-emerald-50/90{% endif %}">
@@ -137,6 +147,16 @@
                   {% endfor %}
                 </div>
               {% endif %}
+
+              <div class="flex justify-end border-t border-stone-200/80 pt-3">
+                <button
+                  type="button"
+                  class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white"
+                  onclick="const turn = this.closest('details'); if (turn) { turn.open = false; turn.scrollIntoView({ block: 'start', behavior: 'smooth' }); }"
+                >
+                  Collapse turn
+                </button>
+              </div>
             </div>
           </details>
         {% else %}
