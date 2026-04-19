@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from ..config import Settings
 from ..db import init_db
 from ..importer import sync_sessions
+from .auth import install_auth
 from .context import AppContext, set_app_context
 from .routes.pages import router as pages_router
 from .routes.projects import router as projects_router
@@ -26,6 +27,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="Codex Session Viewer", version=app_settings.app_version)
+    install_auth(app, app_settings)
     templates = build_templates(app_settings.app_version)
     set_app_context(app, AppContext(settings=app_settings, templates=templates))
 

@@ -14,6 +14,58 @@ A small FastAPI app that centralizes Codex rollout sessions into a server-owned 
 - Export each session as raw JSONL, normalized JSON, or Markdown
 - Uses Tailwind for the UI
 
+## Docker
+
+The repo now includes a container path for the web server:
+
+```bash
+docker compose up --build -d
+```
+
+This default container setup is intentionally server-first:
+
+- runs the FastAPI web server on port `8000`
+- persists SQLite in a Docker volume mounted at `/app/data`
+- assumes remote agents will upload sessions into the server
+- does not depend on Node at runtime because the built CSS is already committed
+
+The container defaults are defined in [compose.yml](/home/wulfuser/codex_viewer/compose.yml) and [Dockerfile](/home/wulfuser/codex_viewer/Dockerfile).
+
+If you want to run the server in single-box local import mode instead of remote upload mode:
+
+1. change `CODEX_VIEWER_SYNC_MODE` to `local`
+2. change `CODEX_VIEWER_SYNC_ON_START` to `1`
+3. mount your Codex session root into the container
+4. point `CODEX_SESSION_ROOTS` at that mounted path
+
+Example override:
+
+```yaml
+services:
+  viewer:
+    volumes:
+      - viewer-data:/app/data
+      - /home/you/.codex/sessions:/sessions:ro
+    environment:
+      CODEX_VIEWER_SYNC_MODE: local
+      CODEX_VIEWER_SYNC_ON_START: 1
+      CODEX_SESSION_ROOTS: /sessions
+```
+
+If you prefer transparent host-side backups instead of a named Docker volume, replace:
+
+```yaml
+volumes:
+  - viewer-data:/app/data
+```
+
+with:
+
+```yaml
+volumes:
+  - ./data:/app/data
+```
+
 ## Run
 
 0. Create a local env file if you are not using systemd:
@@ -48,6 +100,8 @@ A small FastAPI app that centralizes Codex rollout sessions into a server-owned 
    ```
 
 4. Open `http://localhost:8000`
+
+   If browser auth is enabled, the first visit will redirect to `/setup` so you can create the initial local admin account.
 
 ## Commands
 
@@ -117,8 +171,59 @@ Shell or systemd-provided environment variables still win over values from these
 - `CODEX_VIEWER_REMOTE_TIMEOUT`: HTTP timeout for remote sync requests
 - `CODEX_VIEWER_LOG_LEVEL`: log verbosity for the server and daemon
 - `CODEX_VIEWER_SOURCE_HOST`: host label written onto imported sessions
+- `CODEX_VIEWER_AUTH_MODE`: `none`, `password`, `proxy`, or `password_or_proxy`
+- `CODEX_VIEWER_SESSION_SECRET`: required when UI auth is enabled; used to sign login session cookies
+- `CODEX_VIEWER_AUTH_PROXY_USER_HEADER`: trusted reverse-proxy header used for SSO identity, default `X-Forwarded-User`
+- `CODEX_VIEWER_AUTH_PROXY_NAME_HEADER`: trusted reverse-proxy display-name header, default `X-Forwarded-Name`
+- `CODEX_VIEWER_AUTH_PROXY_EMAIL_HEADER`: trusted reverse-proxy email header, default `X-Forwarded-Email`
+- `CODEX_VIEWER_AUTH_PROXY_LOGIN_URL`: optional SSO entrypoint URL for proxy-only deployments
+- `CODEX_VIEWER_AUTH_PROXY_LOGOUT_URL`: optional IdP or proxy logout URL
+- `CODEX_VIEWER_AUTH_COOKIE_SECURE=1`: mark auth session cookies as secure
 - `CODEX_VIEWER_DEV_RELOAD=1`: restart the child process when watched project files change
 - `CODEX_VIEWER_DEV_RELOAD_INTERVAL`: polling interval, in seconds, for dev reload
+
+## UI Auth
+
+The viewer now supports two practical self-hosted auth modes:
+
+- built-in password login
+- reverse-proxy header SSO
+
+### Lightweight auth
+
+Use built-in password auth when you want a single local login without another dependency:
+
+```env
+CODEX_VIEWER_AUTH_MODE=password
+CODEX_VIEWER_SESSION_SECRET=replace-with-a-long-random-secret
+```
+
+Then open the app and complete `/setup` once to create the first local admin account in SQLite.
+
+### SSO behind a reverse proxy
+
+Use proxy mode when an upstream reverse proxy or auth gateway injects a trusted user header:
+
+```env
+CODEX_VIEWER_AUTH_MODE=proxy
+CODEX_VIEWER_SESSION_SECRET=replace-with-a-long-random-secret
+CODEX_VIEWER_AUTH_PROXY_USER_HEADER=X-Forwarded-User
+CODEX_VIEWER_AUTH_PROXY_NAME_HEADER=X-Forwarded-Name
+CODEX_VIEWER_AUTH_PROXY_EMAIL_HEADER=X-Forwarded-Email
+CODEX_VIEWER_AUTH_PROXY_LOGIN_URL=https://sso.example.com
+CODEX_VIEWER_AUTH_PROXY_LOGOUT_URL=https://sso.example.com/logout
+CODEX_VIEWER_AUTH_COOKIE_SECURE=1
+```
+
+Important: proxy auth should only be used behind a trusted reverse proxy that strips and rewrites these headers. Do not expose header-based SSO directly to the internet without a proxy boundary.
+
+If you want both a local emergency login and proxy SSO, use:
+
+```env
+CODEX_VIEWER_AUTH_MODE=password_or_proxy
+```
+
+In `password_or_proxy` mode, the first-run setup still creates the local admin account. After that, users can authenticate through either the local password form or your trusted reverse proxy.
 
 ## Remote Sync Model
 
@@ -163,3 +268,7 @@ For development, the wrapper scripts support separate reload modes for the web s
 The older `CODEX_VIEWER_DEV_RELOAD` variables still act as a fallback, but the split settings are the intended configuration now.
 
 Changes to systemd unit files still require a normal `systemctl restart`.
+
+## Product Notes
+
+There is now a short product-direction doc for the self-hosted audience in [docs/selfhosted-launch-priorities.md](/home/wulfuser/codex_viewer/docs/selfhosted-launch-priorities.md).

@@ -67,6 +67,23 @@ REMOTE_AGENT_COLUMN_DEFS = {
     "last_raw_resend_at": "TEXT",
 }
 
+USER_COLUMN_DEFS = {
+    "id": "TEXT PRIMARY KEY",
+    "username": "TEXT NOT NULL UNIQUE",
+    "password_hash": "TEXT NOT NULL",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+    "last_login_at": "TEXT",
+    "is_admin": "INTEGER NOT NULL DEFAULT 0",
+}
+
+AUTH_STATE_COLUMN_DEFS = {
+    "singleton": "INTEGER PRIMARY KEY CHECK(singleton = 1)",
+    "bootstrap_completed_at": "TEXT",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
 SESSION_COLUMNS = list(SESSION_COLUMN_DEFS.keys())
 EVENT_COLUMNS = [
     "id",
@@ -200,6 +217,23 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     last_used_source_host TEXT,
     revoked_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_login_at TEXT,
+    is_admin INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS auth_state (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    bootstrap_completed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 INDEX_SQL = """
@@ -228,6 +262,9 @@ ON api_tokens(last_used_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_project_overrides_override_group_key
 ON project_overrides(override_group_key);
+
+CREATE INDEX IF NOT EXISTS idx_users_username
+ON users(username);
 """
 
 WRITE_LOCK = threading.RLock()
@@ -429,6 +466,41 @@ def ensure_remote_agent_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_user_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "users"):
+        return
+    user_columns = table_columns(connection, "users")
+    for column_name, column_def in USER_COLUMN_DEFS.items():
+        if column_name not in user_columns and column_name != "id":
+            connection.execute(
+                f"ALTER TABLE users ADD COLUMN {column_name} {column_def}"
+            )
+
+
+def ensure_auth_state_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "auth_state"):
+        return
+    auth_state_columns = table_columns(connection, "auth_state")
+    for column_name, column_def in AUTH_STATE_COLUMN_DEFS.items():
+        if column_name not in auth_state_columns and column_name != "singleton":
+            connection.execute(
+                f"ALTER TABLE auth_state ADD COLUMN {column_name} {column_def}"
+            )
+
+
+def ensure_auth_state_row(connection: sqlite3.Connection) -> None:
+    row = connection.execute(
+        "SELECT 1 FROM auth_state WHERE singleton = 1"
+    ).fetchone()
+    if row is None:
+        connection.execute(
+            """
+            INSERT INTO auth_state (singleton, bootstrap_completed_at, created_at, updated_at)
+            VALUES (1, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+
+
 def init_db(database_path: Path) -> None:
     with connect(database_path) as connection:
         connection.execute("PRAGMA foreign_keys = OFF")
@@ -438,6 +510,8 @@ def init_db(database_path: Path) -> None:
             connection.executescript(OTHER_TABLES_SQL)
             ensure_session_columns(connection)
             ensure_remote_agent_columns(connection)
+            ensure_user_columns(connection)
+            ensure_auth_state_columns(connection)
             recover_legacy_sessions(connection)
             recover_legacy_events(connection)
             rebuilt_sessions = False
@@ -446,5 +520,6 @@ def init_db(database_path: Path) -> None:
                 rebuilt_sessions = True
             if rebuilt_sessions or events_need_rebuild(connection):
                 rebuild_events_table(connection)
+            ensure_auth_state_row(connection)
             connection.executescript(INDEX_SQL)
         connection.execute("PRAGMA foreign_keys = ON")

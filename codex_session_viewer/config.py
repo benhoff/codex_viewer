@@ -23,6 +23,26 @@ def _clean_url(raw: str | None) -> str | None:
     return stripped or None
 
 
+def _clean_text(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    return stripped or None
+
+
+def _normalize_auth_mode(raw: str | None) -> str:
+    candidate = (raw or "none").strip().lower().replace("-", "_")
+    if candidate in {"none", ""}:
+        return "none"
+    if candidate in {"password", "local"}:
+        return "password"
+    if candidate in {"proxy", "sso", "header", "headers"}:
+        return "proxy"
+    if candidate in {"password_or_proxy", "proxy_or_password", "both", "hybrid"}:
+        return "password_or_proxy"
+    return candidate
+
+
 def _env_truthy(raw: str | None, default: bool) -> bool:
     if raw is None:
         return default
@@ -100,6 +120,14 @@ class Settings:
     remote_timeout_seconds: int
     log_level: str
     source_host: str
+    auth_mode: str
+    session_secret: str | None
+    auth_proxy_user_header: str
+    auth_proxy_name_header: str | None
+    auth_proxy_email_header: str | None
+    auth_proxy_login_url: str | None
+    auth_proxy_logout_url: str | None
+    auth_cookie_secure: bool
 
     @classmethod
     def from_env(cls, project_root: Path | None = None) -> "Settings":
@@ -128,6 +156,14 @@ class Settings:
         remote_timeout_seconds = int(os.getenv("CODEX_VIEWER_REMOTE_TIMEOUT", "15"))
         log_level = os.getenv("CODEX_VIEWER_LOG_LEVEL", "info")
         source_host = os.getenv("CODEX_VIEWER_SOURCE_HOST", socket.gethostname())
+        auth_mode = _normalize_auth_mode(os.getenv("CODEX_VIEWER_AUTH_MODE"))
+        session_secret = _clean_text(os.getenv("CODEX_VIEWER_SESSION_SECRET"))
+        auth_proxy_user_header = _clean_text(os.getenv("CODEX_VIEWER_AUTH_PROXY_USER_HEADER")) or "X-Forwarded-User"
+        auth_proxy_name_header = _clean_text(os.getenv("CODEX_VIEWER_AUTH_PROXY_NAME_HEADER")) or "X-Forwarded-Name"
+        auth_proxy_email_header = _clean_text(os.getenv("CODEX_VIEWER_AUTH_PROXY_EMAIL_HEADER")) or "X-Forwarded-Email"
+        auth_proxy_login_url = _clean_text(os.getenv("CODEX_VIEWER_AUTH_PROXY_LOGIN_URL"))
+        auth_proxy_logout_url = _clean_text(os.getenv("CODEX_VIEWER_AUTH_PROXY_LOGOUT_URL"))
+        auth_cookie_secure = _env_truthy(os.getenv("CODEX_VIEWER_AUTH_COOKIE_SECURE"), False)
         return cls(
             project_root=root,
             environment_name=environment_name,
@@ -151,7 +187,24 @@ class Settings:
             remote_timeout_seconds=remote_timeout_seconds,
             log_level=log_level,
             source_host=source_host,
+            auth_mode=auth_mode,
+            session_secret=session_secret,
+            auth_proxy_user_header=auth_proxy_user_header,
+            auth_proxy_name_header=auth_proxy_name_header,
+            auth_proxy_email_header=auth_proxy_email_header,
+            auth_proxy_login_url=auth_proxy_login_url,
+            auth_proxy_logout_url=auth_proxy_logout_url,
+            auth_cookie_secure=auth_cookie_secure,
         )
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def auth_enabled(self) -> bool:
+        return self.auth_mode != "none"
+
+    def auth_allows_password(self) -> bool:
+        return self.auth_mode in {"password", "password_or_proxy"}
+
+    def auth_allows_proxy(self) -> bool:
+        return self.auth_mode in {"proxy", "password_or_proxy"}

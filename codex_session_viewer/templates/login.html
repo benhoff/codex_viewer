@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Sign In | Codex Viewer{% endblock %}
+
+{% block content %}
+  <section class="mx-auto w-full max-w-xl rounded-[2rem] border border-stone-900/10 bg-white/80 p-6 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:p-8">
+    <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Authentication</p>
+    <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl">Sign in to Codex Viewer</h1>
+    <p class="mt-3 text-[0.98rem] leading-7 text-stone-600">
+      {% if settings.auth_mode == 'proxy' %}
+        This server expects trusted reverse-proxy SSO headers. Access it through your configured SSO entrypoint.
+      {% elif settings.auth_mode == 'password_or_proxy' %}
+        You can sign in locally or use your reverse-proxy SSO flow if one is configured in front of the app.
+      {% else %}
+        This server is protected with a local username and password.
+      {% endif %}
+    </p>
+
+    {% if auth_error %}
+      <div class="mt-5 rounded-[1.2rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">
+        {{ auth_error }}
+      </div>
+    {% endif %}
+
+    {% if password_login_enabled %}
+      <form action="/login" method="post" class="mt-6 space-y-4">
+        <input type="hidden" name="next" value="{{ next_path }}" />
+        <label class="block">
+          <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Username</span>
+          <input
+            type="text"
+            name="username"
+            value="{{ username }}"
+            autocomplete="username"
+            class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+          />
+        </label>
+        <label class="block">
+          <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Password</span>
+          <input
+            type="password"
+            name="password"
+            autocomplete="current-password"
+            class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+          />
+        </label>
+        <button
+          type="submit"
+          class="w-full rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
+        >
+          Sign In
+        </button>
+      </form>
+    {% endif %}
+
+    {% if proxy_auth_enabled %}
+      <div class="mt-6 rounded-[1.2rem] border border-sky-200 bg-sky-50/90 px-4 py-4 text-sm leading-6 text-sky-900">
+        <p class="font-semibold">SSO</p>
+        <p class="mt-1">
+          {% if settings.auth_proxy_login_url %}
+            Use your reverse proxy or identity provider to sign in.
+          {% else %}
+            This app trusts a configured user header from a reverse proxy. Direct access without that proxy will not sign you in.
+          {% endif %}
+        </p>
+        {% if settings.auth_proxy_login_url %}
+          <a
+            href="{{ settings.auth_proxy_login_url }}"
+            class="mt-3 inline-flex rounded-full bg-sky-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-500"
+          >
+            Continue with SSO
+          </a>
+        {% endif %}
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

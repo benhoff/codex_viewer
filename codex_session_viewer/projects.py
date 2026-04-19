@@ -126,6 +126,7 @@ def build_project_route_map(projects: list["GroupedProject"]) -> dict[str, str]:
             latest_session_id=project.latest_session_id,
             latest_summary=project.latest_summary,
             session_count=project.session_count,
+            turn_count=project.turn_count,
             event_count=project.event_count,
             host_count=project.host_count,
             hosts=list(project.hosts),
@@ -469,6 +470,7 @@ class GroupedProject:
     latest_session_id: str | None
     latest_summary: str | None
     session_count: int
+    turn_count: int
     event_count: int
     host_count: int
     hosts: list[str]
@@ -481,6 +483,7 @@ class GroupedProject:
 def _collect_grouped_projects(
     rows: list[sqlite3.Row],
     summary_overrides: dict[str, str] | None = None,
+    turn_metadata: dict[str, dict[str, str | int]] | None = None,
 ) -> list[GroupedProject]:
     grouped: dict[str, dict[str, Any]] = {}
 
@@ -500,6 +503,7 @@ def _collect_grouped_projects(
                 "latest_session_id": row["id"],
                 "latest_summary": row_summary,
                 "session_count": 0,
+                "turn_count": 0,
                 "event_count": 0,
                 "hosts": set(),
                 "directories": set(),
@@ -515,6 +519,7 @@ def _collect_grouped_projects(
             group["latest_summary"] = row_summary
 
         group["session_count"] += 1
+        group["turn_count"] += int((turn_metadata or {}).get(row["id"], {}).get("turn_count", 0) or 0)
         group["event_count"] += int(row["event_count"] or 0)
         if project["source_host"]:
             group["hosts"].add(project["source_host"])
@@ -535,6 +540,7 @@ def _collect_grouped_projects(
             latest_session_id=group["latest_session_id"],
             latest_summary=group["latest_summary"],
             session_count=group["session_count"],
+            turn_count=group["turn_count"],
             event_count=group["event_count"],
             host_count=len(group["hosts"]),
             hosts=sorted(group["hosts"]),
@@ -552,8 +558,13 @@ def build_grouped_projects(
     limit: int | None = None,
     route_rows: list[sqlite3.Row] | None = None,
     summary_overrides: dict[str, str] | None = None,
+    turn_metadata: dict[str, dict[str, str | int]] | None = None,
 ) -> list[GroupedProject]:
-    projects = _collect_grouped_projects(rows, summary_overrides=summary_overrides)
+    projects = _collect_grouped_projects(
+        rows,
+        summary_overrides=summary_overrides,
+        turn_metadata=turn_metadata,
+    )
     route_projects = projects if route_rows is None or route_rows is rows else _collect_grouped_projects(route_rows)
     route_map = build_project_route_map(route_projects)
     for project in projects:
@@ -570,7 +581,10 @@ def build_grouped_projects(
     return projects
 
 
-def dashboard_stats(rows: list[sqlite3.Row]) -> dict[str, int]:
+def dashboard_stats(
+    rows: list[sqlite3.Row],
+    turn_metadata: dict[str, dict[str, str | int]] | None = None,
+) -> dict[str, int]:
     hosts: set[str] = set()
     organizations: set[str] = set()
     project_keys: set[str] = set()
@@ -584,6 +598,7 @@ def dashboard_stats(rows: list[sqlite3.Row]) -> dict[str, int]:
             project_keys.add(project["effective_group_key"])
     return {
         "sessions": len(rows),
+        "turns": sum(int((turn_metadata or {}).get(row["id"], {}).get("turn_count", 0) or 0) for row in rows),
         "events": sum(int(row["event_count"] or 0) for row in rows),
         "projects": len(project_keys),
         "hosts": len(hosts),
