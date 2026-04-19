@@ -77,6 +77,7 @@ def friendly_tool_title(tool_name: str | None) -> str:
         "exec_command": "Shell Command",
         "write_stdin": "Command Session",
         "apply_patch": "Patch",
+        "update_plan": "Plan Update",
         "view_image": "View Image",
     }
     return mapping.get((tool_name or "").strip(), tool_name or "Tool Call")
@@ -84,6 +85,44 @@ def friendly_tool_title(tool_name: str | None) -> str:
 
 def summarize_tool_call_input(tool_name: str | None, tool_input: object) -> tuple[str, str | None]:
     raw_text = tool_input if isinstance(tool_input, str) else safe_json(tool_input)
+
+    if tool_name == "update_plan":
+        parsed = parse_jsonish(tool_input)
+        if isinstance(parsed, dict):
+            steps = parsed.get("plan")
+            explanation = parsed.get("explanation")
+            plan_items = [item for item in steps if isinstance(item, dict)] if isinstance(steps, list) else []
+            counts: dict[str, int] = {}
+            for item in plan_items:
+                status = str(item.get("status") or "").strip().lower() or "unknown"
+                counts[status] = counts.get(status, 0) + 1
+            summary_parts: list[str] = []
+            if plan_items:
+                summary_parts.append(f"{len(plan_items)} step{'s' if len(plan_items) != 1 else ''}")
+            for status in ("in_progress", "completed", "pending"):
+                count = counts.get(status)
+                if count:
+                    summary_parts.append(f"{count} {status.replace('_', ' ')}")
+            for status, count in sorted(counts.items()):
+                if status not in {"in_progress", "completed", "pending"}:
+                    summary_parts.append(f"{count} {status.replace('_', ' ')}")
+
+            current_step = ""
+            for item in plan_items:
+                if str(item.get("status") or "").strip().lower() == "in_progress":
+                    current_step = str(item.get("step") or "").strip()
+                    if current_step:
+                        break
+
+            lines: list[str] = []
+            if isinstance(explanation, str) and explanation.strip():
+                lines.append(explanation.strip())
+            if summary_parts:
+                lines.append(" | ".join(summary_parts))
+            if current_step:
+                lines.append(f"Current: {current_step}")
+            if lines:
+                return "\n".join(lines), None
 
     if tool_name == "exec_command":
         parsed = parse_jsonish(tool_input)

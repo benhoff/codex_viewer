@@ -15,13 +15,45 @@
       <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500">{{ event.timestamp }}</p>
     {% endif %}
   </div>
-  {% if event.preview_text %}
+  {% if event.plan_update %}
+    {% if event.plan_explanation %}
+      <p class="mt-3 text-[0.94rem] leading-6 text-stone-800 sm:leading-7">{{ event.plan_explanation }}</p>
+    {% endif %}
+    <div class="mt-3 flex flex-wrap gap-2">
+      {% if event.plan_summary %}
+        <span class="rounded-full bg-white/90 px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-stone-600">{{ event.plan_summary }}</span>
+      {% endif %}
+      {% if event.plan_counts.in_progress %}
+        <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-amber-800">{{ event.plan_counts.in_progress }} in progress</span>
+      {% endif %}
+      {% if event.plan_counts.completed %}
+        <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">{{ event.plan_counts.completed }} completed</span>
+      {% endif %}
+      {% if event.plan_counts.pending %}
+        <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ event.plan_counts.pending }} pending</span>
+      {% endif %}
+    </div>
+    {% if event.plan_steps %}
+      <div class="mt-4 space-y-2">
+        {% for step in event.plan_steps %}
+          <div class="flex items-start gap-3 rounded-[1rem] bg-white/90 px-3 py-3">
+            <span class="mt-0.5 rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] {% if step.status == 'completed' %}bg-emerald-100 text-emerald-700{% elif step.status == 'in_progress' %}bg-amber-100 text-amber-700{% elif step.status == 'pending' %}bg-stone-100 text-stone-600{% else %}bg-sky-100 text-sky-700{% endif %}">
+              {{ step.status_label }}
+            </span>
+            <p class="min-w-0 flex-1 text-[0.94rem] leading-6 text-stone-800 sm:leading-7">{{ step.step }}</p>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% elif event.preview_text %}
     <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-[1rem] bg-white/90 p-3 text-[0.95rem] leading-6 text-stone-800 sm:leading-7">{{ event.preview_text }}</pre>
   {% endif %}
   {% if event.preview_truncated or (event.detail_text and event.detail_text != event.display_text) %}
     <details class="mt-3 rounded-[1rem] bg-white/70 p-3 text-sm text-stone-700">
       <summary class="cursor-pointer font-semibold text-stone-700">
-        {% if event.preview_truncated and event.detail_text and event.detail_text != event.display_text %}
+        {% if event.plan_update %}
+          Show raw payload
+        {% elif event.preview_truncated and event.detail_text and event.detail_text != event.display_text %}
           Show full event and detail
         {% elif event.preview_truncated %}
           Show full event
