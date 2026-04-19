@@ -854,84 +854,143 @@ def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
 
 
 def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession) -> None:
-    connection.execute(
+    existing_by_path = connection.execute(
         """
-        DELETE FROM events
-        WHERE session_id IN (
-            SELECT id
-            FROM sessions
-            WHERE source_host = ? AND source_path = ?
+        SELECT id
+        FROM sessions
+        WHERE source_host = ? AND source_path = ?
+        """,
+        (parsed.source_host, str(parsed.source_path)),
+    ).fetchone()
+    if existing_by_path is not None and str(existing_by_path["id"] or "") != parsed.session_id:
+        connection.execute(
+            "DELETE FROM events WHERE session_id = ?",
+            (str(existing_by_path["id"]),),
         )
-        """,
-        (parsed.source_host, str(parsed.source_path)),
-    )
-    connection.execute(
-        "DELETE FROM sessions WHERE source_host = ? AND source_path = ?",
-        (parsed.source_host, str(parsed.source_path)),
-    )
+        connection.execute(
+            "DELETE FROM sessions WHERE id = ?",
+            (str(existing_by_path["id"]),),
+        )
+
     connection.execute("DELETE FROM events WHERE session_id = ?", (parsed.session_id,))
-    connection.execute("DELETE FROM sessions WHERE id = ?", (parsed.session_id,))
-    connection.execute(
-        """
-        INSERT INTO sessions (
-            id, source_path, source_root, file_size, file_mtime_ns, content_sha256,
-            session_timestamp, started_at, ended_at, cwd, cwd_name,
-            source_host, originator, cli_version, source, model_provider,
-            git_branch, git_commit_hash, git_repository_url, github_remote_url,
-            github_org, github_repo, github_slug, inferred_project_kind,
-            inferred_project_key, inferred_project_label, summary, event_count,
-            user_message_count, assistant_message_count, tool_call_count,
-            rollup_version, turn_count, last_user_message, last_turn_timestamp,
-            latest_turn_summary, command_failure_count, aborted_turn_count,
-            import_warning, search_text, raw_meta_json, imported_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            parsed.session_id,
-            str(parsed.source_path),
-            str(parsed.source_root),
-            parsed.file_size,
-            parsed.file_mtime_ns,
-            parsed.content_sha256,
-            parsed.session_timestamp,
-            parsed.started_at,
-            parsed.ended_at,
-            parsed.cwd,
-            parsed.cwd_name,
-            parsed.source_host,
-            parsed.originator,
-            parsed.cli_version,
-            parsed.source,
-            parsed.model_provider,
-            parsed.git_branch,
-            parsed.git_commit_hash,
-            parsed.git_repository_url,
-            parsed.github_remote_url,
-            parsed.github_org,
-            parsed.github_repo,
-            parsed.github_slug,
-            parsed.inferred_project_kind,
-            parsed.inferred_project_key,
-            parsed.inferred_project_label,
-            parsed.summary,
-            parsed.event_count,
-            parsed.user_message_count,
-            parsed.assistant_message_count,
-            parsed.tool_call_count,
-            parsed.rollup_version,
-            parsed.turn_count,
-            parsed.last_user_message,
-            parsed.last_turn_timestamp,
-            parsed.latest_turn_summary,
-            parsed.command_failure_count,
-            parsed.aborted_turn_count,
-            parsed.import_warning,
-            parsed.search_text,
-            parsed.raw_meta_json,
-            parsed.imported_at,
-            parsed.updated_at,
-        ),
+    session_values = (
+        parsed.session_id,
+        str(parsed.source_path),
+        str(parsed.source_root),
+        parsed.file_size,
+        parsed.file_mtime_ns,
+        parsed.content_sha256,
+        parsed.session_timestamp,
+        parsed.started_at,
+        parsed.ended_at,
+        parsed.cwd,
+        parsed.cwd_name,
+        parsed.source_host,
+        parsed.originator,
+        parsed.cli_version,
+        parsed.source,
+        parsed.model_provider,
+        parsed.git_branch,
+        parsed.git_commit_hash,
+        parsed.git_repository_url,
+        parsed.github_remote_url,
+        parsed.github_org,
+        parsed.github_repo,
+        parsed.github_slug,
+        parsed.inferred_project_kind,
+        parsed.inferred_project_key,
+        parsed.inferred_project_label,
+        parsed.summary,
+        parsed.event_count,
+        parsed.user_message_count,
+        parsed.assistant_message_count,
+        parsed.tool_call_count,
+        parsed.rollup_version,
+        parsed.turn_count,
+        parsed.last_user_message,
+        parsed.last_turn_timestamp,
+        parsed.latest_turn_summary,
+        parsed.command_failure_count,
+        parsed.aborted_turn_count,
+        parsed.import_warning,
+        parsed.search_text,
+        parsed.raw_meta_json,
+        parsed.imported_at,
+        parsed.updated_at,
     )
+    existing_by_id = connection.execute(
+        "SELECT 1 FROM sessions WHERE id = ?",
+        (parsed.session_id,),
+    ).fetchone()
+    if existing_by_id is None:
+        connection.execute(
+            """
+            INSERT INTO sessions (
+                id, source_path, source_root, file_size, file_mtime_ns, content_sha256,
+                session_timestamp, started_at, ended_at, cwd, cwd_name,
+                source_host, originator, cli_version, source, model_provider,
+                git_branch, git_commit_hash, git_repository_url, github_remote_url,
+                github_org, github_repo, github_slug, inferred_project_kind,
+                inferred_project_key, inferred_project_label, summary, event_count,
+                user_message_count, assistant_message_count, tool_call_count,
+                rollup_version, turn_count, last_user_message, last_turn_timestamp,
+                latest_turn_summary, command_failure_count, aborted_turn_count,
+                import_warning, search_text, raw_meta_json, imported_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            session_values,
+        )
+    else:
+        connection.execute(
+            """
+            UPDATE sessions
+            SET
+                source_path = ?,
+                source_root = ?,
+                file_size = ?,
+                file_mtime_ns = ?,
+                content_sha256 = ?,
+                session_timestamp = ?,
+                started_at = ?,
+                ended_at = ?,
+                cwd = ?,
+                cwd_name = ?,
+                source_host = ?,
+                originator = ?,
+                cli_version = ?,
+                source = ?,
+                model_provider = ?,
+                git_branch = ?,
+                git_commit_hash = ?,
+                git_repository_url = ?,
+                github_remote_url = ?,
+                github_org = ?,
+                github_repo = ?,
+                github_slug = ?,
+                inferred_project_kind = ?,
+                inferred_project_key = ?,
+                inferred_project_label = ?,
+                summary = ?,
+                event_count = ?,
+                user_message_count = ?,
+                assistant_message_count = ?,
+                tool_call_count = ?,
+                rollup_version = ?,
+                turn_count = ?,
+                last_user_message = ?,
+                last_turn_timestamp = ?,
+                latest_turn_summary = ?,
+                command_failure_count = ?,
+                aborted_turn_count = ?,
+                import_warning = ?,
+                search_text = ?,
+                raw_meta_json = ?,
+                imported_at = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            session_values[1:] + (parsed.session_id,),
+        )
     connection.executemany(
         """
         INSERT INTO events (

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -15,6 +17,7 @@ from ...projects import (
     resolve_project_detail_href,
     upsert_project_override,
 )
+from ...saved_turns import count_saved_turns_by_status, owner_scope_from_request
 from ..context import get_app_context, request_return_to
 from ..forms import parse_form_fields
 
@@ -24,10 +27,12 @@ router = APIRouter()
 
 def render_group_detail(request: Request, key: str) -> HTMLResponse:
     context = get_app_context(request)
+    owner_scope = owner_scope_from_request(request)
     with connect(context.settings.database_path) as connection:
         detail = fetch_group_detail(connection, key)
         if detail is None:
             raise HTTPException(status_code=404, detail="Project group not found")
+        queue_counts = count_saved_turns_by_status(connection, owner_scope, project_key=key)
     return context.templates.TemplateResponse(
         request,
         name="group.html",
@@ -35,7 +40,11 @@ def render_group_detail(request: Request, key: str) -> HTMLResponse:
             "request": request,
             "group": detail["group"],
             "source_groups": detail["source_groups"],
+            "signal_summary": detail["signal_summary"],
+            "attention_sessions": detail["attention_sessions"],
             "edit_href": project_edit_href(str(request.url.path)),
+            "queue_counts": queue_counts,
+            "queue_href": f"{str(request.url.path).rstrip('/')}/queue",
         },
     )
 
@@ -119,6 +128,16 @@ def group_detail(request: Request, owner_slug: str, project_slug: str) -> HTMLRe
     if group_key is None:
         raise HTTPException(status_code=404, detail="Project group not found")
     return render_group_detail(request, group_key)
+
+
+@router.get("/projects/{owner_slug}/{project_slug}/queue", response_class=HTMLResponse)
+def group_queue(request: Request, owner_slug: str, project_slug: str) -> RedirectResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        group_key = resolve_group_key_from_detail_path(connection, owner_slug, project_slug)
+    if group_key is None:
+        raise HTTPException(status_code=404, detail="Project group not found")
+    return RedirectResponse(url=f"/queue?project={quote(group_key, safe='')}", status_code=308)
 
 
 @router.post("/overrides")

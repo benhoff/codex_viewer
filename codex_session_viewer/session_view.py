@@ -19,7 +19,7 @@ from .session_status import (
     is_user_turn_start,
     legacy_terminal_assistant_event,
 )
-from .text_utils import shorten, strip_codex_wrappers
+from .text_utils import shorten, strip_codex_wrappers_preserve_layout
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
@@ -68,6 +68,79 @@ def full_timestamp(value: str | None) -> str:
     if parsed is None:
         return value or "Unknown time"
     return parsed.astimezone().strftime("%b %d, %Y %I:%M %p %Z").replace(" 0", " ")
+
+
+def _should_collapse_prompt_block(block: str) -> bool:
+    stripped = block.strip()
+    if not stripped:
+        return False
+    lines = stripped.splitlines()
+    line_count = len(lines)
+    char_count = len(stripped)
+    first_line = lines[0].strip() if lines else ""
+    last_line = lines[-1].strip() if lines else ""
+
+    if first_line.startswith("```") and last_line.startswith("```"):
+        return True
+    if first_line.startswith("# AGENTS.md instructions"):
+        return True
+    if first_line.startswith("<") and line_count >= 4 and last_line.startswith("</"):
+        return True
+    if line_count >= 14:
+        return True
+    if line_count >= 8 and char_count >= 600:
+        return True
+    if char_count >= 1400:
+        return True
+    return False
+
+
+def prompt_segments(prompt_text: str) -> list[dict[str, object]]:
+    normalized = prompt_text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        return []
+
+    blocks = [block.strip("\n") for block in normalized.split("\n\n") if block.strip("\n").strip()]
+    if not blocks:
+        return []
+
+    segments: list[dict[str, object]] = []
+    current_kind: str | None = None
+    current_blocks: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_kind, current_blocks
+        if not current_blocks or current_kind is None:
+            current_kind = None
+            current_blocks = []
+            return
+        text = "\n\n".join(current_blocks).strip()
+        if not text:
+            current_kind = None
+            current_blocks = []
+            return
+        segments.append(
+            {
+                "kind": current_kind,
+                "text": text,
+                "char_count": len(text),
+                "line_count": len(text.splitlines()),
+            }
+        )
+        current_kind = None
+        current_blocks = []
+
+    for block in blocks:
+        kind = "collapsed" if _should_collapse_prompt_block(block) else "text"
+        if kind == current_kind:
+            current_blocks.append(block)
+            continue
+        flush()
+        current_kind = kind
+        current_blocks = [block]
+
+    flush()
+    return segments
 
 
 def kind_style(kind: str, role: str | None = None) -> str:
@@ -596,6 +669,7 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
         return {
             "number": turn["number"],
             "prompt_text": prompt_text,
+            "prompt_segments": prompt_segments(prompt_text),
             "prompt_excerpt": prompt_excerpt,
             "prompt_timestamp": turn["prompt_timestamp"],
             "agent_model": agent_model,
@@ -612,7 +686,7 @@ def build_turns(events: list[sqlite3.Row]) -> list[dict[str, object]]:
 
     for event in events:
         if is_user_turn_start(event, prefer_event_msg):
-            cleaned_prompt = strip_codex_wrappers(str(event["display_text"] or "")).strip()
+            cleaned_prompt = strip_codex_wrappers_preserve_layout(str(event["display_text"] or "")).strip()
             if not cleaned_prompt:
                 continue
             if current is not None:

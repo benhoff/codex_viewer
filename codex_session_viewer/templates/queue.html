@@ -1,36 +1,67 @@
 {% extends "base.html" %}
 
-{% block title %}Review Queue | Codex Viewer{% endblock %}
+{% block title %}{% if queue_project %}{{ queue_project.display_label }} Queue{% else %}Review Queue{% endif %} | Codex Viewer{% endblock %}
 
 {% block content %}
   <div class="mx-auto w-full max-w-5xl">
     <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/78 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.28)] backdrop-blur sm:p-6">
       <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Saved Turns</p>
-          <h1 class="mt-2 font-display text-3xl text-stone-900 sm:text-4xl">Review Queue</h1>
-          <p class="mt-2 text-sm text-stone-600">Pull important turns out of the stream, then come back and resolve them later.</p>
+          <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{% if queue_project %}Project Queue{% else %}Saved Turns{% endif %}</p>
+          <h1 class="mt-2 font-display text-3xl text-stone-900 sm:text-4xl">{% if queue_project %}{{ queue_project.display_label }}{% else %}Review Queue{% endif %}</h1>
+          <p class="mt-2 text-sm text-stone-600">
+            {% if queue_project %}
+              Saved turns for this repo, pulled out of the stream so you can come back and resolve them later.
+            {% else %}
+              Pull important turns out of the stream, then come back and resolve them later.
+            {% endif %}
+          </p>
+          {% if queue_project %}
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <a href="{{ queue_global_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-stone-50">
+                All projects
+              </a>
+              <a href="{{ queue_project.detail_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-stone-50">
+                Back to repo
+              </a>
+            </div>
+          {% endif %}
         </div>
-        <div class="flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-50/80 p-1">
-          <a href="/queue" class="rounded-full px-4 py-2 text-sm font-semibold transition {% if queue_status == 'open' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-white{% endif %}">
-            Open
-            {% if queue_counts.open %}
-              <span class="ml-2 rounded-full {% if queue_status == 'open' %}bg-white/15 text-white{% else %}bg-amber-100 text-amber-800{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ queue_counts.open }}</span>
-            {% endif %}
-          </a>
-          <a href="/queue?status=resolved" class="rounded-full px-4 py-2 text-sm font-semibold transition {% if queue_status == 'resolved' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-white{% endif %}">
-            Resolved
-            {% if queue_counts.resolved %}
-              <span class="ml-2 rounded-full {% if queue_status == 'resolved' %}bg-white/15 text-white{% else %}bg-stone-200 text-stone-700{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ queue_counts.resolved }}</span>
-            {% endif %}
-          </a>
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          <div class="flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-50/80 p-1">
+            <a href="/queue?status=open&sort={{ queue_sort }}{{ queue_scope_suffix }}" class="rounded-full px-4 py-2 text-sm font-semibold transition {% if queue_status == 'open' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-white{% endif %}">
+              Open
+              {% if queue_counts.open %}
+                <span data-queue-status-count="open" class="ml-2 rounded-full {% if queue_status == 'open' %}bg-white/15 text-white{% else %}bg-amber-100 text-amber-800{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ queue_counts.open }}</span>
+              {% else %}
+                <span data-queue-status-count="open" class="hidden ml-2 rounded-full {% if queue_status == 'open' %}bg-white/15 text-white{% else %}bg-amber-100 text-amber-800{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">0</span>
+              {% endif %}
+            </a>
+            <a href="/queue?status=resolved&sort={{ queue_sort }}{{ queue_scope_suffix }}" class="rounded-full px-4 py-2 text-sm font-semibold transition {% if queue_status == 'resolved' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-white{% endif %}">
+              Resolved
+              {% if queue_counts.resolved %}
+                <span data-queue-status-count="resolved" class="ml-2 rounded-full {% if queue_status == 'resolved' %}bg-white/15 text-white{% else %}bg-stone-200 text-stone-700{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ queue_counts.resolved }}</span>
+              {% else %}
+                <span data-queue-status-count="resolved" class="hidden ml-2 rounded-full {% if queue_status == 'resolved' %}bg-white/15 text-white{% else %}bg-stone-200 text-stone-700{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">0</span>
+              {% endif %}
+            </a>
+          </div>
+          <div class="flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/80 py-1 pl-2 pr-1">
+            <span class="px-3 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Order</span>
+            <a href="/queue?status={{ queue_status }}&sort=newest{{ queue_scope_suffix }}" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_sort == 'newest' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
+              Newest first
+            </a>
+            <a href="/queue?status={{ queue_status }}&sort=oldest{{ queue_scope_suffix }}" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_sort == 'oldest' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
+              Oldest first
+            </a>
+          </div>
         </div>
       </div>
     </section>
 
-    <section class="mt-6 space-y-4">
+    <section data-queue-list class="mt-6 space-y-4">
       {% for item in queue_items %}
-        <article class="rounded-[1.45rem] border border-stone-900/10 bg-white/78 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.2)] backdrop-blur sm:p-5">
+        <article data-queue-item class="rounded-[1.45rem] border border-stone-900/10 bg-white/78 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.2)] backdrop-blur transition sm:p-5">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
@@ -63,16 +94,16 @@
               <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
                 Open turn
               </a>
-              <form action="/queue/actions" method="post">
+              <form data-queue-action-form action="/queue/actions" method="post">
                 <input type="hidden" name="session_id" value="{{ item.session_id }}" />
                 <input type="hidden" name="turn_number" value="{{ item.turn_number }}" />
-                <input type="hidden" name="return_to" value="{% if queue_status == 'resolved' %}/queue?status=resolved{% else %}/queue{% endif %}" />
+                <input type="hidden" name="return_to" value="{{ queue_return_to }}" />
                 {% if item.status == 'open' %}
-                  <button type="submit" name="action" value="resolve" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100">
+                  <button data-queue-action-button type="submit" name="action" value="resolve" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100">
                     Resolve
                   </button>
                 {% else %}
-                  <button type="submit" name="action" value="reopen" class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100">
+                  <button data-queue-action-button type="submit" name="action" value="reopen" class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100">
                     Reopen
                   </button>
                 {% endif %}
@@ -81,7 +112,7 @@
           </div>
         </article>
       {% else %}
-        <div class="rounded-[1.45rem] border border-dashed border-stone-900/15 bg-white/70 p-8 text-sm text-stone-600">
+        <div data-queue-empty-state class="rounded-[1.45rem] border border-dashed border-stone-900/15 bg-white/70 p-8 text-sm text-stone-600">
           {% if queue_status == 'resolved' %}
             No resolved turns yet.
           {% else %}
@@ -89,6 +120,151 @@
           {% endif %}
         </div>
       {% endfor %}
+      {% if queue_items %}
+        <div data-queue-empty-state class="hidden rounded-[1.45rem] border border-dashed border-stone-900/15 bg-white/70 p-8 text-sm text-stone-600">
+          {% if queue_status == 'resolved' %}
+            No resolved turns yet.
+          {% else %}
+            No saved turns yet. Use <span class="font-semibold">Save for review</span> from a session turn to start a queue.
+          {% endif %}
+        </div>
+      {% endif %}
     </section>
   </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (() => {
+      const queueList = document.querySelector("[data-queue-list]");
+      if (!queueList) {
+        return;
+      }
+
+      function updateReviewQueueCountDisplays(openCount) {
+        document.querySelectorAll("[data-review-queue-count]").forEach((node) => {
+          node.textContent = String(openCount);
+          node.classList.toggle("hidden", openCount <= 0);
+        });
+        const pill = document.querySelector("[data-review-queue-pill]");
+        if (pill) {
+          pill.classList.toggle("hidden", openCount <= 0);
+        }
+      }
+
+      function queueStatusCount(status) {
+        const node = document.querySelector(`[data-queue-status-count="${status}"]`);
+        return node ? Number.parseInt(node.textContent || "0", 10) || 0 : 0;
+      }
+
+      function setQueueStatusCount(status, value) {
+        const node = document.querySelector(`[data-queue-status-count="${status}"]`);
+        if (!node) {
+          return;
+        }
+        node.textContent = String(Math.max(value, 0));
+        node.classList.toggle("hidden", value <= 0);
+      }
+
+      function showQueueEmptyStateIfNeeded() {
+        const items = queueList.querySelectorAll("[data-queue-item]");
+        const emptyState = queueList.querySelector("[data-queue-empty-state]");
+        if (!emptyState) {
+          return;
+        }
+        emptyState.classList.toggle("hidden", items.length > 0);
+      }
+
+      function showQueueToast(message) {
+        let toast = document.getElementById("queue-toast");
+        if (!toast) {
+          toast = document.createElement("div");
+          toast.id = "queue-toast";
+          toast.className = "fixed bottom-24 left-1/2 z-40 hidden -translate-x-1/2 rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_18px_45px_-20px_rgba(41,37,36,0.55)]";
+          document.body.appendChild(toast);
+        }
+        toast.textContent = message;
+        toast.classList.remove("hidden");
+        window.clearTimeout(toast._hideTimer);
+        toast._hideTimer = window.setTimeout(() => {
+          toast.classList.add("hidden");
+        }, 1600);
+      }
+
+      async function submitQueueAction(form, button) {
+        const formData = new FormData(form);
+        const action = String(button.value || formData.get("action") || "").toLowerCase();
+        const item = form.closest("[data-queue-item]");
+        button.disabled = true;
+        button.classList.add("opacity-60");
+        if (item) {
+          item.classList.add("opacity-70");
+        }
+
+        try {
+          const response = await fetch(form.action, {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "x-codex-viewer-fetch": "1"
+            },
+            body: new URLSearchParams([...formData.entries()].map(([key, value]) => [key, String(value)]))
+          });
+          if (!response.ok) {
+            throw new Error("queue action failed");
+          }
+
+          const payload = await response.json();
+          const openCount = Number(payload.open_count || 0);
+          updateReviewQueueCountDisplays(openCount);
+
+          const currentOpen = queueStatusCount("open");
+          const currentResolved = queueStatusCount("resolved");
+          if (action === "resolve") {
+            setQueueStatusCount("open", currentOpen - 1);
+            setQueueStatusCount("resolved", currentResolved + 1);
+          } else if (action === "reopen") {
+            setQueueStatusCount("open", currentOpen + 1);
+            setQueueStatusCount("resolved", currentResolved - 1);
+          }
+
+          if (item) {
+            item.animate(
+              [
+                { opacity: 1, transform: "scale(1)" },
+                { opacity: 0, transform: "scale(0.985)" }
+              ],
+              { duration: 180, easing: "ease-out" }
+            );
+            window.setTimeout(() => {
+              item.remove();
+              showQueueEmptyStateIfNeeded();
+            }, 160);
+          } else {
+            showQueueEmptyStateIfNeeded();
+          }
+
+          showQueueToast(action === "resolve" ? "Turn resolved" : "Turn reopened");
+        } catch (_error) {
+          HTMLFormElement.prototype.submit.call(form);
+          return;
+        } finally {
+          button.disabled = false;
+          button.classList.remove("opacity-60");
+        }
+      }
+
+      document.querySelectorAll("[data-queue-action-button]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          const form = button.closest("[data-queue-action-form]");
+          if (!form) {
+            return;
+          }
+          submitQueueAction(form, button);
+        });
+      });
+    })();
+  </script>
 {% endblock %}

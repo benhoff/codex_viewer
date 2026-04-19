@@ -73,6 +73,92 @@ def trimmed(value: object) -> str | None:
     return stripped or None
 
 
+def count_label(count: int, singular: str, plural: str | None = None) -> str:
+    suffix = singular if count == 1 else (plural or f"{singular}s")
+    return f"{count} {suffix}"
+
+
+def build_signal_badges(
+    *,
+    command_failures: int = 0,
+    aborted_turns: int = 0,
+    viewer_warnings: int = 0,
+) -> list[dict[str, str]]:
+    badges: list[dict[str, str]] = []
+    if command_failures > 0:
+        badges.append(
+            {
+                "tone": "rose",
+                "label": count_label(command_failures, "failure"),
+            }
+        )
+    if aborted_turns > 0:
+        badges.append(
+            {
+                "tone": "amber",
+                "label": count_label(aborted_turns, "canceled turn"),
+            }
+        )
+    if viewer_warnings > 0:
+        badges.append(
+            {
+                "tone": "stone",
+                "label": count_label(viewer_warnings, "viewer warning"),
+            }
+        )
+    return badges
+
+
+def summarize_attention_status(
+    *,
+    command_failures: int = 0,
+    aborted_turns: int = 0,
+    viewer_warnings: int = 0,
+    recent_turn_count: int = 0,
+) -> dict[str, str | int | bool]:
+    repeated_canceled = aborted_turns > 1
+    has_attention = command_failures > 0 or viewer_warnings > 0 or repeated_canceled
+    if command_failures > 0:
+        return {
+            "status_tone": "rose",
+            "status_label": "Failure",
+            "status_title": count_label(command_failures, "failed command"),
+            "has_attention": True,
+            "attention_count": command_failures + viewer_warnings + (1 if repeated_canceled else 0),
+        }
+    if viewer_warnings > 0:
+        return {
+            "status_tone": "amber",
+            "status_label": "Viewer Warning",
+            "status_title": count_label(viewer_warnings, "viewer warning"),
+            "has_attention": True,
+            "attention_count": command_failures + viewer_warnings + (1 if repeated_canceled else 0),
+        }
+    if repeated_canceled:
+        return {
+            "status_tone": "amber",
+            "status_label": "Canceled",
+            "status_title": count_label(aborted_turns, "canceled turn"),
+            "has_attention": True,
+            "attention_count": command_failures + viewer_warnings + 1,
+        }
+    if recent_turn_count > 0:
+        return {
+            "status_tone": "emerald",
+            "status_label": "Active",
+            "status_title": count_label(recent_turn_count, "turn") + " in the last 7 days",
+            "has_attention": False,
+            "attention_count": 0,
+        }
+    return {
+        "status_tone": "stone",
+        "status_label": "Idle",
+        "status_title": "No recent turn activity",
+        "has_attention": False,
+        "attention_count": 0,
+    }
+
+
 def slugify_project_segment(value: str | None, fallback: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
     return normalized or fallback
@@ -752,8 +838,23 @@ def fetch_group_detail(
 
     source_groups: list[dict[str, Any]] = []
     by_source: dict[str, dict[str, Any]] = {}
+    signal_summary = {
+        "failed_commands": 0,
+        "canceled_turns": 0,
+        "viewer_warnings": 0,
+        "attention_sessions": 0,
+    }
+    attention_sessions: list[dict[str, Any]] = []
     for row in matching_rows:
         project = effective_project_fields(row)
+        command_failures = int(row["command_failure_count"] or 0)
+        aborted_turns = int(row["aborted_turn_count"] or 0)
+        viewer_warning = trimmed(row["import_warning"]) or ""
+        session_status = summarize_attention_status(
+            command_failures=command_failures,
+            aborted_turns=aborted_turns,
+            viewer_warnings=1 if viewer_warning else 0,
+        )
         source_group = by_source.setdefault(
             project["inferred_project_key"],
             {
@@ -777,19 +878,57 @@ def fetch_group_detail(
                 "sessions": [],
             },
         )
-        source_group["sessions"].append(
-            {
-                "id": row["id"],
-                "summary": trimmed(row["latest_turn_summary"]) or row["summary"],
-                "last_user_message": trimmed(row["last_user_message"]) or "",
-                "last_turn_timestamp": trimmed(row["last_turn_timestamp"]) or "",
-                "turn_count": int(row["turn_count"] or 0),
-                "session_timestamp": row["session_timestamp"] or row["started_at"] or row["imported_at"],
-                "event_count": row["event_count"],
-                "host": project["source_host"],
-                "cwd": project["cwd"],
-            }
-        )
+        session_title = trimmed(row["last_user_message"]) or trimmed(row["latest_turn_summary"]) or row["summary"]
+        session_timestamp = row["session_timestamp"] or row["started_at"] or row["imported_at"]
+        session_when = trimmed(row["last_turn_timestamp"]) or session_timestamp or ""
+        session_item = {
+            "id": row["id"],
+            "summary": trimmed(row["latest_turn_summary"]) or row["summary"],
+            "last_user_message": trimmed(row["last_user_message"]) or "",
+            "last_turn_timestamp": trimmed(row["last_turn_timestamp"]) or "",
+            "turn_count": int(row["turn_count"] or 0),
+            "session_timestamp": session_timestamp,
+            "event_count": row["event_count"],
+            "host": project["source_host"],
+            "cwd": project["cwd"],
+            "command_failure_count": command_failures,
+            "aborted_turn_count": aborted_turns,
+            "viewer_warning": viewer_warning,
+            "has_viewer_warning": bool(viewer_warning),
+            "signal_badges": build_signal_badges(
+                command_failures=command_failures,
+                aborted_turns=aborted_turns,
+                viewer_warnings=1 if viewer_warning else 0,
+            ),
+            "needs_attention": bool(session_status["has_attention"]),
+            "status_tone": str(session_status["status_tone"]),
+            "status_label": str(session_status["status_label"]),
+            "status_title": str(session_status["status_title"]),
+        }
+        source_group["sessions"].append(session_item)
+
+        signal_summary["failed_commands"] += command_failures
+        signal_summary["canceled_turns"] += aborted_turns
+        if viewer_warning:
+            signal_summary["viewer_warnings"] += 1
+        if session_item["needs_attention"]:
+            signal_summary["attention_sessions"] += 1
+            attention_sessions.append(
+                {
+                    "id": row["id"],
+                    "href": f"/sessions/{row['id']}",
+                    "title": session_title or "Session needing attention",
+                    "host": project["source_host"],
+                    "timestamp": session_when,
+                    "summary": trimmed(row["latest_turn_summary"]) or row["summary"] or "",
+                    "command_failure_count": command_failures,
+                    "aborted_turn_count": aborted_turns,
+                    "viewer_warning": viewer_warning,
+                    "signal_badges": session_item["signal_badges"],
+                    "status_tone": session_item["status_tone"],
+                    "status_label": session_item["status_label"],
+                }
+            )
 
     for source_group in by_source.values():
         source_group["sessions"].sort(
@@ -812,10 +951,21 @@ def fetch_group_detail(
         ),
         reverse=True,
     )
+    attention_sessions.sort(
+        key=lambda item: (
+            int(item["command_failure_count"]),
+            1 if item["viewer_warning"] else 0,
+            int(item["aborted_turn_count"]),
+            str(item["timestamp"] or ""),
+        ),
+        reverse=True,
+    )
 
     return {
         "group": group,
         "source_groups": source_groups,
+        "signal_summary": signal_summary,
+        "attention_sessions": attention_sessions,
     }
 
 

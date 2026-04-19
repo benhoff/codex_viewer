@@ -13,6 +13,8 @@ from .text_utils import shorten
 
 GLOBAL_OWNER_SCOPE = "__global__"
 SAVED_TURN_STATUSES = {"open", "resolved"}
+SAVED_TURN_SORTS = {"newest", "oldest"}
+EFFECTIVE_GROUP_KEY_SQL = "COALESCE(NULLIF(TRIM(o.override_group_key), ''), s.inferred_project_key)"
 
 
 def utc_now_iso() -> str:
@@ -33,31 +35,63 @@ def count_saved_turns(
     owner_scope: str,
     *,
     status: str = "open",
+    project_key: str | None = None,
 ) -> int:
-    row = connection.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM saved_turns
-        WHERE owner_scope = ? AND status = ?
-        """,
-        (owner_scope, status),
-    ).fetchone()
+    if project_key:
+        row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM saved_turns AS st
+            INNER JOIN sessions AS s
+                ON s.id = st.session_id
+            LEFT JOIN project_overrides AS o
+                ON o.match_project_key = s.inferred_project_key
+            WHERE st.owner_scope = ? AND st.status = ? AND {EFFECTIVE_GROUP_KEY_SQL} = ?
+            """,
+            (owner_scope, status, project_key),
+        ).fetchone()
+    else:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM saved_turns
+            WHERE owner_scope = ? AND status = ?
+            """,
+            (owner_scope, status),
+        ).fetchone()
     return int(row["count"] or 0) if row is not None else 0
 
 
 def count_saved_turns_by_status(
     connection: sqlite3.Connection,
     owner_scope: str,
+    *,
+    project_key: str | None = None,
 ) -> dict[str, int]:
-    rows = connection.execute(
-        """
-        SELECT status, COUNT(*) AS count
-        FROM saved_turns
-        WHERE owner_scope = ?
-        GROUP BY status
-        """,
-        (owner_scope,),
-    ).fetchall()
+    if project_key:
+        rows = connection.execute(
+            f"""
+            SELECT st.status, COUNT(*) AS count
+            FROM saved_turns AS st
+            INNER JOIN sessions AS s
+                ON s.id = st.session_id
+            LEFT JOIN project_overrides AS o
+                ON o.match_project_key = s.inferred_project_key
+            WHERE st.owner_scope = ? AND {EFFECTIVE_GROUP_KEY_SQL} = ?
+            GROUP BY st.status
+            """,
+            (owner_scope, project_key),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            SELECT status, COUNT(*) AS count
+            FROM saved_turns
+            WHERE owner_scope = ?
+            GROUP BY status
+            """,
+            (owner_scope,),
+        ).fetchall()
     counts = {"open": 0, "resolved": 0}
     for row in rows:
         status = str(row["status"] or "")
@@ -84,6 +118,11 @@ def fetch_session_saved_turn_states(
         for row in rows
         if str(row["status"] or "") in SAVED_TURN_STATUSES
     }
+
+
+def normalize_saved_turn_sort(value: str | None) -> str:
+    sort = str(value or "").strip().lower()
+    return sort if sort in SAVED_TURN_SORTS else "newest"
 
 
 def upsert_saved_turn(
@@ -209,9 +248,21 @@ def list_saved_turns(
     owner_scope: str,
     *,
     status: str = "open",
+    sort: str = "newest",
+    project_key: str | None = None,
 ) -> list[dict[str, Any]]:
+    order_clause = (
+        "ORDER BY st.created_at DESC, st.turn_number DESC"
+        if normalize_saved_turn_sort(sort) == "newest"
+        else "ORDER BY st.created_at ASC, st.turn_number ASC"
+    )
+    where_clause = "WHERE st.owner_scope = ? AND st.status = ?"
+    params: list[object] = [owner_scope, status]
+    if project_key:
+        where_clause += f" AND {EFFECTIVE_GROUP_KEY_SQL} = ?"
+        params.append(project_key)
     rows = connection.execute(
-        """
+        f"""
         SELECT
             st.owner_scope,
             st.session_id,
@@ -245,10 +296,10 @@ def list_saved_turns(
             ON s.id = st.session_id
         LEFT JOIN project_overrides AS o
             ON o.match_project_key = s.inferred_project_key
-        WHERE st.owner_scope = ? AND st.status = ?
-        ORDER BY st.updated_at DESC, st.turn_number DESC
+        {where_clause}
+        {order_clause}
         """,
-        (owner_scope, status),
+        params,
     ).fetchall()
 
     items: list[dict[str, Any]] = []

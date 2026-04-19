@@ -8,6 +8,12 @@
       <a href="/" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
         Back to projects
       </a>
+      <a href="{{ queue_href }}" class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-100">
+        Review queue
+        {% if queue_counts.open %}
+          <span class="ml-2 rounded-full bg-white/80 px-2 py-0.5 text-[0.68rem] font-semibold text-amber-800">{{ queue_counts.open }}</span>
+        {% endif %}
+      </a>
       <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
         Edit
       </a>
@@ -50,6 +56,71 @@
         <p class="mt-2 text-2xl font-semibold text-stone-900">{{ group.source_project_count }}</p>
       </div>
     </div>
+
+    <div class="mt-4 grid gap-3 sm:grid-cols-3">
+      <div class="rounded-[1.15rem] border border-rose-200 bg-rose-50/90 px-4 py-3">
+        <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-rose-700">Failed Commands</p>
+        <p class="mt-2 text-2xl font-semibold text-rose-950">{{ signal_summary.failed_commands }}</p>
+      </div>
+      <div class="rounded-[1.15rem] border border-amber-200 bg-amber-50/90 px-4 py-3">
+        <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-amber-700">Canceled Turns</p>
+        <p class="mt-2 text-2xl font-semibold text-amber-950">{{ signal_summary.canceled_turns }}</p>
+      </div>
+      <div class="rounded-[1.15rem] border border-stone-300 bg-stone-100/90 px-4 py-3">
+        <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-stone-600">Viewer Warnings</p>
+        <p class="mt-2 text-2xl font-semibold text-stone-900">{{ signal_summary.viewer_warnings }}</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="mb-8 rounded-[2rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h2 class="text-2xl font-semibold text-stone-900">Needs Attention</h2>
+        <p class="mt-2 text-sm text-stone-600">Sessions with failed commands, repeated cancels, or viewer-side parse warnings.</p>
+      </div>
+      <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">
+        {{ attention_sessions|length }} session{% if attention_sessions|length != 1 %}s{% endif %}
+      </span>
+    </div>
+
+    {% if attention_sessions %}
+      <div class="mt-5 grid gap-3">
+        {% for session in attention_sessions %}
+          <a href="{{ session.href }}" class="block rounded-[1.2rem] border border-stone-200 bg-stone-50/85 p-4 transition hover:border-stone-300 hover:bg-white">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm font-semibold text-stone-900">{{ session.title }}</p>
+                {% if session.summary and session.summary != session.title %}
+                  <p class="mt-1 truncate text-xs leading-5 text-stone-500">{{ session.summary }}</p>
+                {% endif %}
+              </div>
+              <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if session.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif session.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                {{ session.status_label }}
+              </span>
+            </div>
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-600">
+              <span>{{ session.host }}</span>
+              {% if session.timestamp %}
+                <span class="text-stone-400">•</span>
+                <span title="{{ session.timestamp|full_timestamp }}">{{ session.timestamp|humanize_timestamp }}</span>
+              {% endif %}
+            </div>
+            <div class="mt-3 flex flex-wrap gap-2">
+              {% for badge in session.signal_badges %}
+                <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                  {{ badge.label }}
+                </span>
+              {% endfor %}
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="mt-5 rounded-[1.2rem] border border-emerald-200 bg-emerald-50/80 px-4 py-4 text-sm text-emerald-900">
+        No repo-level attention signals are currently surfaced for this project.
+      </div>
+    {% endif %}
   </section>
 
   <section class="grid gap-6 xl:grid-cols-[1.3fr,1fr]">
@@ -71,17 +142,33 @@
 
           <div class="mt-6 space-y-3">
             {% for session in source_group.sessions %}
-              <a href="/sessions/{{ session.id }}" class="block rounded-[1.2rem] border border-stone-200 bg-stone-50/80 p-4 transition hover:border-stone-300 hover:bg-white">
+              <a href="/sessions/{{ session.id }}" class="block rounded-[1.2rem] border {% if session.needs_attention and session.status_tone == 'rose' %}border-rose-200 bg-rose-50/45{% elif session.needs_attention %}border-amber-200 bg-amber-50/45{% else %}border-stone-200 bg-stone-50/80{% endif %} p-4 transition hover:border-stone-300 hover:bg-white">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                   <p class="text-sm font-semibold text-stone-900">{{ session.last_user_message or session.summary }}</p>
                   {% set session_when = session.last_turn_timestamp or session.session_timestamp %}
-                  <span class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-stone-500" title="{{ session_when|full_timestamp }}">{{ session_when|humanize_timestamp }}</span>
+                  <div class="flex flex-wrap items-center justify-end gap-2">
+                    {% if session.needs_attention %}
+                      <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if session.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif session.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                        {{ session.status_label }}
+                      </span>
+                    {% endif %}
+                    <span class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-stone-500" title="{{ session_when|full_timestamp }}">{{ session_when|humanize_timestamp }}</span>
+                  </div>
                 </div>
                 <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-600">
                   <span>{{ session.host }}</span>
                   <span class="text-stone-400">•</span>
                   <span>{{ session.turn_count }} turn{% if session.turn_count != 1 %}s{% endif %}</span>
                 </div>
+                {% if session.signal_badges %}
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    {% for badge in session.signal_badges %}
+                      <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                        {{ badge.label }}
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
                 {% if session.last_user_message and session.last_user_message != session.summary %}
                   <p class="mt-2 text-xs leading-5 text-stone-500">Session summary: {{ session.summary }}</p>
                 {% endif %}

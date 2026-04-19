@@ -100,7 +100,7 @@
 
             <section class="rounded-[1.15rem] border border-amber-200 bg-amber-50/55">
               <div class="flex items-center justify-between gap-3 border-b border-amber-200/80 px-4 py-3">
-                <h3 class="text-sm font-semibold text-amber-950">Problem Sessions</h3>
+                <h3 class="text-sm font-semibold text-amber-950">Attention Sessions</h3>
                 <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">
                   {{ error_sessions|length }}
                 </span>
@@ -110,24 +110,31 @@
                   <a href="{{ item.session_href }}" class="block px-4 py-3 transition hover:bg-white/50">
                     <div class="flex items-center justify-between gap-3">
                       <p class="min-w-0 truncate text-sm font-semibold text-amber-950">{{ item.title }}</p>
-                      <span class="rounded-full bg-rose-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
-                        {{ item.issue_count }} issues
+                      <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                        {{ item.status_label }}
                       </span>
                     </div>
                     <p class="mt-1 text-xs leading-5 text-amber-900">{{ item.project_label }}</p>
                     <p class="mt-1 text-xs text-amber-800">
                       {{ item.host }}{% if item.timestamp %} • <span title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>{% endif %}
                     </p>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      {% for badge in item.signal_badges %}
+                        <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                          {{ badge.label }}
+                        </span>
+                      {% endfor %}
+                    </div>
                   </a>
                 {% else %}
-                  <div class="px-4 py-5 text-sm text-emerald-900">No error-heavy sessions were detected in the current index.</div>
+                  <div class="px-4 py-5 text-sm text-emerald-900">No repo attention sessions are currently surfaced in the index.</div>
                 {% endfor %}
               </div>
             </section>
           </div>
         {% else %}
           <div class="mt-4 rounded-[1.15rem] border border-emerald-200 bg-emerald-50/80 px-4 py-4 text-sm text-emerald-900">
-            All clear right now. No failing agents and no error-heavy sessions are currently surfaced.
+            All clear right now. No failing agents and no repo attention sessions are currently surfaced.
           </div>
         {% endif %}
       </section>
@@ -137,7 +144,7 @@
           <div class="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 class="text-lg font-semibold text-stone-900">Active Repos</h2>
-              <p class="text-sm text-stone-600">Recent activity and problem signals in one place.</p>
+              <p class="text-sm text-stone-600">Recent activity plus failures, canceled turns, and viewer warnings.</p>
             </div>
             <p class="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
               Showing {{ active_repos|length }} of {{ group_total }}
@@ -159,12 +166,16 @@
                   <div class="min-w-0">
                     <div class="flex flex-wrap items-center gap-2">
                       <p class="min-w-0 flex-1 truncate text-sm font-semibold text-stone-900">{{ item.display_label }}</p>
-                      {% if item.issue_count %}
-                        <span class="rounded-full bg-rose-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-rose-800">
-                          {{ item.issue_label }}
-                        </span>
-                      {% endif %}
                     </div>
+                    {% if item.signal_badges %}
+                      <div class="mt-2 flex flex-wrap gap-2">
+                        {% for badge in item.signal_badges %}
+                          <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                            {{ badge.label }}
+                          </span>
+                        {% endfor %}
+                      </div>
+                    {% endif %}
                     {% if item.summary %}
                       <p class="mt-1 truncate text-xs leading-5 text-stone-600">{{ item.summary }}</p>
                     {% endif %}
@@ -175,19 +186,12 @@
                   <div class="text-sm font-semibold text-stone-900">{{ item.recent_turn_count }}</div>
                   <div class="text-sm text-stone-700">{{ item.host_label }}</div>
                   <div class="flex items-center gap-2 md:justify-end">
-                    {% if item.issue_count %}
-                      <span class="rounded-full bg-rose-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-rose-800">
-                        Attention
-                      </span>
-                    {% elif item.recent_turn_count %}
-                      <span class="rounded-full bg-emerald-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">
-                        Active
-                      </span>
-                    {% else %}
-                      <span class="rounded-full bg-stone-200 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">
-                        Idle
-                      </span>
-                    {% endif %}
+                    <span
+                      class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if item.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% elif item.status_tone == 'emerald' %}bg-emerald-100 text-emerald-800{% else %}bg-stone-200 text-stone-700{% endif %}"
+                      title="{{ item.status_title }}"
+                    >
+                      {{ item.status_label }}
+                    </span>
                   </div>
                 </a>
               {% else %}

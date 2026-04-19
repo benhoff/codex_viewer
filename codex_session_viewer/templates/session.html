@@ -183,9 +183,28 @@
                     </div>
                   {% endif %}
                 </div>
-                <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ turn.prompt_text }}</pre>
-                {% if turn.agent_model or turn.agent_effort %}
-                  <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-rose-200/80 pt-3 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-rose-700">
+                <div class="mt-3 space-y-3">
+                  {% if turn.prompt_segments %}
+                    {% for segment in turn.prompt_segments %}
+                      {% if segment.kind == 'text' %}
+                        <pre class="overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ segment.text }}</pre>
+                      {% else %}
+                        <details class="rounded-[1rem] border border-rose-200/80 bg-white/85 p-3">
+                          <summary class="list-none">
+                            <span class="inline-flex cursor-pointer items-center rounded-full border border-rose-200/90 bg-white px-3 py-1.5 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-700 transition hover:bg-rose-50">
+                              Show large block ({{ "{:,}".format(segment.char_count) }} chars)
+                            </span>
+                          </summary>
+                          <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ segment.text }}</pre>
+                        </details>
+                      {% endif %}
+                    {% endfor %}
+                  {% else %}
+                    <pre class="overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ turn.prompt_text }}</pre>
+                  {% endif %}
+                </div>
+                <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-rose-200/80 pt-3">
+                  <div class="flex flex-wrap items-center gap-2 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-rose-700">
                     {% if turn.agent_model %}
                       <span class="rounded-full bg-white/80 px-3 py-1">{{ turn.agent_model }}</span>
                     {% endif %}
@@ -193,8 +212,6 @@
                       <span class="rounded-full bg-white/80 px-3 py-1">Level: {{ turn.agent_effort }}</span>
                     {% endif %}
                   </div>
-                {% endif %}
-                <div class="mt-4 flex justify-end border-t border-rose-200/80 pt-3">
                   <button
                     type="button"
                     class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white"
@@ -338,6 +355,14 @@
         }
       }
 
+      function currentOpenQueueCount() {
+        const node = document.querySelector("[data-review-queue-count]");
+        if (!node) {
+          return 0;
+        }
+        return Number.parseInt(node.textContent || "0", 10) || 0;
+      }
+
       function showReviewToast(message) {
         let toast = document.getElementById("review-queue-toast");
         if (!toast) {
@@ -402,6 +427,30 @@
         }
       }
 
+      function navigationType() {
+        try {
+          const entries = window.performance && typeof window.performance.getEntriesByType === "function"
+            ? window.performance.getEntriesByType("navigation")
+            : [];
+          if (entries && entries.length && entries[0] && typeof entries[0].type === "string") {
+            return entries[0].type;
+          }
+        } catch (_error) {
+          // Ignore and fall through to legacy API.
+        }
+
+        const legacyNavigation = window.performance && window.performance.navigation;
+        if (legacyNavigation && typeof legacyNavigation.type === "number") {
+          if (legacyNavigation.type === 1) {
+            return "reload";
+          }
+          if (legacyNavigation.type === 2) {
+            return "back_forward";
+          }
+        }
+        return "navigate";
+      }
+
       function collectTurnOpenState() {
         const openTurns = {};
         for (const turn of turnCards) {
@@ -454,7 +503,8 @@
 
       function restoreSessionViewState() {
         const explicitTurn = new URLSearchParams(window.location.search).get("turn");
-        const state = readSessionViewState();
+        const shouldRestoreStoredView = ["reload", "back_forward"].includes(navigationType());
+        const state = shouldRestoreStoredView ? readSessionViewState() : null;
         if (state && state.openTurns) {
           for (const turn of turnCards) {
             const turnNumber = turn.dataset.turnNumber;
@@ -525,6 +575,15 @@
           const turnNumber = turn.dataset.turnNumber;
           const currentStatus = button.dataset.reviewStatus || "";
           const action = currentStatus === "open" ? "resolve" : currentStatus === "resolved" ? "reopen" : "save";
+          const optimisticStatus = action === "resolve" ? "resolved" : "open";
+          const previousOpenCount = currentOpenQueueCount();
+          const optimisticOpenCount =
+            action === "resolve"
+              ? Math.max(previousOpenCount - 1, 0)
+              : previousOpenCount + 1;
+
+          renderReviewState(turn, optimisticStatus);
+          updateQueueCountDisplays(optimisticOpenCount);
           button.disabled = true;
           button.classList.add("opacity-60");
           try {
@@ -554,6 +613,8 @@
                 : "Turn resolved"
             );
           } catch (_error) {
+            renderReviewState(turn, currentStatus);
+            updateQueueCountDisplays(previousOpenCount);
             showReviewToast("Could not update review queue");
           } finally {
             button.disabled = false;

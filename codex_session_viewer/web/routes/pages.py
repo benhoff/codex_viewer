@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -30,15 +31,19 @@ from ...local_auth import (
 )
 from ...projects import (
     build_grouped_projects,
+    build_signal_badges,
     dashboard_stats,
     effective_project_fields,
+    fetch_group_detail,
     fetch_recent_session_turn_activity_windows,
     query_group_rows,
+    summarize_attention_status,
 )
 from ...saved_turns import (
     count_saved_turns_by_status,
     fetch_turn_snapshot,
     list_saved_turns,
+    normalize_saved_turn_sort,
     owner_scope_from_request,
     set_saved_turn_status,
     upsert_saved_turn,
@@ -115,20 +120,41 @@ def render_queue_page(
     request: Request,
     *,
     status: str = "open",
+    sort: str = "newest",
+    project_key: str | None = None,
 ) -> HTMLResponse:
     context = get_app_context(request)
     owner_scope = owner_scope_from_request(request)
+    queue_sort = normalize_saved_turn_sort(sort)
+    queue_project = None
     with connect(context.settings.database_path) as connection:
-        counts = count_saved_turns_by_status(connection, owner_scope)
-        items = list_saved_turns(connection, owner_scope, status=status)
+        if project_key:
+            detail = fetch_group_detail(connection, project_key)
+            if detail is None:
+                raise HTTPException(status_code=404, detail="Project group not found")
+            queue_project = detail["group"]
+        counts = count_saved_turns_by_status(connection, owner_scope, project_key=project_key)
+        items = list_saved_turns(
+            connection,
+            owner_scope,
+            status=status,
+            sort=queue_sort,
+            project_key=project_key,
+        )
+    queue_scope_suffix = f"&project={quote(project_key, safe='')}" if project_key else ""
     return context.templates.TemplateResponse(
         request,
         name="queue.html",
         context={
             "request": request,
             "queue_status": status,
+            "queue_sort": queue_sort,
             "queue_counts": counts,
             "queue_items": items,
+            "queue_project": queue_project,
+            "queue_scope_suffix": queue_scope_suffix,
+            "queue_return_to": f"/queue?status={status}&sort={queue_sort}{queue_scope_suffix}",
+            "queue_global_href": f"/queue?status={status}&sort={queue_sort}",
             "search_query": "",
         },
     )
@@ -294,7 +320,7 @@ def build_group_signal_map(
                 "latest_recent_timestamp": "",
                 "command_failures": 0,
                 "aborted_turns": 0,
-                "has_import_warning": False,
+                "viewer_warnings": 0,
             },
         )
 
@@ -308,14 +334,16 @@ def build_group_signal_map(
         signal["command_failures"] = int(signal["command_failures"]) + int(row["command_failure_count"] or 0)
         signal["aborted_turns"] = int(signal["aborted_turns"]) + int(row["aborted_turn_count"] or 0)
         if str(row["import_warning"] or "").strip():
-            signal["has_import_warning"] = True
+            signal["viewer_warnings"] = int(signal["viewer_warnings"]) + 1
 
     for signal in signals.values():
-        signal["issue_count"] = (
-            int(signal["command_failures"])
-            + int(signal["aborted_turns"])
-            + (1 if signal["has_import_warning"] else 0)
+        status = summarize_attention_status(
+            command_failures=int(signal["command_failures"]),
+            aborted_turns=int(signal["aborted_turns"]),
+            viewer_warnings=int(signal["viewer_warnings"]),
+            recent_turn_count=int(signal["recent_turn_count"]),
         )
+        signal.update(status)
     return signals
 
 
@@ -326,17 +354,8 @@ def build_repo_nav_items(
     items: list[dict[str, object]] = []
     for group in repo_groups:
         signal = group_signals.get(group.key, {})
-        issue_count = int(signal.get("issue_count", 0) or 0)
-        recent_turn_count = int(signal.get("recent_turn_count", 0) or 0)
-        if issue_count > 0:
-            status_tone = "rose"
-            status_title = f"{issue_count} attention item" + ("" if issue_count == 1 else "s")
-        elif recent_turn_count > 0:
-            status_tone = "emerald"
-            status_title = f"{recent_turn_count} turns in the last 7 days"
-        else:
-            status_tone = "stone"
-            status_title = "No recent turn activity"
+        status_tone = str(signal.get("status_tone") or "stone")
+        status_title = str(signal.get("status_title") or "No recent turn activity")
         items.append(
             {
                 "display_label": group.display_label,
@@ -358,12 +377,17 @@ def build_active_repos_panel(
     for group in repo_groups:
         signal = group_signals.get(group.key, {})
         recent_turn_count = int(signal.get("recent_turn_count", 0) or 0)
-        issue_count = int(signal.get("issue_count", 0) or 0)
+        command_failures = int(signal.get("command_failures", 0) or 0)
+        aborted_turns = int(signal.get("aborted_turns", 0) or 0)
+        viewer_warnings = int(signal.get("viewer_warnings", 0) or 0)
         latest_recent_timestamp = str(signal.get("latest_recent_timestamp") or "")
         latest_timestamp = latest_recent_timestamp or str(group.latest_timestamp or "")
-        issue_label = ""
-        if issue_count > 0:
-            issue_label = f"{issue_count} issue" + ("" if issue_count == 1 else "s")
+        status = summarize_attention_status(
+            command_failures=command_failures,
+            aborted_turns=aborted_turns,
+            viewer_warnings=viewer_warnings,
+            recent_turn_count=recent_turn_count,
+        )
         items.append(
             {
                 "display_label": group.display_label,
@@ -374,16 +398,28 @@ def build_active_repos_panel(
                 "host_label": f"{group.host_count} host" + ("" if group.host_count == 1 else "s"),
                 "session_count": group.session_count,
                 "summary": group.latest_summary or "",
-                "issue_count": issue_count,
-                "issue_label": issue_label,
+                "command_failures": command_failures,
+                "aborted_turns": aborted_turns,
+                "viewer_warnings": viewer_warnings,
+                "signal_badges": build_signal_badges(
+                    command_failures=command_failures,
+                    aborted_turns=aborted_turns,
+                    viewer_warnings=viewer_warnings,
+                ),
+                "status_tone": str(status["status_tone"]),
+                "status_label": str(status["status_label"]),
+                "status_title": str(status["status_title"]),
+                "has_attention": bool(status["has_attention"]),
+                "attention_count": int(status["attention_count"]),
             }
         )
 
     items.sort(
         key=lambda item: (
+            1 if item["has_attention"] else 0,
             int(item["recent_turn_count"]),
             str(item["latest_timestamp"] or ""),
-            int(item["issue_count"]),
+            int(item["attention_count"]),
         ),
         reverse=True,
     )
@@ -402,8 +438,12 @@ def build_error_sessions_panel(
         command_failures = int(row["command_failure_count"] or 0)
         aborted_turns = int(row["aborted_turn_count"] or 0)
         import_warning = str(row["import_warning"] or "").strip()
-        issue_count = command_failures + aborted_turns + (1 if import_warning else 0)
-        if issue_count <= 0:
+        status = summarize_attention_status(
+            command_failures=command_failures,
+            aborted_turns=aborted_turns,
+            viewer_warnings=1 if import_warning else 0,
+        )
+        if not status["has_attention"]:
             continue
 
         project = effective_project_fields(row)
@@ -421,16 +461,23 @@ def build_error_sessions_panel(
                 "project_label": group.display_label if group is not None else str(project["display_label"]),
                 "host": str(project["source_host"] or ""),
                 "timestamp": latest_timestamp,
-                "issue_count": issue_count,
                 "command_failures": command_failures,
                 "aborted_turns": aborted_turns,
-                "has_import_warning": bool(import_warning),
+                "viewer_warning": import_warning,
+                "signal_badges": build_signal_badges(
+                    command_failures=command_failures,
+                    aborted_turns=aborted_turns,
+                    viewer_warnings=1 if import_warning else 0,
+                ),
+                "status_tone": str(status["status_tone"]),
+                "status_label": str(status["status_label"]),
+                "attention_count": int(status["attention_count"]),
             }
         )
 
     return sorted(
         items,
-        key=lambda item: (int(item["issue_count"]), str(item["timestamp"] or "")),
+        key=lambda item: (int(item["attention_count"]), str(item["timestamp"] or "")),
         reverse=True,
     )[:limit]
 
@@ -507,11 +554,22 @@ def login_page(request: Request) -> Response:
 
 
 @router.get("/queue", response_class=HTMLResponse)
-def review_queue(request: Request, status: str = Query(default="open")) -> HTMLResponse:
+def review_queue(
+    request: Request,
+    status: str = Query(default="open"),
+    sort: str = Query(default="newest"),
+    project: str | None = Query(default=None),
+) -> HTMLResponse:
     queue_status = status.strip().lower()
     if queue_status not in {"open", "resolved"}:
         queue_status = "open"
-    return render_queue_page(request, status=queue_status)
+    project_key = (project or "").strip() or None
+    return render_queue_page(
+        request,
+        status=queue_status,
+        sort=normalize_saved_turn_sort(sort),
+        project_key=project_key,
+    )
 
 
 @router.post("/login")
