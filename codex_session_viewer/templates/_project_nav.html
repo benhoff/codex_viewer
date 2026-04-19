@@ -1,0 +1,43 @@
+<div data-project-pane="{{ pane_prefix }}" class="flex min-h-0 flex-1 flex-col">
+  <div>
+    <label class="sr-only" for="{{ pane_prefix }}-project-pane-search">Find a repository</label>
+    <input
+      id="{{ pane_prefix }}-project-pane-search"
+      type="text"
+      placeholder="Find a repository"
+      autocomplete="off"
+      data-project-filter-input
+      class="w-full rounded-2xl border border-stone-900/10 bg-white px-4 py-2.5 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+    />
+  </div>
+
+  <div
+    data-project-filter-list
+    class="project-pane-scroll mt-4 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1"
+  >
+    {% for item in repo_nav_items %}
+      <a
+        href="{{ item.detail_href }}"
+        data-project-item
+        data-project-name="{{ (item.display_label or '')|lower }}"
+        class="flex items-center gap-3 rounded-[0.95rem] px-3 py-2 text-sm font-medium text-stone-700 transition hover:bg-stone-100 hover:text-stone-900"
+      >
+        <span
+          class="h-2.5 w-2.5 shrink-0 rounded-full {% if item.status_tone == 'rose' %}bg-rose-500{% elif item.status_tone == 'emerald' %}bg-emerald-500{% else %}bg-stone-300{% endif %}"
+          title="{{ item.status_title }}"
+        ></span>
+        <span class="min-w-0 truncate">{{ item.display_label }}</span>
+      </a>
+    {% else %}
+      <div class="rounded-[1rem] border border-dashed border-stone-900/15 bg-white/70 px-4 py-5 text-sm text-stone-600">
+        No projects matched the current filters.
+      </div>
+    {% endfor %}
+    <div
+      data-project-empty
+      class="hidden rounded-[1rem] border border-dashed border-stone-900/15 bg-white/70 px-4 py-5 text-sm text-stone-600"
+    >
+      No repositories matched your search.
+    </div>
+  </div>
+</div>

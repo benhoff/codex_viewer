@@ -14,6 +14,10 @@ from .config import Settings
 from .db import connect, write_transaction
 from .git_utils import infer_project_identity, resolve_git_info
 from .projects import project_is_ignored
+from .session_rollups import (
+    compute_session_rollups,
+    replace_session_turn_activity_daily,
+)
 from .text_utils import shorten, strip_codex_wrappers
 
 logger = logging.getLogger("codex_session_viewer.importer")
@@ -223,6 +227,13 @@ class ParsedSession:
     user_message_count: int
     assistant_message_count: int
     tool_call_count: int
+    rollup_version: int
+    turn_count: int
+    last_user_message: str
+    last_turn_timestamp: str | None
+    latest_turn_summary: str | None
+    command_failure_count: int
+    aborted_turn_count: int
     import_warning: str | None
     search_text: str
     raw_meta_json: str
@@ -513,6 +524,7 @@ def _parse_session_lines(
     if len(search_text) > 200_000:
         warning = "Search text truncated during import"
         search_text = search_text[:200_000]
+    rollups = compute_session_rollups(events)
 
     return ParsedSession(
         session_id=session_id,
@@ -546,6 +558,13 @@ def _parse_session_lines(
         user_message_count=len(user_messages),
         assistant_message_count=len(assistant_messages),
         tool_call_count=sum(1 for event in events if event.kind == "tool_call"),
+        rollup_version=int(rollups["rollup_version"]),
+        turn_count=int(rollups["turn_count"]),
+        last_user_message=str(rollups["last_user_message"] or ""),
+        last_turn_timestamp=rollups["last_turn_timestamp"],
+        latest_turn_summary=rollups["latest_turn_summary"],
+        command_failure_count=int(rollups["command_failure_count"]),
+        aborted_turn_count=int(rollups["aborted_turn_count"]),
         import_warning=warning,
         search_text=search_text,
         raw_meta_json=safe_json(raw_meta),
@@ -650,6 +669,13 @@ def parsed_session_to_payload(parsed: ParsedSession) -> dict[str, object]:
             "user_message_count": parsed.user_message_count,
             "assistant_message_count": parsed.assistant_message_count,
             "tool_call_count": parsed.tool_call_count,
+            "rollup_version": parsed.rollup_version,
+            "turn_count": parsed.turn_count,
+            "last_user_message": parsed.last_user_message,
+            "last_turn_timestamp": parsed.last_turn_timestamp,
+            "latest_turn_summary": parsed.latest_turn_summary,
+            "command_failure_count": parsed.command_failure_count,
+            "aborted_turn_count": parsed.aborted_turn_count,
             "import_warning": parsed.import_warning,
             "search_text": parsed.search_text,
             "raw_meta_json": parsed.raw_meta_json,
@@ -690,6 +716,11 @@ def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
     user_message_count = _payload_int(session.get("user_message_count"))
     assistant_message_count = _payload_int(session.get("assistant_message_count"))
     tool_call_count = _payload_int(session.get("tool_call_count"))
+    rollup_version = _payload_int(session.get("rollup_version"))
+    turn_count = _payload_int(session.get("turn_count"))
+    last_user_message = _payload_str(session.get("last_user_message"))
+    command_failure_count = _payload_int(session.get("command_failure_count"))
+    aborted_turn_count = _payload_int(session.get("aborted_turn_count"))
     search_text = _payload_str(session.get("search_text"))
     raw_meta_json = _payload_str(session.get("raw_meta_json"))
     imported_at = _payload_str(session.get("imported_at"))
@@ -755,6 +786,25 @@ def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
     if len(normalized_events) != event_count:
         raise ValueError("Session event count does not match uploaded event payload")
 
+    if None in {
+        rollup_version,
+        turn_count,
+        last_user_message,
+        command_failure_count,
+        aborted_turn_count,
+    }:
+        rollups = compute_session_rollups(normalized_events)
+        rollup_version = int(rollups["rollup_version"])
+        turn_count = int(rollups["turn_count"])
+        last_user_message = str(rollups["last_user_message"] or "")
+        command_failure_count = int(rollups["command_failure_count"])
+        aborted_turn_count = int(rollups["aborted_turn_count"])
+        last_turn_timestamp = _payload_str(session.get("last_turn_timestamp")) or rollups["last_turn_timestamp"]
+        latest_turn_summary = _payload_str(session.get("latest_turn_summary")) or rollups["latest_turn_summary"]
+    else:
+        last_turn_timestamp = _payload_str(session.get("last_turn_timestamp"))
+        latest_turn_summary = _payload_str(session.get("latest_turn_summary"))
+
     return ParsedSession(
         session_id=session_id,
         source_path=Path(source_path),
@@ -787,6 +837,13 @@ def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
         user_message_count=user_message_count,
         assistant_message_count=assistant_message_count,
         tool_call_count=tool_call_count,
+        rollup_version=rollup_version,
+        turn_count=turn_count,
+        last_user_message=last_user_message,
+        last_turn_timestamp=last_turn_timestamp,
+        latest_turn_summary=latest_turn_summary,
+        command_failure_count=command_failure_count,
+        aborted_turn_count=aborted_turn_count,
         import_warning=_payload_str(session.get("import_warning")),
         search_text=search_text,
         raw_meta_json=raw_meta_json,
@@ -824,8 +881,10 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
             github_org, github_repo, github_slug, inferred_project_kind,
             inferred_project_key, inferred_project_label, summary, event_count,
             user_message_count, assistant_message_count, tool_call_count,
+            rollup_version, turn_count, last_user_message, last_turn_timestamp,
+            latest_turn_summary, command_failure_count, aborted_turn_count,
             import_warning, search_text, raw_meta_json, imported_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             parsed.session_id,
@@ -859,6 +918,13 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
             parsed.user_message_count,
             parsed.assistant_message_count,
             parsed.tool_call_count,
+            parsed.rollup_version,
+            parsed.turn_count,
+            parsed.last_user_message,
+            parsed.last_turn_timestamp,
+            parsed.latest_turn_summary,
+            parsed.command_failure_count,
+            parsed.aborted_turn_count,
             parsed.import_warning,
             parsed.search_text,
             parsed.raw_meta_json,
@@ -895,6 +961,7 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
             for event in parsed.events
         ],
     )
+    replace_session_turn_activity_daily(connection, parsed.session_id, parsed.events)
 
 
 def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -> list[dict[str, object]]:

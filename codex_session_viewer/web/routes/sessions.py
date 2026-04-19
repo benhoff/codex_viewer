@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -11,9 +12,9 @@ from ...projects import (
     effective_project_fields,
     fetch_session_with_project,
     project_edit_href,
-    resolve_project_detail_href,
 )
 from ...runtime import export_markdown, get_events
+from ...saved_turns import fetch_session_saved_turn_states, owner_scope_from_request
 from ...session_status import terminal_turn_summary
 from ...session_view import build_turns
 from ..context import get_app_context
@@ -22,16 +23,44 @@ from ..context import get_app_context
 router = APIRouter()
 
 
+def get_session_view_events(connection, session_id: str):
+    return connection.execute(
+        """
+        SELECT
+            event_index,
+            timestamp,
+            record_type,
+            payload_type,
+            kind,
+            role,
+            title,
+            display_text,
+            detail_text,
+            tool_name,
+            call_id,
+            command_text,
+            exit_code
+        FROM events
+        WHERE session_id = ?
+        ORDER BY event_index ASC
+        """,
+        (session_id,),
+    ).fetchall()
+
+
 @router.get("/sessions/{session_id}", response_class=HTMLResponse)
 def session_detail(request: Request, session_id: str) -> HTMLResponse:
     context = get_app_context(request)
+    owner_scope = owner_scope_from_request(request)
     with connect(context.settings.database_path) as connection:
         session = fetch_session_with_project(connection, session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        events = get_events(connection, session_id)
-        group_href = resolve_project_detail_href(connection, effective_project_fields(session)["effective_group_key"])
+        events = get_session_view_events(connection, session_id)
+        saved_turn_states = fetch_session_saved_turn_states(connection, owner_scope, session_id)
     project = effective_project_fields(session)
+    group_key = str(project["effective_group_key"])
+    group_href = f"/projects/key/{quote(group_key, safe='')}"
     turns = list(reversed(build_turns(events)))
     session_display_summary = terminal_turn_summary(events) or str(session["summary"])
 
@@ -44,8 +73,9 @@ def session_detail(request: Request, session_id: str) -> HTMLResponse:
             "session_display_summary": session_display_summary,
             "project": project,
             "group_href": group_href,
-            "edit_href": project_edit_href(group_href),
+            "edit_href": f"/projects/edit?key={quote(group_key, safe='')}",
             "turns": turns,
+            "saved_turn_states": saved_turn_states,
             "source_roots": [str(path) for path in context.settings.session_roots],
         },
     )

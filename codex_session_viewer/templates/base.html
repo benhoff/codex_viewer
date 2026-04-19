@@ -35,10 +35,15 @@
             {% endif %}
           </div>
         {% else %}
+          {% set open_review_count = review_queue_open_count(request) %}
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex shrink-0 items-center gap-3">
               <a href="/" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path == '/' or current_path.startswith('/projects') or current_path.startswith('/groups') or current_path.startswith('/sessions') or current_path == '/search' %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">Projects</a>
               <a href="/remotes" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/remotes') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">Remotes</a>
+              <a href="/queue" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/queue') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">
+                Queue
+                <span data-review-queue-count class="ml-2 {% if not open_review_count %}hidden {% endif %}rounded-full {% if current_path.startswith('/queue') %}bg-white/20 text-white{% else %}bg-amber-100 text-amber-800{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ open_review_count }}</span>
+              </a>
             </div>
             <form action="/search" method="get" class="order-3 basis-full min-w-0 flex-1 sm:order-none sm:ml-auto sm:basis-auto sm:max-w-md">
               <label class="sr-only" for="nav-search">Search</label>
@@ -69,6 +74,16 @@
       </nav>
       {% block content %}{% endblock %}
     </main>
+    {% if current_path not in ('/login', '/setup') %}
+      <a
+        href="/queue"
+        data-review-queue-pill
+        class="fixed bottom-4 left-1/2 z-30 {% if not open_review_count %}hidden {% endif %}inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-stone-900/10 bg-stone-900 px-4 py-3 text-sm font-semibold text-white shadow-[0_18px_45px_-20px_rgba(41,37,36,0.55)] transition hover:bg-stone-800 lg:hidden"
+      >
+        Review Queue
+        <span data-review-queue-count class="rounded-full bg-white/15 px-2 py-0.5 text-[0.68rem] font-semibold">{{ open_review_count }}</span>
+      </a>
+    {% endif %}
     {% block scripts %}{% endblock %}
   </body>
 </html>

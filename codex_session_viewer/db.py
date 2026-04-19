@@ -5,6 +5,11 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from .session_rollups import (
+    backfill_session_rollups,
+    backfill_session_turn_activity_daily,
+)
+
 
 SESSION_COLUMN_DEFS = {
     "id": "TEXT PRIMARY KEY",
@@ -38,6 +43,14 @@ SESSION_COLUMN_DEFS = {
     "user_message_count": "INTEGER NOT NULL DEFAULT 0",
     "assistant_message_count": "INTEGER NOT NULL DEFAULT 0",
     "tool_call_count": "INTEGER NOT NULL DEFAULT 0",
+    "rollup_version": "INTEGER NOT NULL DEFAULT 0",
+    "turn_activity_rollup_version": "INTEGER NOT NULL DEFAULT 0",
+    "turn_count": "INTEGER NOT NULL DEFAULT 0",
+    "last_user_message": "TEXT NOT NULL DEFAULT ''",
+    "last_turn_timestamp": "TEXT",
+    "latest_turn_summary": "TEXT",
+    "command_failure_count": "INTEGER NOT NULL DEFAULT 0",
+    "aborted_turn_count": "INTEGER NOT NULL DEFAULT 0",
     "import_warning": "TEXT",
     "search_text": "TEXT NOT NULL DEFAULT ''",
     "raw_meta_json": "TEXT NOT NULL",
@@ -81,6 +94,20 @@ AUTH_STATE_COLUMN_DEFS = {
     "singleton": "INTEGER PRIMARY KEY CHECK(singleton = 1)",
     "bootstrap_completed_at": "TEXT",
     "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
+SAVED_TURN_COLUMN_DEFS = {
+    "owner_scope": "TEXT NOT NULL",
+    "session_id": "TEXT NOT NULL",
+    "turn_number": "INTEGER NOT NULL",
+    "prompt_excerpt": "TEXT NOT NULL DEFAULT ''",
+    "response_excerpt": "TEXT NOT NULL DEFAULT ''",
+    "prompt_timestamp": "TEXT",
+    "response_timestamp": "TEXT",
+    "status": "TEXT NOT NULL DEFAULT 'open'",
+    "created_at": "TEXT NOT NULL",
+    "resolved_at": "TEXT",
     "updated_at": "TEXT NOT NULL",
 }
 
@@ -139,6 +166,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_message_count INTEGER NOT NULL DEFAULT 0,
     assistant_message_count INTEGER NOT NULL DEFAULT 0,
     tool_call_count INTEGER NOT NULL DEFAULT 0,
+    rollup_version INTEGER NOT NULL DEFAULT 0,
+    turn_activity_rollup_version INTEGER NOT NULL DEFAULT 0,
+    turn_count INTEGER NOT NULL DEFAULT 0,
+    last_user_message TEXT NOT NULL DEFAULT '',
+    last_turn_timestamp TEXT,
+    latest_turn_summary TEXT,
+    command_failure_count INTEGER NOT NULL DEFAULT 0,
+    aborted_turn_count INTEGER NOT NULL DEFAULT 0,
     import_warning TEXT,
     search_text TEXT NOT NULL DEFAULT '',
     raw_meta_json TEXT NOT NULL,
@@ -234,6 +269,29 @@ CREATE TABLE IF NOT EXISTS auth_state (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS saved_turns (
+    owner_scope TEXT NOT NULL,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_number INTEGER NOT NULL,
+    prompt_excerpt TEXT NOT NULL DEFAULT '',
+    response_excerpt TEXT NOT NULL DEFAULT '',
+    prompt_timestamp TEXT,
+    response_timestamp TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (owner_scope, session_id, turn_number)
+);
+
+CREATE TABLE IF NOT EXISTS session_turn_activity_daily (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    activity_date TEXT NOT NULL,
+    turn_count INTEGER NOT NULL DEFAULT 0,
+    latest_timestamp TEXT,
+    PRIMARY KEY (session_id, activity_date)
+);
 """
 
 INDEX_SQL = """
@@ -243,8 +301,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_model_provider ON sessions(model_provide
 CREATE INDEX IF NOT EXISTS idx_sessions_source_host ON sessions(source_host);
 CREATE INDEX IF NOT EXISTS idx_sessions_github_slug ON sessions(github_slug);
 CREATE INDEX IF NOT EXISTS idx_sessions_project_key ON sessions(inferred_project_key);
+CREATE INDEX IF NOT EXISTS idx_sessions_last_turn_timestamp ON sessions(last_turn_timestamp DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_host_path_unique
 ON sessions(source_host, source_path);
+
+CREATE INDEX IF NOT EXISTS idx_session_turn_activity_date
+ON session_turn_activity_daily(activity_date DESC);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_session_index
 ON events(session_id, event_index);
@@ -262,6 +324,12 @@ ON api_tokens(last_used_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_project_overrides_override_group_key
 ON project_overrides(override_group_key);
+
+CREATE INDEX IF NOT EXISTS idx_saved_turns_owner_status_updated
+ON saved_turns(owner_scope, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_saved_turns_session
+ON saved_turns(session_id, turn_number);
 
 CREATE INDEX IF NOT EXISTS idx_users_username
 ON users(username);
@@ -425,8 +493,15 @@ def default_select(column_name: str) -> str:
         "user_message_count",
         "assistant_message_count",
         "tool_call_count",
+        "rollup_version",
+        "turn_activity_rollup_version",
+        "turn_count",
+        "command_failure_count",
+        "aborted_turn_count",
     }:
         return "0"
+    if column_name == "last_user_message":
+        return "''"
     return "NULL"
 
 
@@ -488,6 +563,17 @@ def ensure_auth_state_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_saved_turn_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "saved_turns"):
+        return
+    saved_turn_columns = table_columns(connection, "saved_turns")
+    for column_name, column_def in SAVED_TURN_COLUMN_DEFS.items():
+        if column_name not in saved_turn_columns:
+            connection.execute(
+                f"ALTER TABLE saved_turns ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def ensure_auth_state_row(connection: sqlite3.Connection) -> None:
     row = connection.execute(
         "SELECT 1 FROM auth_state WHERE singleton = 1"
@@ -512,6 +598,7 @@ def init_db(database_path: Path) -> None:
             ensure_remote_agent_columns(connection)
             ensure_user_columns(connection)
             ensure_auth_state_columns(connection)
+            ensure_saved_turn_columns(connection)
             recover_legacy_sessions(connection)
             recover_legacy_events(connection)
             rebuilt_sessions = False
@@ -522,4 +609,6 @@ def init_db(database_path: Path) -> None:
                 rebuild_events_table(connection)
             ensure_auth_state_row(connection)
             connection.executescript(INDEX_SQL)
+            backfill_session_rollups(connection)
+            backfill_session_turn_activity_daily(connection)
         connection.execute("PRAGMA foreign_keys = ON")

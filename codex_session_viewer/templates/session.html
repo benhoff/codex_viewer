@@ -60,7 +60,15 @@
 
       <div class="space-y-4">
         {% for turn in turns %}
-          <details open class="rounded-[1.35rem] border border-stone-200 bg-stone-50/70 p-4 sm:p-5">
+          {% set saved_turn_status = saved_turn_states.get(turn.number) %}
+          <details
+            open
+            data-turn-card
+            data-turn-number="{{ turn.number }}"
+            data-saved-turn-status="{{ saved_turn_status or '' }}"
+            class="rounded-[1.35rem] border border-stone-200 bg-stone-50/70 p-4 sm:p-5"
+            ontoggle="const badge = this.querySelector('[data-turn-toggle-badge]'); if (badge) { badge.textContent = this.open ? 'Click header to collapse ▾' : 'Click header to expand ▸'; }"
+          >
             <summary class="cursor-pointer list-none">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="flex flex-wrap items-center gap-2">
@@ -69,9 +77,33 @@
                     <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ turn.work_count }} work items</span>
                   {% endif %}
                 </div>
-                {% if turn.prompt_timestamp %}
-                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500">{{ turn.prompt_timestamp }}</p>
-                {% endif %}
+                <div class="flex flex-wrap items-center gap-2">
+                  <span
+                    data-review-status-badge
+                    class="{% if saved_turn_status %}inline-flex{% else %}hidden{% endif %} rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if saved_turn_status == 'open' %}bg-amber-100 text-amber-800{% else %}bg-emerald-100 text-emerald-800{% endif %}"
+                  >
+                    {% if saved_turn_status == 'open' %}Saved{% elif saved_turn_status == 'resolved' %}Resolved{% endif %}
+                  </span>
+                  <button
+                    type="button"
+                    data-review-action-button
+                    data-turn-number="{{ turn.number }}"
+                    data-review-status="{{ saved_turn_status or '' }}"
+                    class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600 transition hover:border-stone-900/20 hover:text-stone-900"
+                  >
+                    {% if saved_turn_status == 'open' %}
+                      Resolve
+                    {% elif saved_turn_status == 'resolved' %}
+                      Reopen
+                    {% else %}
+                      Save for review
+                    {% endif %}
+                  </button>
+                  {% if turn.prompt_timestamp %}
+                    <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ turn.prompt_timestamp|full_timestamp }}">{{ turn.prompt_timestamp|humanize_timestamp }}</p>
+                  {% endif %}
+                  <span data-turn-toggle-badge class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Click header to collapse ▾</span>
+                </div>
               </div>
             </summary>
 
@@ -89,6 +121,15 @@
                     {% endif %}
                   </div>
                 {% endif %}
+                <div class="mt-4 flex justify-end border-t border-rose-200/80 pt-3">
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white"
+                    onclick="collapseTurnCard(this)"
+                  >
+                    Collapse turn
+                  </button>
+                </div>
               </div>
 
               <div class="rounded-[1.2rem] border p-4 {% if turn.response_state == 'canceled' %}border-amber-200 bg-amber-50/90{% elif turn.response_state == 'update' %}border-sky-200 bg-sky-50/90{% else %}border-emerald-200 bg-emerald-50/90{% endif %}">
@@ -103,7 +144,7 @@
                     {% endif %}
                   </p>
                   {% if turn.response_timestamp %}
-                    <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">{{ turn.response_timestamp }}</span>
+                    <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}" title="{{ turn.response_timestamp|full_timestamp }}">{{ turn.response_timestamp|humanize_timestamp }}</span>
                   {% endif %}
                 </div>
                 {% if turn.response_text %}
@@ -115,6 +156,15 @@
                 {% else %}
                   <p class="mt-3 text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">No assistant response captured.</p>
                 {% endif %}
+                <div class="mt-4 flex justify-end border-t border-emerald-200/80 pt-3 {% if turn.response_state == 'canceled' %}border-amber-200/80{% elif turn.response_state == 'update' %}border-sky-200/80{% else %}border-emerald-200/80{% endif %}">
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white"
+                    onclick="collapseTurnCard(this)"
+                  >
+                    Collapse turn
+                  </button>
+                </div>
               </div>
 
               {% if turn.detail_entries %}
@@ -130,7 +180,7 @@
                               <span class="rounded-full bg-white/80 px-3 py-1 text-[0.68rem] font-medium text-stone-500">Expand</span>
                             </div>
                             {% if entry.timestamp_end %}
-                              <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500">{{ entry.timestamp_end }}</p>
+                              <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ entry.timestamp_end|full_timestamp }}">{{ entry.timestamp_end|humanize_timestamp }}</p>
                             {% endif %}
                           </div>
                         </summary>
@@ -152,7 +202,7 @@
                 <button
                   type="button"
                   class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white"
-                  onclick="const turn = this.closest('details'); if (turn) { turn.open = false; turn.scrollIntoView({ block: 'start', behavior: 'smooth' }); }"
+                  onclick="collapseTurnCard(this)"
                 >
                   Collapse turn
                 </button>
@@ -167,4 +217,279 @@
       </div>
     </section>
   </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (() => {
+      const sessionId = "{{ session.id }}";
+      const sessionViewKey = "codex-session-view:{{ session.id }}";
+      const turnCards = Array.from(document.querySelectorAll("[data-turn-card]"));
+      let scrollTicking = false;
+
+      function turnScrollOffset() {
+        const nav = document.querySelector("nav.sticky");
+        if (!nav) {
+          return 24;
+        }
+        const rect = nav.getBoundingClientRect();
+        return Math.max(nav.offsetHeight + rect.top + 12, 24);
+      }
+
+      function flashCollapsedTurn(turn) {
+        if (!turn || typeof turn.animate !== "function") {
+          return;
+        }
+        turn.animate(
+          [
+            { backgroundColor: "rgba(250, 250, 249, 0.7)", boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" },
+            { backgroundColor: "rgba(254, 243, 199, 0.92)", boxShadow: "0 0 0 4px rgba(245, 158, 11, 0.22)" },
+            { backgroundColor: "rgba(250, 250, 249, 0.7)", boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" }
+          ],
+          {
+            duration: 1200,
+            easing: "ease-out"
+          }
+        );
+      }
+
+      function updateQueueCountDisplays(count) {
+        document.querySelectorAll("[data-review-queue-count]").forEach((node) => {
+          node.textContent = String(count);
+          node.classList.toggle("hidden", count <= 0);
+        });
+        const pill = document.querySelector("[data-review-queue-pill]");
+        if (pill) {
+          pill.classList.toggle("hidden", count <= 0);
+        }
+      }
+
+      function showReviewToast(message) {
+        let toast = document.getElementById("review-queue-toast");
+        if (!toast) {
+          toast = document.createElement("div");
+          toast.id = "review-queue-toast";
+          toast.className = "fixed bottom-24 left-1/2 z-40 -translate-x-1/2 rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_18px_45px_-20px_rgba(41,37,36,0.55)]";
+          document.body.appendChild(toast);
+        }
+        toast.textContent = message;
+        toast.classList.remove("hidden");
+        window.clearTimeout(toast._hideTimer);
+        toast._hideTimer = window.setTimeout(() => {
+          toast.classList.add("hidden");
+        }, 1800);
+      }
+
+      function renderReviewState(turn, status) {
+        if (!turn) {
+          return;
+        }
+        turn.dataset.savedTurnStatus = status || "";
+        const button = turn.querySelector("[data-review-action-button]");
+        const badge = turn.querySelector("[data-review-status-badge]");
+        if (button) {
+          button.dataset.reviewStatus = status || "";
+          if (status === "open") {
+            button.textContent = "Resolve";
+          } else if (status === "resolved") {
+            button.textContent = "Reopen";
+          } else {
+            button.textContent = "Save for review";
+          }
+        }
+        if (badge) {
+          if (status === "open") {
+            badge.textContent = "Saved";
+            badge.className = "inline-flex rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800";
+          } else if (status === "resolved") {
+            badge.textContent = "Resolved";
+            badge.className = "inline-flex rounded-full bg-emerald-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-emerald-800";
+          } else {
+            badge.textContent = "";
+            badge.className = "hidden rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em]";
+          }
+        }
+        writeSessionViewState(turn);
+      }
+
+      function readSessionViewState() {
+        try {
+          const raw = window.sessionStorage.getItem(sessionViewKey);
+          if (!raw) {
+            return null;
+          }
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object") {
+            return null;
+          }
+          return parsed;
+        } catch (_error) {
+          return null;
+        }
+      }
+
+      function collectTurnOpenState() {
+        const openTurns = {};
+        for (const turn of turnCards) {
+          const turnNumber = turn.dataset.turnNumber;
+          if (!turnNumber) {
+            continue;
+          }
+          openTurns[turnNumber] = !!turn.open;
+        }
+        return openTurns;
+      }
+
+      function closestVisibleTurn() {
+        const offset = turnScrollOffset();
+        for (const turn of turnCards) {
+          const rect = turn.getBoundingClientRect();
+          if (rect.bottom > offset + 8) {
+            return turn;
+          }
+        }
+        return turnCards[0] || null;
+      }
+
+      function writeSessionViewState(preferredTurn) {
+        if (!turnCards.length) {
+          return;
+        }
+        const activeTurn = preferredTurn || closestVisibleTurn();
+        const payload = {
+          activeTurn: activeTurn ? activeTurn.dataset.turnNumber : null,
+          openTurns: collectTurnOpenState()
+        };
+        try {
+          window.sessionStorage.setItem(sessionViewKey, JSON.stringify(payload));
+        } catch (_error) {
+          // Ignore storage failures and keep the page usable.
+        }
+      }
+
+      function scrollTurnIntoPlace(turn, behavior) {
+        if (!turn) {
+          return;
+        }
+        const top = window.scrollY + turn.getBoundingClientRect().top - turnScrollOffset();
+        window.scrollTo({
+          top: Math.max(top, 0),
+          behavior
+        });
+      }
+
+      function restoreSessionViewState() {
+        const explicitTurn = new URLSearchParams(window.location.search).get("turn");
+        const state = readSessionViewState();
+        if (state && state.openTurns) {
+          for (const turn of turnCards) {
+            const turnNumber = turn.dataset.turnNumber;
+            if (!turnNumber || !(turnNumber in state.openTurns)) {
+              continue;
+            }
+            turn.open = !!state.openTurns[turnNumber];
+          }
+        }
+        let targetTurnNumber = explicitTurn || (state && state.activeTurn) || "";
+        const activeTurn = turnCards.find((turn) => turn.dataset.turnNumber === String(targetTurnNumber));
+        if (activeTurn) {
+          activeTurn.open = true;
+          requestAnimationFrame(() => {
+            scrollTurnIntoPlace(activeTurn, "auto");
+            if (explicitTurn) {
+              flashCollapsedTurn(activeTurn);
+            }
+          });
+          if (explicitTurn) {
+            writeSessionViewState(activeTurn);
+          }
+        }
+      }
+
+      window.collapseTurnCard = function collapseTurnCard(trigger) {
+        const turn = trigger.closest("details");
+        if (!turn) {
+          return;
+        }
+        turn.open = false;
+        writeSessionViewState(turn);
+        requestAnimationFrame(() => {
+          scrollTurnIntoPlace(turn, "smooth");
+          flashCollapsedTurn(turn);
+        });
+      };
+
+      for (const turn of turnCards) {
+        turn.addEventListener("toggle", () => {
+          writeSessionViewState(turn);
+        });
+      }
+
+      window.addEventListener("scroll", () => {
+        if (scrollTicking) {
+          return;
+        }
+        scrollTicking = true;
+        requestAnimationFrame(() => {
+          writeSessionViewState();
+          scrollTicking = false;
+        });
+      }, { passive: true });
+
+      window.addEventListener("beforeunload", () => {
+        writeSessionViewState();
+      });
+
+      document.querySelectorAll("[data-review-action-button]").forEach((button) => {
+        button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const turn = button.closest("[data-turn-card]");
+          if (!turn) {
+            return;
+          }
+          const turnNumber = turn.dataset.turnNumber;
+          const currentStatus = button.dataset.reviewStatus || "";
+          const action = currentStatus === "open" ? "resolve" : currentStatus === "resolved" ? "reopen" : "save";
+          button.disabled = true;
+          button.classList.add("opacity-60");
+          try {
+            const response = await fetch("/queue/actions", {
+              method: "POST",
+              headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                "x-codex-viewer-fetch": "1"
+              },
+              body: new URLSearchParams({
+                action,
+                session_id: sessionId,
+                turn_number: String(turnNumber || ""),
+                return_to: `${window.location.pathname}${window.location.search}`
+              })
+            });
+            if (!response.ok) {
+              throw new Error("Queue update failed");
+            }
+            const payload = await response.json();
+            renderReviewState(turn, payload.status || "");
+            updateQueueCountDisplays(Number(payload.open_count || 0));
+            showReviewToast(
+              payload.status === "open"
+                ? (action === "save" ? "Saved to review queue" : "Turn reopened")
+                : "Turn resolved"
+            );
+          } catch (_error) {
+            showReviewToast("Could not update review queue");
+          } finally {
+            button.disabled = false;
+            button.classList.remove("opacity-60");
+          }
+        });
+      });
+
+      restoreSessionViewState();
+    })();
+  </script>
 {% endblock %}

@@ -1,0 +1,279 @@
+from __future__ import annotations
+
+import sqlite3
+from datetime import UTC, datetime
+from typing import Any
+
+from fastapi import Request
+
+from .projects import effective_project_fields
+from .session_view import build_turns
+from .text_utils import shorten
+
+
+GLOBAL_OWNER_SCOPE = "__global__"
+SAVED_TURN_STATUSES = {"open", "resolved"}
+
+
+def utc_now_iso() -> str:
+    return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
+
+
+def owner_scope_from_request(request: Request) -> str:
+    auth_user = getattr(request.state, "auth_user", None)
+    if isinstance(auth_user, dict):
+        user_id = str(auth_user.get("user_id") or "").strip()
+        if user_id:
+            return user_id
+    return GLOBAL_OWNER_SCOPE
+
+
+def count_saved_turns(
+    connection: sqlite3.Connection,
+    owner_scope: str,
+    *,
+    status: str = "open",
+) -> int:
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM saved_turns
+        WHERE owner_scope = ? AND status = ?
+        """,
+        (owner_scope, status),
+    ).fetchone()
+    return int(row["count"] or 0) if row is not None else 0
+
+
+def count_saved_turns_by_status(
+    connection: sqlite3.Connection,
+    owner_scope: str,
+) -> dict[str, int]:
+    rows = connection.execute(
+        """
+        SELECT status, COUNT(*) AS count
+        FROM saved_turns
+        WHERE owner_scope = ?
+        GROUP BY status
+        """,
+        (owner_scope,),
+    ).fetchall()
+    counts = {"open": 0, "resolved": 0}
+    for row in rows:
+        status = str(row["status"] or "")
+        if status in counts:
+            counts[status] = int(row["count"] or 0)
+    return counts
+
+
+def fetch_session_saved_turn_states(
+    connection: sqlite3.Connection,
+    owner_scope: str,
+    session_id: str,
+) -> dict[int, str]:
+    rows = connection.execute(
+        """
+        SELECT turn_number, status
+        FROM saved_turns
+        WHERE owner_scope = ? AND session_id = ?
+        """,
+        (owner_scope, session_id),
+    ).fetchall()
+    return {
+        int(row["turn_number"]): str(row["status"])
+        for row in rows
+        if str(row["status"] or "") in SAVED_TURN_STATUSES
+    }
+
+
+def upsert_saved_turn(
+    connection: sqlite3.Connection,
+    *,
+    owner_scope: str,
+    session_id: str,
+    turn_number: int,
+    prompt_excerpt: str,
+    response_excerpt: str,
+    prompt_timestamp: str | None,
+    response_timestamp: str | None,
+) -> None:
+    now = utc_now_iso()
+    connection.execute(
+        """
+        INSERT INTO saved_turns (
+            owner_scope,
+            session_id,
+            turn_number,
+            prompt_excerpt,
+            response_excerpt,
+            prompt_timestamp,
+            response_timestamp,
+            status,
+            created_at,
+            resolved_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, NULL, ?)
+        ON CONFLICT(owner_scope, session_id, turn_number)
+        DO UPDATE SET
+            prompt_excerpt = excluded.prompt_excerpt,
+            response_excerpt = excluded.response_excerpt,
+            prompt_timestamp = excluded.prompt_timestamp,
+            response_timestamp = excluded.response_timestamp,
+            status = 'open',
+            resolved_at = NULL,
+            updated_at = excluded.updated_at
+        """,
+        (
+            owner_scope,
+            session_id,
+            turn_number,
+            prompt_excerpt,
+            response_excerpt,
+            prompt_timestamp,
+            response_timestamp,
+            now,
+            now,
+        ),
+    )
+
+
+def set_saved_turn_status(
+    connection: sqlite3.Connection,
+    *,
+    owner_scope: str,
+    session_id: str,
+    turn_number: int,
+    status: str,
+) -> bool:
+    if status not in SAVED_TURN_STATUSES:
+        raise ValueError(f"Unsupported saved turn status: {status}")
+    now = utc_now_iso()
+    resolved_at = now if status == "resolved" else None
+    cursor = connection.execute(
+        """
+        UPDATE saved_turns
+        SET
+            status = ?,
+            resolved_at = ?,
+            updated_at = ?
+        WHERE owner_scope = ? AND session_id = ? AND turn_number = ?
+        """,
+        (status, resolved_at, now, owner_scope, session_id, turn_number),
+    )
+    return cursor.rowcount > 0
+
+
+def fetch_turn_snapshot(
+    connection: sqlite3.Connection,
+    session_id: str,
+    turn_number: int,
+) -> dict[str, Any] | None:
+    events = connection.execute(
+        """
+        SELECT
+            event_index,
+            timestamp,
+            record_type,
+            payload_type,
+            kind,
+            role,
+            title,
+            display_text,
+            detail_text,
+            tool_name,
+            call_id,
+            command_text,
+            exit_code
+        FROM events
+        WHERE session_id = ?
+        ORDER BY event_index ASC
+        """,
+        (session_id,),
+    ).fetchall()
+    for turn in build_turns(events):
+        if int(turn.get("number") or 0) != turn_number:
+            continue
+        prompt_text = str(turn.get("prompt_text") or "").strip()
+        response_text = str(turn.get("response_text") or "").strip()
+        return {
+            "prompt_excerpt": shorten(prompt_text, 220) if prompt_text else f"Turn {turn_number}",
+            "response_excerpt": shorten(response_text, 240) if response_text else "No assistant response captured.",
+            "prompt_timestamp": str(turn.get("prompt_timestamp") or "").strip() or None,
+            "response_timestamp": str(turn.get("response_timestamp") or "").strip() or None,
+        }
+    return None
+
+
+def list_saved_turns(
+    connection: sqlite3.Connection,
+    owner_scope: str,
+    *,
+    status: str = "open",
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT
+            st.owner_scope,
+            st.session_id,
+            st.turn_number,
+            st.prompt_excerpt,
+            st.response_excerpt,
+            st.prompt_timestamp,
+            st.response_timestamp,
+            st.status,
+            st.created_at,
+            st.resolved_at,
+            st.updated_at,
+            s.source_host,
+            s.cwd,
+            s.cwd_name,
+            s.git_repository_url,
+            s.github_remote_url,
+            s.github_org,
+            s.github_repo,
+            s.github_slug,
+            s.inferred_project_kind,
+            s.inferred_project_key,
+            s.inferred_project_label,
+            o.override_group_key,
+            o.override_organization,
+            o.override_repository,
+            o.override_remote_url,
+            o.override_display_label
+        FROM saved_turns AS st
+        INNER JOIN sessions AS s
+            ON s.id = st.session_id
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        WHERE st.owner_scope = ? AND st.status = ?
+        ORDER BY st.updated_at DESC, st.turn_number DESC
+        """,
+        (owner_scope, status),
+    ).fetchall()
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        project = effective_project_fields(row)
+        activity_timestamp = (
+            str(row["resolved_at"] or "").strip()
+            or str(row["created_at"] or "").strip()
+        )
+        items.append(
+            {
+                "session_id": str(row["session_id"]),
+                "turn_number": int(row["turn_number"] or 0),
+                "prompt_excerpt": str(row["prompt_excerpt"] or "").strip(),
+                "response_excerpt": str(row["response_excerpt"] or "").strip(),
+                "prompt_timestamp": str(row["prompt_timestamp"] or "").strip(),
+                "response_timestamp": str(row["response_timestamp"] or "").strip(),
+                "status": str(row["status"] or "open"),
+                "saved_at": str(row["created_at"] or "").strip(),
+                "resolved_at": str(row["resolved_at"] or "").strip(),
+                "updated_at": str(row["updated_at"] or "").strip(),
+                "activity_timestamp": activity_timestamp,
+                "project_label": str(project["display_label"]),
+                "source_host": str(project["source_host"] or ""),
+                "session_href": f"/sessions/{row['session_id']}?turn={int(row['turn_number'] or 0)}",
+            }
+        )
+    return items

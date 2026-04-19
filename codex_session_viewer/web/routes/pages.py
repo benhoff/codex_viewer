@@ -32,11 +32,16 @@ from ...projects import (
     build_grouped_projects,
     dashboard_stats,
     effective_project_fields,
-    fetch_recent_session_turn_activity,
-    fetch_session_issue_counts,
-    fetch_session_stream_summaries,
-    fetch_session_user_turn_metadata,
+    fetch_recent_session_turn_activity_windows,
     query_group_rows,
+)
+from ...saved_turns import (
+    count_saved_turns_by_status,
+    fetch_turn_snapshot,
+    list_saved_turns,
+    owner_scope_from_request,
+    set_saved_turn_status,
+    upsert_saved_turn,
 )
 from ..auth import (
     build_auth_user,
@@ -93,6 +98,29 @@ def render_settings_page(
     )
 
 
+def render_queue_page(
+    request: Request,
+    *,
+    status: str = "open",
+) -> HTMLResponse:
+    context = get_app_context(request)
+    owner_scope = owner_scope_from_request(request)
+    with connect(context.settings.database_path) as connection:
+        counts = count_saved_turns_by_status(connection, owner_scope)
+        items = list_saved_turns(connection, owner_scope, status=status)
+    return context.templates.TemplateResponse(
+        request,
+        name="queue.html",
+        context={
+            "request": request,
+            "queue_status": status,
+            "queue_counts": counts,
+            "queue_items": items,
+            "search_query": "",
+        },
+    )
+
+
 def render_login_page(
     request: Request,
     *,
@@ -137,6 +165,32 @@ def render_setup_page(
     )
 
 
+def queue_action_response(
+    request: Request,
+    *,
+    session_id: str,
+    turn_number: int,
+    status: str,
+    return_to: str,
+) -> Response:
+    if "application/json" in request.headers.get("accept", "") or request.headers.get("x-codex-viewer-fetch") == "1":
+        context = get_app_context(request)
+        owner_scope = owner_scope_from_request(request)
+        with connect(context.settings.database_path) as connection:
+            open_count = count_saved_turns_by_status(connection, owner_scope).get("open", 0)
+        return JSONResponse(
+            {
+                "ok": True,
+                "status": status,
+                "session_id": session_id,
+                "turn_number": turn_number,
+                "open_count": open_count,
+                "return_to": return_to,
+            }
+        )
+    return RedirectResponse(url=return_to, status_code=303)
+
+
 def agent_has_failure(remote: dict[str, object]) -> bool:
     return bool(
         int(remote.get("last_fail_count") or 0) > 0
@@ -149,7 +203,6 @@ def agent_has_failure(remote: dict[str, object]) -> bool:
 
 def build_active_hosts_panel(
     rows: list[sqlite3.Row],
-    turn_metadata: dict[str, dict[str, str | int]],
     remotes: list[dict[str, object]],
     *,
     limit: int = 5,
@@ -178,7 +231,7 @@ def build_active_hosts_panel(
         if not source_host:
             continue
         timestamp = (
-            str((turn_metadata.get(row["id"]) or {}).get("timestamp") or "").strip()
+            str(row["last_turn_timestamp"] or "").strip()
             or str(row["session_timestamp"] or row["started_at"] or row["imported_at"] or "").strip()
         )
         host_entry = host_activity.setdefault(
@@ -191,7 +244,7 @@ def build_active_hosts_panel(
             },
         )
         host_entry["sessions"] = int(host_entry["sessions"]) + 1
-        host_entry["turns"] = int(host_entry["turns"]) + int((turn_metadata.get(row["id"]) or {}).get("turn_count", 0) or 0)
+        host_entry["turns"] = int(host_entry["turns"]) + int(row["turn_count"] or 0)
         if timestamp and (not host_entry["timestamp"] or timestamp > str(host_entry["timestamp"])):
             host_entry["timestamp"] = timestamp
 
@@ -213,53 +266,119 @@ def build_active_hosts_panel(
     return len(ordered), items, False
 
 
-def build_hottest_projects_panel(
+def build_group_signal_map(
     rows: list[sqlite3.Row],
-    repo_groups: list[object],
     recent_turn_activity: dict[str, dict[str, str | int]],
-    *,
-    limit: int = 5,
-) -> list[dict[str, object]]:
-    group_index = {group.key: group for group in repo_groups}
-    aggregated: dict[str, dict[str, object]] = {}
+) -> dict[str, dict[str, object]]:
+    signals: dict[str, dict[str, object]] = {}
     for row in rows:
-        recent = recent_turn_activity.get(row["id"])
-        if not recent:
-            continue
         project = effective_project_fields(row)
-        key = str(project["effective_group_key"])
-        group = group_index.get(key)
-        if group is None:
-            continue
-        item = aggregated.setdefault(
-            key,
+        group_key = str(project["effective_group_key"])
+        signal = signals.setdefault(
+            group_key,
+            {
+                "recent_turn_count": 0,
+                "latest_recent_timestamp": "",
+                "command_failures": 0,
+                "aborted_turns": 0,
+                "has_import_warning": False,
+            },
+        )
+
+        recent = recent_turn_activity.get(str(row["id"]))
+        if recent:
+            signal["recent_turn_count"] = int(signal["recent_turn_count"]) + int(recent.get("turn_count", 0) or 0)
+            latest_recent_timestamp = str(recent.get("latest_timestamp") or "")
+            if latest_recent_timestamp and latest_recent_timestamp > str(signal["latest_recent_timestamp"] or ""):
+                signal["latest_recent_timestamp"] = latest_recent_timestamp
+
+        signal["command_failures"] = int(signal["command_failures"]) + int(row["command_failure_count"] or 0)
+        signal["aborted_turns"] = int(signal["aborted_turns"]) + int(row["aborted_turn_count"] or 0)
+        if str(row["import_warning"] or "").strip():
+            signal["has_import_warning"] = True
+
+    for signal in signals.values():
+        signal["issue_count"] = (
+            int(signal["command_failures"])
+            + int(signal["aborted_turns"])
+            + (1 if signal["has_import_warning"] else 0)
+        )
+    return signals
+
+
+def build_repo_nav_items(
+    repo_groups: list[object],
+    group_signals: dict[str, dict[str, object]],
+) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    for group in repo_groups:
+        signal = group_signals.get(group.key, {})
+        issue_count = int(signal.get("issue_count", 0) or 0)
+        recent_turn_count = int(signal.get("recent_turn_count", 0) or 0)
+        if issue_count > 0:
+            status_tone = "rose"
+            status_title = f"{issue_count} attention item" + ("" if issue_count == 1 else "s")
+        elif recent_turn_count > 0:
+            status_tone = "emerald"
+            status_title = f"{recent_turn_count} turns in the last 7 days"
+        else:
+            status_tone = "stone"
+            status_title = "No recent turn activity"
+        items.append(
             {
                 "display_label": group.display_label,
                 "detail_href": group.detail_href,
-                "recent_turn_count": 0,
-                "latest_timestamp": "",
-                "session_count": group.session_count,
-            },
+                "status_tone": status_tone,
+                "status_title": status_title,
+            }
         )
-        item["recent_turn_count"] = int(item["recent_turn_count"]) + int(recent.get("turn_count", 0) or 0)
-        latest_timestamp = str(recent.get("latest_timestamp") or "")
-        if latest_timestamp and latest_timestamp > str(item["latest_timestamp"] or ""):
-            item["latest_timestamp"] = latest_timestamp
+    return sorted(items, key=lambda item: str(item["display_label"]).lower())
 
-    return sorted(
-        aggregated.values(),
+
+def build_active_repos_panel(
+    repo_groups: list[object],
+    group_signals: dict[str, dict[str, object]],
+    *,
+    limit: int = 12,
+) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    for group in repo_groups:
+        signal = group_signals.get(group.key, {})
+        recent_turn_count = int(signal.get("recent_turn_count", 0) or 0)
+        issue_count = int(signal.get("issue_count", 0) or 0)
+        latest_recent_timestamp = str(signal.get("latest_recent_timestamp") or "")
+        latest_timestamp = latest_recent_timestamp or str(group.latest_timestamp or "")
+        issue_label = ""
+        if issue_count > 0:
+            issue_label = f"{issue_count} issue" + ("" if issue_count == 1 else "s")
+        items.append(
+            {
+                "display_label": group.display_label,
+                "detail_href": group.detail_href,
+                "latest_timestamp": latest_timestamp,
+                "recent_turn_count": recent_turn_count,
+                "host_count": group.host_count,
+                "host_label": f"{group.host_count} host" + ("" if group.host_count == 1 else "s"),
+                "session_count": group.session_count,
+                "summary": group.latest_summary or "",
+                "issue_count": issue_count,
+                "issue_label": issue_label,
+            }
+        )
+
+    items.sort(
         key=lambda item: (
             int(item["recent_turn_count"]),
             str(item["latest_timestamp"] or ""),
+            int(item["issue_count"]),
         ),
         reverse=True,
-    )[:limit]
+    )
+    return items[:limit]
 
 
 def build_error_sessions_panel(
     rows: list[sqlite3.Row],
-    turn_metadata: dict[str, dict[str, str | int]],
-    issue_counts: dict[str, dict[str, int]],
     repo_groups: list[object],
     *,
     limit: int = 6,
@@ -267,9 +386,8 @@ def build_error_sessions_panel(
     group_index = {group.key: group for group in repo_groups}
     items: list[dict[str, object]] = []
     for row in rows:
-        issues = issue_counts.get(row["id"], {})
-        command_failures = int(issues.get("command_failures", 0) or 0)
-        aborted_turns = int(issues.get("aborted_turns", 0) or 0)
+        command_failures = int(row["command_failure_count"] or 0)
+        aborted_turns = int(row["aborted_turn_count"] or 0)
         import_warning = str(row["import_warning"] or "").strip()
         issue_count = command_failures + aborted_turns + (1 if import_warning else 0)
         if issue_count <= 0:
@@ -277,9 +395,9 @@ def build_error_sessions_panel(
 
         project = effective_project_fields(row)
         group = group_index.get(str(project["effective_group_key"]))
-        title = str((turn_metadata.get(row["id"]) or {}).get("message") or "").strip() or str(row["summary"] or "").strip() or "Session with errors"
+        title = str(row["last_user_message"] or "").strip() or str(row["summary"] or "").strip() or "Session with errors"
         latest_timestamp = (
-            str((turn_metadata.get(row["id"]) or {}).get("timestamp") or "").strip()
+            str(row["last_turn_timestamp"] or "").strip()
             or str(row["session_timestamp"] or row["started_at"] or row["imported_at"] or "").strip()
         )
         items.append(
@@ -375,6 +493,14 @@ def login_page(request: Request) -> Response:
     return render_login_page(request)
 
 
+@router.get("/queue", response_class=HTMLResponse)
+def review_queue(request: Request, status: str = Query(default="open")) -> HTMLResponse:
+    queue_status = status.strip().lower()
+    if queue_status not in {"open", "resolved"}:
+        queue_status = "open"
+    return render_queue_page(request, status=queue_status)
+
+
 @router.post("/login")
 async def login_submit(request: Request) -> Response:
     context = get_app_context(request)
@@ -420,6 +546,72 @@ async def logout(request: Request) -> RedirectResponse:
     return RedirectResponse(url="/login", status_code=303)
 
 
+@router.post("/queue/actions")
+async def queue_action(request: Request) -> Response:
+    context = get_app_context(request)
+    owner_scope = owner_scope_from_request(request)
+    fields = await parse_form_fields(request)
+    action = fields.get("action", "").strip().lower()
+    session_id = fields.get("session_id", "").strip()
+    return_to = fields.get("return_to", "").strip() or "/queue"
+    try:
+        turn_number = int(fields.get("turn_number", "0") or 0)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid turn number") from exc
+
+    if not session_id or turn_number <= 0:
+        raise HTTPException(status_code=400, detail="Missing turn reference")
+
+    if action not in {"save", "resolve", "reopen"}:
+        raise HTTPException(status_code=400, detail="Unsupported queue action")
+
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            if action == "save":
+                snapshot = fetch_turn_snapshot(connection, session_id, turn_number)
+                if snapshot is None:
+                    raise HTTPException(status_code=404, detail="Turn not found")
+                upsert_saved_turn(
+                    connection,
+                    owner_scope=owner_scope,
+                    session_id=session_id,
+                    turn_number=turn_number,
+                    prompt_excerpt=str(snapshot["prompt_excerpt"]),
+                    response_excerpt=str(snapshot["response_excerpt"]),
+                    prompt_timestamp=snapshot["prompt_timestamp"],
+                    response_timestamp=snapshot["response_timestamp"],
+                )
+                new_status = "open"
+            elif action == "resolve":
+                if not set_saved_turn_status(
+                    connection,
+                    owner_scope=owner_scope,
+                    session_id=session_id,
+                    turn_number=turn_number,
+                    status="resolved",
+                ):
+                    raise HTTPException(status_code=404, detail="Saved turn not found")
+                new_status = "resolved"
+            else:
+                if not set_saved_turn_status(
+                    connection,
+                    owner_scope=owner_scope,
+                    session_id=session_id,
+                    turn_number=turn_number,
+                    status="open",
+                ):
+                    raise HTTPException(status_code=404, detail="Saved turn not found")
+                new_status = "open"
+
+    return queue_action_response(
+        request,
+        session_id=session_id,
+        turn_number=turn_number,
+        status=new_status,
+        return_to=return_to,
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
 def index(
     request: Request,
@@ -434,60 +626,48 @@ def index(
         all_rows = query_group_rows(connection)
         has_filters = bool((q or "").strip() or (host or "").strip())
         rows = query_group_rows(connection, q=q, host=host) if has_filters else all_rows
-        summary_overrides = fetch_session_stream_summaries(connection, [row["id"] for row in rows])
-        turn_metadata = fetch_session_user_turn_metadata(connection, [row["id"] for row in rows])
-        today_turn_activity = fetch_recent_session_turn_activity(
-            connection,
-            [row["id"] for row in rows],
-            today_start,
-        )
-        hot_turn_activity = fetch_recent_session_turn_activity(
+        hot_turn_activity = fetch_recent_session_turn_activity_windows(
             connection,
             [row["id"] for row in rows],
             hot_window_start,
+            secondary_since_timestamp=today_start,
         )
-        issue_counts = fetch_session_issue_counts(connection, [row["id"] for row in rows])
         repo_groups = build_grouped_projects(
             rows,
             route_rows=all_rows if rows is not all_rows else rows,
-            summary_overrides=summary_overrides,
-            turn_metadata=turn_metadata,
         )
-        groups = repo_groups[: context.settings.page_size]
-        stats = dashboard_stats(rows, turn_metadata=turn_metadata)
+        stats = dashboard_stats(rows)
         remotes = fetch_remote_agent_health(connection, context.settings)
 
     active_host_count, active_hosts, active_hosts_from_agents = build_active_hosts_panel(
         rows,
-        turn_metadata,
         remotes,
     )
     failed_agents = [remote for remote in remotes if agent_has_failure(remote)][:5]
-    hottest_projects = build_hottest_projects_panel(
-        rows,
+    group_signals = build_group_signal_map(rows, hot_turn_activity)
+    active_repos = build_active_repos_panel(
         repo_groups,
-        hot_turn_activity,
+        group_signals,
+    )
+    repo_nav_items = build_repo_nav_items(
+        repo_groups,
+        group_signals,
     )
     error_sessions = build_error_sessions_panel(
         rows,
-        turn_metadata,
-        issue_counts,
         repo_groups,
     )
     stats["active_hosts"] = active_host_count
     stats["failed_agents"] = len([remote for remote in remotes if agent_has_failure(remote)])
-    stats["turns_today"] = sum(int(item.get("turn_count", 0) or 0) for item in today_turn_activity.values())
+    stats["turns_today"] = sum(int(item.get("secondary_turn_count", 0) or 0) for item in hot_turn_activity.values())
     return context.templates.TemplateResponse(
         request,
         name="index.html",
         context={
             "request": request,
             "settings": context.settings,
-            "groups": groups,
-            "repo_groups": sorted(
-                repo_groups,
-                key=lambda item: (item.display_label or "").lower(),
-            ),
+            "repo_nav_items": repo_nav_items,
+            "active_repos": active_repos,
             "group_total": len(repo_groups),
             "stats": stats,
             "q": q or "",
@@ -498,7 +678,6 @@ def index(
             "active_hosts": active_hosts,
             "active_hosts_from_agents": active_hosts_from_agents,
             "failed_agents": failed_agents,
-            "hottest_projects": hottest_projects,
             "error_sessions": error_sessions,
         },
     )
@@ -514,13 +693,9 @@ def search_results(request: Request, q: str | None = Query(default=None)) -> HTM
     with connect(context.settings.database_path) as connection:
         all_rows = query_group_rows(connection)
         rows = query_group_rows(connection, q=search_query)
-        summary_overrides = fetch_session_stream_summaries(connection, [row["id"] for row in rows])
-        turn_metadata = fetch_session_user_turn_metadata(connection, [row["id"] for row in rows])
         groups = build_grouped_projects(
             rows,
             route_rows=all_rows,
-            summary_overrides=summary_overrides,
-            turn_metadata=turn_metadata,
         )
 
     return context.templates.TemplateResponse(

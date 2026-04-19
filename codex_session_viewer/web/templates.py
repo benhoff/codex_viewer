@@ -8,8 +8,11 @@ from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
 from ..markdown_utils import render_markdown
+from ..db import connect
+from ..saved_turns import count_saved_turns, owner_scope_from_request
 from ..session_view import full_timestamp, humanize_timestamp
 from ..text_utils import shorten
+from .context import get_app_context
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
@@ -37,7 +40,22 @@ def build_templates(app_version: str) -> Jinja2Templates:
     env.filters["humanize_timestamp"] = humanize_timestamp
     env.filters["full_timestamp"] = full_timestamp
     env.filters["render_markdown"] = render_markdown
+    env.globals["review_queue_open_count"] = review_queue_open_count
     env.globals["static_asset_url"] = (
         lambda request, path: versioned_static_url(request, path, app_version)
     )
     return templates
+
+
+def review_queue_open_count(request: Request) -> int:
+    cached = getattr(request.state, "_review_queue_open_count", None)
+    if isinstance(cached, int):
+        return cached
+    try:
+        context = get_app_context(request)
+    except RuntimeError:
+        return 0
+    with connect(context.settings.database_path) as connection:
+        count = count_saved_turns(connection, owner_scope_from_request(request), status="open")
+    request.state._review_queue_open_count = count
+    return count

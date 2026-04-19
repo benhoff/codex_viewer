@@ -474,14 +474,16 @@ def turn_context_details(events: list[sqlite3.Row]) -> tuple[str | None, str | N
     for event in events:
         if str(event["record_type"] or "") != "turn_context":
             continue
-        raw_record = str(event["record_json"] or "").strip()
+        raw_record = str(event["detail_text"] or event["record_json"] or "").strip()
         if not raw_record:
             continue
         try:
             record = json.loads(raw_record)
         except json.JSONDecodeError:
             continue
-        payload = record.get("payload")
+        payload = record.get("payload") if isinstance(record, dict) else None
+        if not isinstance(payload, dict) and isinstance(record, dict):
+            payload = record
         if not isinstance(payload, dict):
             continue
         if isinstance(payload.get("model"), str) and payload["model"].strip():

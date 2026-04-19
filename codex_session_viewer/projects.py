@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
+from .session_rollups import activity_date_key
 from .session_status import is_user_turn_start, prefers_event_msg_user_turns, terminal_turn_summary
 from .text_utils import shorten, strip_codex_wrappers
 
@@ -30,6 +31,12 @@ GROUP_ROW_SELECT = f"""
     s.summary,
     s.import_warning,
     s.event_count,
+    s.turn_count,
+    s.last_user_message,
+    s.last_turn_timestamp,
+    s.latest_turn_summary,
+    s.command_failure_count,
+    s.aborted_turn_count,
     s.source_host,
     s.cwd,
     s.cwd_name,
@@ -406,55 +413,64 @@ def fetch_recent_session_turn_activity(
     session_ids: list[str],
     since_timestamp: str,
 ) -> dict[str, dict[str, str | int]]:
+    return fetch_recent_session_turn_activity_windows(
+        connection,
+        session_ids,
+        since_timestamp,
+    )
+
+
+def fetch_recent_session_turn_activity_windows(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+    since_timestamp: str,
+    secondary_since_timestamp: str | None = None,
+) -> dict[str, dict[str, str | int]]:
     ids = sorted({session_id for session_id in session_ids if trimmed(session_id)})
     if not ids:
         return {}
 
+    since_date = activity_date_key(since_timestamp)
+    if not since_date:
+        return {}
+    secondary_date = activity_date_key(secondary_since_timestamp) if secondary_since_timestamp else None
     placeholders = ", ".join("?" for _ in ids)
+    secondary_select = (
+        "SUM(CASE WHEN activity_date >= ? THEN turn_count ELSE 0 END) AS secondary_turn_count"
+        if secondary_date
+        else "0 AS secondary_turn_count"
+    )
+    params: list[Any] = [*ids]
+    if secondary_date:
+        params.append(secondary_date)
+    params.append(since_date)
     rows = connection.execute(
         f"""
         SELECT
             session_id,
-            event_index,
-            record_type,
-            payload_type,
-            kind,
-            role,
-            timestamp,
-            display_text
-        FROM events
+            SUM(turn_count) AS turn_count,
+            MAX(latest_timestamp) AS latest_timestamp,
+            {secondary_select}
+        FROM session_turn_activity_daily
         WHERE session_id IN ({placeholders})
-          AND kind = 'message'
-          AND role = 'user'
-          AND datetime(timestamp) >= datetime(?)
-          AND (
-            (record_type = 'event_msg' AND payload_type = 'user_message')
-            OR (record_type = 'response_item' AND payload_type = 'message')
-          )
-        ORDER BY session_id ASC, event_index ASC
+          AND activity_date >= ?
+        GROUP BY session_id
+        ORDER BY session_id ASC
         """,
-        [*ids, since_timestamp],
+        params,
     ).fetchall()
 
-    rows_by_session: dict[str, list[sqlite3.Row]] = {}
-    for row in rows:
-        rows_by_session.setdefault(row["session_id"], []).append(row)
-
     metadata: dict[str, dict[str, str | int]] = {}
-    for session_id, session_rows in rows_by_session.items():
-        prefer_event_msg = prefers_event_msg_user_turns(session_rows)
-        turn_count = 0
-        latest_timestamp = ""
-        for row in session_rows:
-            if not is_user_turn_start(row, prefer_event_msg):
-                continue
-            turn_count += 1
-            latest_timestamp = str(row["timestamp"] or "")
+    for row in rows:
+        turn_count = int(row["turn_count"] or 0)
         if turn_count:
-            metadata[session_id] = {
+            item: dict[str, str | int] = {
                 "turn_count": turn_count,
-                "latest_timestamp": latest_timestamp,
+                "latest_timestamp": str(row["latest_timestamp"] or ""),
             }
+            if secondary_date:
+                item["secondary_turn_count"] = int(row["secondary_turn_count"] or 0)
+            metadata[str(row["session_id"])] = item
     return metadata
 
 
@@ -583,7 +599,19 @@ def _collect_grouped_projects(
 
     for row in rows:
         project = effective_project_fields(row)
-        row_summary = (summary_overrides or {}).get(row["id"], row["summary"])
+        row_summary = (
+            (summary_overrides or {}).get(row["id"])
+            or trimmed(row["latest_turn_summary"])
+            or row["summary"]
+        )
+        row_turn_count = int((turn_metadata or {}).get(row["id"], {}).get("turn_count", row["turn_count"]) or 0)
+        row_latest_timestamp = (
+            (turn_metadata or {}).get(row["id"], {}).get("timestamp")
+            or row["last_turn_timestamp"]
+            or row["session_timestamp"]
+            or row["started_at"]
+            or row["imported_at"]
+        )
         group = grouped.setdefault(
             project["effective_group_key"],
             {
@@ -593,7 +621,7 @@ def _collect_grouped_projects(
                 "display_label": project["display_label"],
                 "remote_url": project["remote_url"],
                 "inferred_kind": project["effective_project_kind"],
-                "latest_timestamp": row["session_timestamp"] or row["started_at"] or row["imported_at"],
+                "latest_timestamp": row_latest_timestamp,
                 "latest_session_id": row["id"],
                 "latest_summary": row_summary,
                 "session_count": 0,
@@ -606,14 +634,13 @@ def _collect_grouped_projects(
             },
         )
 
-        timestamp = row["session_timestamp"] or row["started_at"] or row["imported_at"]
-        if timestamp and (group["latest_timestamp"] is None or timestamp > group["latest_timestamp"]):
-            group["latest_timestamp"] = timestamp
+        if row_latest_timestamp and (group["latest_timestamp"] is None or row_latest_timestamp > group["latest_timestamp"]):
+            group["latest_timestamp"] = row_latest_timestamp
             group["latest_session_id"] = row["id"]
             group["latest_summary"] = row_summary
 
         group["session_count"] += 1
-        group["turn_count"] += int((turn_metadata or {}).get(row["id"], {}).get("turn_count", 0) or 0)
+        group["turn_count"] += row_turn_count
         group["event_count"] += int(row["event_count"] or 0)
         if project["source_host"]:
             group["hosts"].add(project["source_host"])
@@ -692,7 +719,7 @@ def dashboard_stats(
             project_keys.add(project["effective_group_key"])
     return {
         "sessions": len(rows),
-        "turns": sum(int((turn_metadata or {}).get(row["id"], {}).get("turn_count", 0) or 0) for row in rows),
+        "turns": sum(int((turn_metadata or {}).get(row["id"], {}).get("turn_count", row["turn_count"]) or 0) for row in rows),
         "events": sum(int(row["event_count"] or 0) for row in rows),
         "projects": len(project_keys),
         "hosts": len(hosts),
@@ -718,10 +745,7 @@ def fetch_group_detail(
     if not matching_rows:
         return None
 
-    session_ids = [row["id"] for row in matching_rows]
-    summary_overrides = fetch_session_stream_summaries(connection, session_ids)
-    user_turn_metadata = fetch_session_user_turn_metadata(connection, session_ids)
-    grouped_projects = build_grouped_projects(matching_rows, summary_overrides=summary_overrides)
+    grouped_projects = build_grouped_projects(matching_rows)
     group = next((item for item in grouped_projects if item.key == group_key), None)
     if group is None:
         return None
@@ -756,10 +780,10 @@ def fetch_group_detail(
         source_group["sessions"].append(
             {
                 "id": row["id"],
-                "summary": summary_overrides.get(row["id"], row["summary"]),
-                "last_user_message": user_turn_metadata.get(row["id"], {}).get("message", ""),
-                "last_turn_timestamp": user_turn_metadata.get(row["id"], {}).get("timestamp", ""),
-                "turn_count": int(user_turn_metadata.get(row["id"], {}).get("turn_count", 0) or 0),
+                "summary": trimmed(row["latest_turn_summary"]) or row["summary"],
+                "last_user_message": trimmed(row["last_user_message"]) or "",
+                "last_turn_timestamp": trimmed(row["last_turn_timestamp"]) or "",
+                "turn_count": int(row["turn_count"] or 0),
                 "session_timestamp": row["session_timestamp"] or row["started_at"] or row["imported_at"],
                 "event_count": row["event_count"],
                 "host": project["source_host"],

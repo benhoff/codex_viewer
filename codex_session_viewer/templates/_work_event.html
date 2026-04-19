@@ -12,7 +12,7 @@
       {% endif %}
     </div>
     {% if event.timestamp %}
-      <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500">{{ event.timestamp }}</p>
+      <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ event.timestamp|full_timestamp }}">{{ event.timestamp|humanize_timestamp }}</p>
     {% endif %}
   </div>
   {% if event.plan_update %}
