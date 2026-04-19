@@ -61,7 +61,25 @@ def session_detail(request: Request, session_id: str) -> HTMLResponse:
     project = effective_project_fields(session)
     group_key = str(project["effective_group_key"])
     group_href = f"/projects/key/{quote(group_key, safe='')}"
-    turns = list(reversed(build_turns(events)))
+    turns_chrono = build_turns(events)
+    for index, turn in enumerate(turns_chrono):
+        previous_turn = turns_chrono[index - 1] if index > 0 else None
+        turn["previous_response_text"] = (
+            str(previous_turn.get("response_text") or "").strip()
+            if previous_turn is not None
+            else ""
+        )
+        turn["previous_response_state"] = (
+            str(previous_turn.get("response_state") or "").strip()
+            if previous_turn is not None
+            else ""
+        )
+        turn["previous_turn_number"] = (
+            int(previous_turn.get("number") or 0)
+            if previous_turn is not None
+            else None
+        )
+    turns = list(reversed(turns_chrono))
     session_display_summary = terminal_turn_summary(events) or str(session["summary"])
 
     return context.templates.TemplateResponse(

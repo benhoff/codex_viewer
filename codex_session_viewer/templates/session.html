@@ -84,21 +84,6 @@
                   >
                     {% if saved_turn_status == 'open' %}Saved{% elif saved_turn_status == 'resolved' %}Resolved{% endif %}
                   </span>
-                  <button
-                    type="button"
-                    data-review-action-button
-                    data-turn-number="{{ turn.number }}"
-                    data-review-status="{{ saved_turn_status or '' }}"
-                    class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600 transition hover:border-stone-900/20 hover:text-stone-900"
-                  >
-                    {% if saved_turn_status == 'open' %}
-                      Resolve
-                    {% elif saved_turn_status == 'resolved' %}
-                      Reopen
-                    {% else %}
-                      Save for review
-                    {% endif %}
-                  </button>
                   {% if turn.prompt_timestamp %}
                     <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ turn.prompt_timestamp|full_timestamp }}">{{ turn.prompt_timestamp|humanize_timestamp }}</p>
                   {% endif %}
@@ -108,8 +93,96 @@
             </summary>
 
             <div class="mt-5 space-y-4">
+              <div class="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  data-review-action-button
+                  data-turn-number="{{ turn.number }}"
+                  data-review-status="{{ saved_turn_status or '' }}"
+                  class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:border-stone-900/20 hover:bg-stone-50 hover:text-stone-900"
+                >
+                  {% if saved_turn_status == 'open' %}
+                    Resolve review
+                  {% elif saved_turn_status == 'resolved' %}
+                    Reopen review
+                  {% else %}
+                    Save for review
+                  {% endif %}
+                </button>
+              </div>
+
               <div class="rounded-[1.2rem] border border-rose-200 bg-rose-50/90 p-4">
-                <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-rose-700">Full Prompt</p>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-rose-700">Full Prompt</p>
+                  {% if turn.previous_response_text %}
+                    <div class="flex items-center gap-2">
+                      <div
+                        data-prev-response-hover
+                        class="relative hidden md:block"
+                      >
+                        <button
+                          type="button"
+                          class="inline-flex items-center rounded-full border border-rose-200/90 bg-white/90 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-700 transition hover:bg-white"
+                        >
+                          Prev response
+                        </button>
+                        <div
+                          data-prev-response-panel
+                          class="pointer-events-none invisible absolute right-0 top-10 z-20 w-[min(34rem,calc(100vw-3rem))] rounded-[1.15rem] border border-stone-900/10 bg-white p-4 opacity-0 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] transition"
+                        >
+                          <div class="flex items-center justify-between gap-3">
+                            <p class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                              Previous turn{% if turn.previous_turn_number %} · Turn {{ turn.previous_turn_number }}{% endif %}
+                            </p>
+                            <span class="rounded-full {% if turn.previous_response_state == 'canceled' %}bg-amber-100 text-amber-800{% elif turn.previous_response_state == 'update' %}bg-sky-100 text-sky-800{% else %}bg-emerald-100 text-emerald-800{% endif %} px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em]">
+                              {% if turn.previous_response_state == 'canceled' %}
+                                Outcome
+                              {% elif turn.previous_response_state == 'update' %}
+                                Update
+                              {% else %}
+                                Final
+                              {% endif %}
+                            </span>
+                          </div>
+                          {% if turn.previous_response_state == 'canceled' %}
+                            <p class="mt-3 text-[0.94rem] leading-6 text-stone-800 sm:leading-7">{{ turn.previous_response_text }}</p>
+                          {% else %}
+                            <div class="rendered-markdown mt-3 text-sm leading-6">{{ turn.previous_response_text|render_markdown }}</div>
+                          {% endif %}
+                        </div>
+                      </div>
+
+                      <details class="md:hidden">
+                        <summary class="list-none">
+                          <span class="inline-flex items-center rounded-full border border-rose-200/90 bg-white/90 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-700">
+                            Prev response
+                          </span>
+                        </summary>
+                        <div class="mt-3 rounded-[1rem] border border-rose-200/80 bg-white/85 p-4">
+                          <div class="flex items-center justify-between gap-3">
+                            <p class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                              Previous turn{% if turn.previous_turn_number %} · Turn {{ turn.previous_turn_number }}{% endif %}
+                            </p>
+                            <span class="rounded-full {% if turn.previous_response_state == 'canceled' %}bg-amber-100 text-amber-800{% elif turn.previous_response_state == 'update' %}bg-sky-100 text-sky-800{% else %}bg-emerald-100 text-emerald-800{% endif %} px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em]">
+                              {% if turn.previous_response_state == 'canceled' %}
+                                Outcome
+                              {% elif turn.previous_response_state == 'update' %}
+                                Update
+                              {% else %}
+                                Final
+                              {% endif %}
+                            </span>
+                          </div>
+                          {% if turn.previous_response_state == 'canceled' %}
+                            <p class="mt-3 text-[0.94rem] leading-6 text-stone-800 sm:leading-7">{{ turn.previous_response_text }}</p>
+                          {% else %}
+                            <div class="rendered-markdown mt-3 text-sm leading-6">{{ turn.previous_response_text|render_markdown }}</div>
+                          {% endif %}
+                        </div>
+                      </details>
+                    </div>
+                  {% endif %}
+                </div>
                 <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ turn.prompt_text }}</pre>
                 {% if turn.agent_model or turn.agent_effort %}
                   <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-rose-200/80 pt-3 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-rose-700">
@@ -291,9 +364,9 @@
         if (button) {
           button.dataset.reviewStatus = status || "";
           if (status === "open") {
-            button.textContent = "Resolve";
+            button.textContent = "Resolve review";
           } else if (status === "resolved") {
-            button.textContent = "Reopen";
+            button.textContent = "Reopen review";
           } else {
             button.textContent = "Save for review";
           }
@@ -487,6 +560,23 @@
             button.classList.remove("opacity-60");
           }
         });
+      });
+
+      document.querySelectorAll("[data-prev-response-hover]").forEach((container) => {
+        const panel = container.querySelector("[data-prev-response-panel]");
+        if (!panel || !window.matchMedia("(hover: hover)").matches) {
+          return;
+        }
+        const show = () => {
+          panel.classList.remove("pointer-events-none", "invisible", "opacity-0");
+        };
+        const hide = () => {
+          panel.classList.add("pointer-events-none", "invisible", "opacity-0");
+        };
+        container.addEventListener("mouseenter", show);
+        container.addEventListener("mouseleave", hide);
+        container.addEventListener("focusin", show);
+        container.addEventListener("focusout", hide);
       });
 
       restoreSessionViewState();
