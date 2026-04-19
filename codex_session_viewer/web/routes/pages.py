@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ...agents import (
     fetch_remote_agent_health,
@@ -43,6 +43,13 @@ from ...saved_turns import (
     set_saved_turn_status,
     upsert_saved_turn,
 )
+from ...server_settings import (
+    apply_server_settings,
+    normalize_expected_agent_version,
+    normalize_page_size,
+    parse_bool_value,
+    update_server_settings,
+)
 from ..auth import (
     build_auth_user,
     clear_auth_session,
@@ -69,9 +76,12 @@ def render_settings_page(
     created_token: dict[str, str] | None = None,
     password_error: str | None = None,
     password_success: str | None = None,
+    server_settings_error: str | None = None,
+    server_settings_success: str | None = None,
 ) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
+        server_settings = apply_server_settings(connection, context.settings)
         api_tokens = list_api_tokens(connection)
         auth_status = fetch_auth_status(connection)
     current_user = getattr(request.state, "auth_user", None)
@@ -93,6 +103,9 @@ def render_settings_page(
             "auth_status": auth_status,
             "password_error": password_error,
             "password_success": password_success,
+            "server_settings": server_settings,
+            "server_settings_error": server_settings_error,
+            "server_settings_success": server_settings_success,
             "can_change_password": can_change_password,
         },
     )
@@ -648,6 +661,7 @@ def index(
     active_repos = build_active_repos_panel(
         repo_groups,
         group_signals,
+        limit=context.settings.page_size,
     )
     repo_nav_items = build_repo_nav_items(
         repo_groups,
@@ -765,6 +779,38 @@ async def settings_change_password(request: Request) -> HTMLResponse:
         return render_settings_page(request, password_error=str(exc))
 
     return render_settings_page(request, password_success="Password updated.")
+
+
+@router.post("/settings/server")
+async def settings_update_server(request: Request) -> HTMLResponse:
+    context = get_app_context(request)
+    fields = await parse_form_fields(request)
+
+    try:
+        page_size = normalize_page_size(fields.get("page_size", ""))
+        expected_agent_version = normalize_expected_agent_version(
+            fields.get("expected_agent_version", ""),
+            context.settings.app_version,
+        )
+        sync_on_start = parse_bool_value(fields.get("sync_on_start"), False)
+        with connect(context.settings.database_path) as connection:
+            with write_transaction(connection):
+                snapshot = update_server_settings(
+                    connection,
+                    page_size=page_size,
+                    expected_agent_version=expected_agent_version,
+                    sync_on_start=sync_on_start,
+                )
+        context.settings.page_size = snapshot.page_size
+        context.settings.expected_agent_version = snapshot.expected_agent_version
+        context.settings.sync_on_start = snapshot.sync_on_start
+    except ValueError as exc:
+        return render_settings_page(request, server_settings_error=str(exc))
+
+    return render_settings_page(
+        request,
+        server_settings_success="Server settings updated.",
+    )
 
 
 @router.post("/settings/api-tokens")

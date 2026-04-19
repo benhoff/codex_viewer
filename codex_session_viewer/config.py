@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import os
+import secrets
 import socket
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import SYNC_API_VERSION, __version__
+
+
+SESSION_SECRET_FILENAME = ".session-secret"
 
 
 def _split_roots(raw: str | None) -> list[Path]:
@@ -28,6 +32,42 @@ def _clean_text(raw: str | None) -> str | None:
         return None
     stripped = raw.strip()
     return stripped or None
+
+
+def _session_secret_path(data_dir: Path) -> Path:
+    return data_dir / SESSION_SECRET_FILENAME
+
+
+def _read_session_secret(path: Path) -> str | None:
+    try:
+        return _clean_text(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+
+
+def _write_session_secret(path: Path, secret: str) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        existing = _read_session_secret(path)
+        if existing:
+            return existing
+        path.write_text(secret, encoding="utf-8")
+        path.chmod(0o600)
+        return secret
+
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(secret)
+    return secret
+
+
+def load_or_create_session_secret(data_dir: Path) -> str:
+    path = _session_secret_path(data_dir)
+    existing = _read_session_secret(path)
+    if existing:
+        return existing
+    return _write_session_secret(path, secrets.token_urlsafe(48))
 
 
 def _normalize_auth_mode(raw: str | None) -> str:
@@ -107,7 +147,6 @@ class Settings:
     app_version: str
     sync_api_version: str
     expected_agent_version: str
-    minimum_agent_version: str
     agent_update_command: str | None
     daemon_rebuild_on_start: bool
     sync_on_start: bool
@@ -139,14 +178,13 @@ class Settings:
             os.getenv("CODEX_VIEWER_DB", data_dir / "codex_sessions.sqlite3")
         ).expanduser()
         sync_mode = os.getenv("CODEX_VIEWER_SYNC_MODE", "local").strip().lower() or "local"
-        app_version = os.getenv("CODEX_VIEWER_APP_VERSION", __version__).strip() or __version__
-        sync_api_version = os.getenv("CODEX_VIEWER_API_VERSION", SYNC_API_VERSION).strip() or SYNC_API_VERSION
-        expected_agent_version = os.getenv("CODEX_VIEWER_EXPECTED_AGENT_VERSION", app_version).strip() or app_version
-        minimum_agent_version = os.getenv("CODEX_VIEWER_MIN_AGENT_VERSION", expected_agent_version).strip() or expected_agent_version
+        app_version = __version__
+        sync_api_version = SYNC_API_VERSION
+        expected_agent_version = app_version
         agent_update_command = os.getenv("CODEX_VIEWER_AGENT_UPDATE_COMMAND", "").strip() or None
         daemon_rebuild_on_start = _env_truthy(os.getenv("CODEX_VIEWER_DAEMON_REBUILD_ON_START"), False)
-        page_size = int(os.getenv("CODEX_VIEWER_PAGE_SIZE", "24"))
-        sync_on_start = _env_truthy(os.getenv("CODEX_VIEWER_SYNC_ON_START"), True)
+        page_size = 24
+        sync_on_start = True
         session_roots = _split_roots(os.getenv("CODEX_SESSION_ROOTS"))
         server_host = os.getenv("CODEX_VIEWER_HOST", "127.0.0.1")
         server_port = int(os.getenv("CODEX_VIEWER_PORT", "8000"))
@@ -174,7 +212,6 @@ class Settings:
             app_version=app_version,
             sync_api_version=sync_api_version,
             expected_agent_version=expected_agent_version,
-            minimum_agent_version=minimum_agent_version,
             agent_update_command=agent_update_command,
             daemon_rebuild_on_start=daemon_rebuild_on_start,
             sync_on_start=sync_on_start,
@@ -199,6 +236,8 @@ class Settings:
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        if self.auth_enabled() and not self.session_secret:
+            self.session_secret = load_or_create_session_secret(self.data_dir)
 
     def auth_enabled(self) -> bool:
         return self.auth_mode != "none"

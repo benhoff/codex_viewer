@@ -15,6 +15,86 @@
     <section class="rounded-[1.9rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
+          <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Server Policy</p>
+          <h2 class="mt-2 font-display text-2xl text-stone-900">Runtime Settings</h2>
+          <p class="mt-2 text-sm leading-6 text-stone-600">
+            These values are stored in SQLite and apply across the whole viewer. Startup sync takes effect the next time the server boots.
+          </p>
+        </div>
+        <span class="rounded-full bg-stone-900 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-50">stored in db</span>
+      </div>
+
+      {% if server_settings_error %}
+        <div class="mt-5 rounded-[1.2rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">
+          {{ server_settings_error }}
+        </div>
+      {% endif %}
+      {% if server_settings_success %}
+        <div class="mt-5 rounded-[1.2rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+          {{ server_settings_success }}
+        </div>
+      {% endif %}
+
+      <div class="mt-5 grid gap-3 sm:grid-cols-3">
+        <div class="rounded-[1.15rem] bg-stone-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Home Page Repo Limit</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900">{{ server_settings.page_size }}</p>
+        </div>
+        <div class="rounded-[1.15rem] bg-stone-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Expected Agent Version</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900">{{ server_settings.expected_agent_version }}</p>
+        </div>
+        <div class="rounded-[1.15rem] bg-stone-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Startup Sync</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900">{{ "Enabled" if server_settings.sync_on_start else "Disabled" }}</p>
+        </div>
+      </div>
+
+      <form action="/settings/server" method="post" class="mt-5 grid gap-4 lg:grid-cols-3">
+        <label class="block">
+          <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Home Page Repo Limit</span>
+          <input
+            type="number"
+            min="6"
+            max="100"
+            name="page_size"
+            value="{{ server_settings.page_size }}"
+            class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+          />
+        </label>
+        <label class="block">
+          <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expected Agent Version</span>
+          <input
+            type="text"
+            name="expected_agent_version"
+            value="{{ server_settings.expected_agent_version }}"
+            class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+          />
+        </label>
+        <label class="flex items-center gap-3 rounded-[1.15rem] bg-stone-50 px-4 py-4 lg:mt-7">
+          <input
+            type="checkbox"
+            name="sync_on_start"
+            value="1"
+            {% if server_settings.sync_on_start %}checked{% endif %}
+            class="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-400"
+          />
+          <span class="text-sm font-medium text-stone-800">Run local sync automatically on server startup</span>
+        </label>
+        <div class="lg:col-span-3">
+          <button
+            type="submit"
+            class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
+          >
+            Save Server Settings
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <section class="rounded-[1.9rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Authentication</p>
           <h2 class="mt-2 font-display text-2xl text-stone-900">Browser Access</h2>
           <p class="mt-2 text-sm leading-6 text-stone-600">

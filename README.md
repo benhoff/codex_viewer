@@ -34,9 +34,9 @@ The container defaults are defined in [compose.yml](/home/wulfuser/codex_viewer/
 If you want to run the server in single-box local import mode instead of remote upload mode:
 
 1. change `CODEX_VIEWER_SYNC_MODE` to `local`
-2. change `CODEX_VIEWER_SYNC_ON_START` to `1`
-3. mount your Codex session root into the container
-4. point `CODEX_SESSION_ROOTS` at that mounted path
+2. mount your Codex session root into the container
+3. point `CODEX_SESSION_ROOTS` at that mounted path
+4. enable startup sync from `/settings` after the first boot
 
 Example override:
 
@@ -48,7 +48,6 @@ services:
       - /home/you/.codex/sessions:/sessions:ro
     environment:
       CODEX_VIEWER_SYNC_MODE: local
-      CODEX_VIEWER_SYNC_ON_START: 1
       CODEX_SESSION_ROOTS: /sessions
 ```
 
@@ -156,31 +155,23 @@ Shell or systemd-provided environment variables still win over values from these
 - `CODEX_VIEWER_SYNC_MODE`: `local` for direct SQLite import, `remote` for daemon-to-server upload
 - `CODEX_VIEWER_DB`: override the SQLite database path
 - `CODEX_VIEWER_DATA_DIR`: override the data directory
-- `CODEX_VIEWER_PAGE_SIZE`: sessions shown on the home page
-- `CODEX_VIEWER_SYNC_ON_START=0`: disable automatic sync during server startup
 - `CODEX_VIEWER_HOST`: bind address for the FastAPI server
 - `CODEX_VIEWER_PORT`: bind port for the FastAPI server
 - `CODEX_VIEWER_SERVER_URL`: base URL for remote daemon uploads, such as `http://viewer.internal:8000`
 - `CODEX_VIEWER_SYNC_API_TOKEN`: bearer token the daemon sends for `/api/sync/*`; create this token from the server's `/settings` page
-- `CODEX_VIEWER_APP_VERSION`: version string the current server or agent reports for itself
-- `CODEX_VIEWER_API_VERSION`: sync protocol version shared by the server and agents
-- `CODEX_VIEWER_EXPECTED_AGENT_VERSION`: version the server expects agents to be running
-- `CODEX_VIEWER_MIN_AGENT_VERSION`: floor the server can advertise for manual ops
 - `CODEX_VIEWER_AGENT_UPDATE_COMMAND`: optional local command the agent runs when the server advertises a different agent version
 - `CODEX_VIEWER_SYNC_INTERVAL`: daemon polling interval in seconds
 - `CODEX_VIEWER_REMOTE_TIMEOUT`: HTTP timeout for remote sync requests
 - `CODEX_VIEWER_LOG_LEVEL`: log verbosity for the server and daemon
 - `CODEX_VIEWER_SOURCE_HOST`: host label written onto imported sessions
 - `CODEX_VIEWER_AUTH_MODE`: `none`, `password`, `proxy`, or `password_or_proxy`
-- `CODEX_VIEWER_SESSION_SECRET`: required when UI auth is enabled; used to sign login session cookies
+- `CODEX_VIEWER_SESSION_SECRET`: optional override for the login session signing secret; if unset and UI auth is enabled, the viewer generates one and stores it in `data/.session-secret`
 - `CODEX_VIEWER_AUTH_PROXY_USER_HEADER`: trusted reverse-proxy header used for SSO identity, default `X-Forwarded-User`
 - `CODEX_VIEWER_AUTH_PROXY_NAME_HEADER`: trusted reverse-proxy display-name header, default `X-Forwarded-Name`
 - `CODEX_VIEWER_AUTH_PROXY_EMAIL_HEADER`: trusted reverse-proxy email header, default `X-Forwarded-Email`
 - `CODEX_VIEWER_AUTH_PROXY_LOGIN_URL`: optional SSO entrypoint URL for proxy-only deployments
 - `CODEX_VIEWER_AUTH_PROXY_LOGOUT_URL`: optional IdP or proxy logout URL
 - `CODEX_VIEWER_AUTH_COOKIE_SECURE=1`: mark auth session cookies as secure
-- `CODEX_VIEWER_DEV_RELOAD=1`: restart the child process when watched project files change
-- `CODEX_VIEWER_DEV_RELOAD_INTERVAL`: polling interval, in seconds, for dev reload
 
 ## UI Auth
 
@@ -195,10 +186,9 @@ Use built-in password auth when you want a single local login without another de
 
 ```env
 CODEX_VIEWER_AUTH_MODE=password
-CODEX_VIEWER_SESSION_SECRET=replace-with-a-long-random-secret
 ```
 
-Then open the app and complete `/setup` once to create the first local admin account in SQLite.
+Then open the app and complete `/setup` once to create the first local admin account in SQLite. On first boot, the viewer will generate and persist a session signing secret in `data/.session-secret`. If you prefer to supply your own fixed secret, you can still set `CODEX_VIEWER_SESSION_SECRET`.
 
 ### SSO behind a reverse proxy
 
@@ -206,7 +196,6 @@ Use proxy mode when an upstream reverse proxy or auth gateway injects a trusted 
 
 ```env
 CODEX_VIEWER_AUTH_MODE=proxy
-CODEX_VIEWER_SESSION_SECRET=replace-with-a-long-random-secret
 CODEX_VIEWER_AUTH_PROXY_USER_HEADER=X-Forwarded-User
 CODEX_VIEWER_AUTH_PROXY_NAME_HEADER=X-Forwarded-Name
 CODEX_VIEWER_AUTH_PROXY_EMAIL_HEADER=X-Forwarded-Email
@@ -214,6 +203,8 @@ CODEX_VIEWER_AUTH_PROXY_LOGIN_URL=https://sso.example.com
 CODEX_VIEWER_AUTH_PROXY_LOGOUT_URL=https://sso.example.com/logout
 CODEX_VIEWER_AUTH_COOKIE_SECURE=1
 ```
+
+If you do not want the generated secret file for proxy mode either, you can still set `CODEX_VIEWER_SESSION_SECRET` explicitly.
 
 Important: proxy auth should only be used behind a trusted reverse proxy that strips and rewrites these headers. Do not expose header-based SSO directly to the internet without a proxy boundary.
 
@@ -264,8 +255,6 @@ For development, the wrapper scripts support separate reload modes for the web s
 
 - `CODEX_VIEWER_SERVER_DEV_RELOAD=1`: restarts the web server on Python, template, and asset changes
 - `CODEX_VIEWER_AGENT_DEV_RELOAD=1`: restarts the daemon only on agent-relevant Python and env changes
-
-The older `CODEX_VIEWER_DEV_RELOAD` variables still act as a fallback, but the split settings are the intended configuration now.
 
 Changes to systemd unit files still require a normal `systemctl restart`.
 

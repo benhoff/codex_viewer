@@ -56,7 +56,10 @@ def cli() -> int:
         from .main import create_app
 
         uvicorn.run(
-            create_app(settings),
+            create_app(
+                settings,
+                preserve_sync_on_start=getattr(args, "no_sync", False),
+            ),
             host=getattr(args, "host", None) or settings.server_host,
             port=getattr(args, "port", None) or settings.server_port,
             reload=False,

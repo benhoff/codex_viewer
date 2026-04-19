@@ -54,7 +54,6 @@ def sync_manifest(request: Request, host: str = Query(...)) -> JSONResponse:
                 "app_version": settings.app_version,
                 "sync_api_version": settings.sync_api_version,
                 "expected_agent_version": settings.expected_agent_version,
-                "minimum_agent_version": settings.minimum_agent_version,
             },
         }
     )

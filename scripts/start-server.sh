@@ -17,14 +17,15 @@ cmd=(
   --no-sync
 )
 
-server_dev_reload="${CODEX_VIEWER_SERVER_DEV_RELOAD:-${CODEX_VIEWER_DEV_RELOAD:-0}}"
-server_dev_reload_interval="${CODEX_VIEWER_SERVER_DEV_RELOAD_INTERVAL:-${CODEX_VIEWER_DEV_RELOAD_INTERVAL:-1}}"
+server_dev_reload="${CODEX_VIEWER_SERVER_DEV_RELOAD:-0}"
+server_dev_reload_interval="${CODEX_VIEWER_SERVER_DEV_RELOAD_INTERVAL:-1}"
 
 if [[ "${server_dev_reload}" == "1" ]]; then
   # Development mode restarts the child process on Python, template, and asset changes.
   source "${PROJECT_ROOT}/scripts/lib-dev-reload.sh"
-  CODEX_VIEWER_DEV_RELOAD_INTERVAL="${server_dev_reload_interval}" run_with_dev_reload \
+  run_with_dev_reload \
     "${PROJECT_ROOT}" \
+    "${server_dev_reload_interval}" \
     "${PROJECT_ROOT}/codex_session_viewer" \
     "${PROJECT_ROOT}/codex_session_viewer/templates" \
     "${PROJECT_ROOT}/codex_session_viewer/static/app.css" \

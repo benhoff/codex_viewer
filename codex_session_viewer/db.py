@@ -253,6 +253,12 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     revoked_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS server_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,

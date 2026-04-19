@@ -57,7 +57,7 @@ def validate_auth_settings(settings: Settings) -> None:
     if not settings.auth_enabled():
         return
     if not settings.session_secret:
-        raise ValueError("CODEX_VIEWER_SESSION_SECRET must be set when CODEX_VIEWER_AUTH_MODE is enabled")
+        raise ValueError("Browser auth could not initialize a session secret")
     if settings.auth_mode not in {"password", "proxy", "password_or_proxy"}:
         raise ValueError(
             "CODEX_VIEWER_AUTH_MODE must be one of none, password, proxy, or password_or_proxy"

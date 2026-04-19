@@ -16,14 +16,15 @@ cmd=(
   daemon
 )
 
-agent_dev_reload="${CODEX_VIEWER_AGENT_DEV_RELOAD:-${CODEX_VIEWER_DEV_RELOAD:-0}}"
-agent_dev_reload_interval="${CODEX_VIEWER_AGENT_DEV_RELOAD_INTERVAL:-${CODEX_VIEWER_DEV_RELOAD_INTERVAL:-1}}"
+agent_dev_reload="${CODEX_VIEWER_AGENT_DEV_RELOAD:-0}"
+agent_dev_reload_interval="${CODEX_VIEWER_AGENT_DEV_RELOAD_INTERVAL:-1}"
 
 if [[ "${agent_dev_reload}" == "1" ]]; then
   # Development mode restarts the daemon when agent-relevant code or local env changes.
   source "${PROJECT_ROOT}/scripts/lib-dev-reload.sh"
-  CODEX_VIEWER_DEV_RELOAD_INTERVAL="${agent_dev_reload_interval}" run_with_dev_reload \
+  run_with_dev_reload \
     "${PROJECT_ROOT}" \
+    "${agent_dev_reload_interval}" \
     "${PROJECT_ROOT}/codex_session_viewer/__init__.py" \
     "${PROJECT_ROOT}/codex_session_viewer/__main__.py" \
     "${PROJECT_ROOT}/codex_session_viewer/commands.py" \

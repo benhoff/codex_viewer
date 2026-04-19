@@ -28,6 +28,8 @@ dev_reload_snapshot() {
 run_with_dev_reload() {
   local project_root="$1"
   shift
+  local interval="$1"
+  shift
 
   local -a watch_paths=()
   while (($#)); do
@@ -40,7 +42,6 @@ run_with_dev_reload() {
   done
 
   local -a cmd=("$@")
-  local interval="${CODEX_VIEWER_DEV_RELOAD_INTERVAL:-1}"
   local baseline current status
   local child_pid=""
   local shutting_down=0
