@@ -28,6 +28,7 @@ GROUP_ROW_SELECT = f"""
     s.started_at,
     s.imported_at,
     s.summary,
+    s.import_warning,
     s.event_count,
     s.source_host,
     s.cwd,
@@ -398,6 +399,99 @@ def fetch_session_user_turn_metadata(
                 "turn_count": turn_count,
             }
     return metadata
+
+
+def fetch_recent_session_turn_activity(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+    since_timestamp: str,
+) -> dict[str, dict[str, str | int]]:
+    ids = sorted({session_id for session_id in session_ids if trimmed(session_id)})
+    if not ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            session_id,
+            event_index,
+            record_type,
+            payload_type,
+            kind,
+            role,
+            timestamp,
+            display_text
+        FROM events
+        WHERE session_id IN ({placeholders})
+          AND kind = 'message'
+          AND role = 'user'
+          AND datetime(timestamp) >= datetime(?)
+          AND (
+            (record_type = 'event_msg' AND payload_type = 'user_message')
+            OR (record_type = 'response_item' AND payload_type = 'message')
+          )
+        ORDER BY session_id ASC, event_index ASC
+        """,
+        [*ids, since_timestamp],
+    ).fetchall()
+
+    rows_by_session: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        rows_by_session.setdefault(row["session_id"], []).append(row)
+
+    metadata: dict[str, dict[str, str | int]] = {}
+    for session_id, session_rows in rows_by_session.items():
+        prefer_event_msg = prefers_event_msg_user_turns(session_rows)
+        turn_count = 0
+        latest_timestamp = ""
+        for row in session_rows:
+            if not is_user_turn_start(row, prefer_event_msg):
+                continue
+            turn_count += 1
+            latest_timestamp = str(row["timestamp"] or "")
+        if turn_count:
+            metadata[session_id] = {
+                "turn_count": turn_count,
+                "latest_timestamp": latest_timestamp,
+            }
+    return metadata
+
+
+def fetch_session_issue_counts(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+) -> dict[str, dict[str, int]]:
+    ids = sorted({session_id for session_id in session_ids if trimmed(session_id)})
+    if not ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            session_id,
+            SUM(CASE WHEN exit_code IS NOT NULL AND exit_code != 0 THEN 1 ELSE 0 END) AS command_failures,
+            SUM(
+                CASE
+                    WHEN record_type = 'event_msg' AND payload_type = 'turn_aborted'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS aborted_turns
+        FROM events
+        WHERE session_id IN ({placeholders})
+        GROUP BY session_id
+        """,
+        ids,
+    ).fetchall()
+    return {
+        row["session_id"]: {
+            "command_failures": int(row["command_failures"] or 0),
+            "aborted_turns": int(row["aborted_turns"] or 0),
+        }
+        for row in rows
+    }
 
 
 def query_group_rows(

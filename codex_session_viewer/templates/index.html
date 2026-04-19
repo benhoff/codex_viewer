@@ -48,33 +48,181 @@
     </aside>
 
     <div class="order-1 min-w-0 lg:order-2">
-      <section class="mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <section class="mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <div class="rounded-[1.5rem] border border-stone-900/10 bg-stone-900 p-5 text-stone-50 shadow-[0_20px_60px_-28px_rgba(28,25,23,0.8)]">
             <p class="text-xs uppercase tracking-[0.28em] text-stone-300">Projects</p>
             <p class="mt-4 text-4xl font-semibold">{{ stats.projects }}</p>
           </div>
-          <div class="rounded-[1.5rem] border border-stone-900/10 bg-white/80 p-5">
-            <p class="text-xs uppercase tracking-[0.24em] text-stone-500">Hosts</p>
-            <p class="mt-4 text-4xl font-semibold text-stone-900">{{ stats.hosts }}</p>
+          <div class="rounded-[1.5rem] border border-sky-200 bg-sky-50/90 p-5">
+            <p class="text-xs uppercase tracking-[0.24em] text-sky-700">Active Hosts</p>
+            <p class="mt-4 text-4xl font-semibold text-sky-950">{{ stats.active_hosts }}</p>
+          </div>
+          <div class="rounded-[1.5rem] border border-rose-200 bg-rose-50/90 p-5">
+            <p class="text-xs uppercase tracking-[0.24em] text-rose-700">Failed Agents</p>
+            <p class="mt-4 text-4xl font-semibold text-rose-950">{{ stats.failed_agents }}</p>
           </div>
           <div class="rounded-[1.5rem] border border-stone-900/10 bg-white/80 p-5">
             <p class="text-xs uppercase tracking-[0.24em] text-stone-500">Sessions</p>
             <p class="mt-4 text-4xl font-semibold text-stone-900">{{ stats.sessions }}</p>
+          </div>
+          <div class="rounded-[1.5rem] border border-amber-200 bg-amber-50/90 p-5">
+            <p class="text-xs uppercase tracking-[0.24em] text-amber-700">Today’s Turns</p>
+            <p class="mt-4 text-4xl font-semibold text-amber-950">{{ stats.turns_today }}</p>
           </div>
           <div class="rounded-[1.5rem] border border-stone-900/10 bg-white/80 p-5">
             <p class="text-xs uppercase tracking-[0.24em] text-stone-500">Turns</p>
             <p class="mt-4 text-4xl font-semibold text-stone-900">{{ stats.turns }}</p>
           </div>
           <div class="rounded-[1.5rem] border border-stone-900/10 bg-white/80 p-5">
-            <p class="text-xs uppercase tracking-[0.24em] text-stone-500">Organizations</p>
-            <p class="mt-4 text-4xl font-semibold text-stone-900">{{ stats.organizations }}</p>
+            <p class="text-xs uppercase tracking-[0.24em] text-stone-500">Hosts Seen</p>
+            <p class="mt-4 text-4xl font-semibold text-stone-900">{{ stats.hosts }}</p>
           </div>
+      </section>
+
+      <section class="mb-8 grid gap-4 xl:grid-cols-3">
+        <article class="rounded-[1.8rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.3)]">
+          <div class="flex items-end justify-between gap-3">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Hosts</p>
+              <h2 class="mt-2 text-2xl font-semibold text-stone-900">Active Hosts</h2>
+            </div>
+            <p class="text-sm text-stone-500">{% if active_hosts_from_agents %}agent heartbeat{% else %}session activity{% endif %}</p>
+          </div>
+          <div class="mt-5 space-y-3">
+            {% for item in active_hosts %}
+              <div class="rounded-[1.1rem] border border-stone-900/10 bg-stone-50/80 px-4 py-3">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="min-w-0 truncate text-sm font-semibold text-stone-900">{{ item.source_host }}</p>
+                  <span class="rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'sky' %}bg-sky-100 text-sky-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                    {{ item.status }}
+                  </span>
+                </div>
+                <p class="mt-2 text-xs leading-5 text-stone-600">{{ item.detail }}</p>
+                <p class="mt-1 text-xs leading-5 text-stone-500" title="{{ item.timestamp|full_timestamp if item.timestamp else '' }}">
+                  {{ item.timestamp|humanize_timestamp if item.timestamp else "No recent activity" }}
+                </p>
+              </div>
+            {% else %}
+              <div class="rounded-[1.1rem] border border-dashed border-stone-900/15 bg-stone-50/70 px-4 py-5 text-sm text-stone-600">
+                No hosts have reported activity yet.
+              </div>
+            {% endfor %}
+          </div>
+        </article>
+
+        <article class="rounded-[1.8rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.3)]">
+          <div class="flex items-end justify-between gap-3">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Agents</p>
+              <h2 class="mt-2 text-2xl font-semibold text-stone-900">Failed Agents</h2>
+            </div>
+            <a href="/remotes" class="text-sm font-semibold text-stone-600 transition hover:text-stone-900">View all</a>
+          </div>
+          <div class="mt-5 space-y-3">
+            {% for remote in failed_agents %}
+              <div class="rounded-[1.1rem] border border-rose-200 bg-rose-50/80 px-4 py-3">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="min-w-0 truncate text-sm font-semibold text-rose-950">{{ remote.source_host }}</p>
+                  <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
+                    {{ remote.update_state }}
+                  </span>
+                </div>
+                <p class="mt-2 text-xs leading-5 text-rose-900">
+                  {{ remote.last_error or remote.update_message or (remote.last_fail_count ~ " failed operations") }}
+                </p>
+                <p class="mt-1 text-xs leading-5 text-rose-700" title="{{ remote.last_seen_at|full_timestamp if remote.last_seen_at else '' }}">
+                  {{ remote.last_seen_at|humanize_timestamp if remote.last_seen_at else "No check-in recorded" }}
+                </p>
+              </div>
+            {% else %}
+              <div class="rounded-[1.1rem] border border-dashed border-emerald-200 bg-emerald-50/80 px-4 py-5 text-sm text-emerald-900">
+                No failing agents are currently reported.
+              </div>
+            {% endfor %}
+          </div>
+        </article>
+
+        <article class="rounded-[1.8rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.3)]">
+          <div class="flex items-end justify-between gap-3">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Repo Heat</p>
+              <h2 class="mt-2 text-2xl font-semibold text-stone-900">Hottest Repos</h2>
+            </div>
+            <p class="text-sm text-stone-500">last 7 days</p>
+          </div>
+          <div class="mt-5 space-y-3">
+            {% for item in hottest_projects %}
+              <a href="{{ item.detail_href }}" class="block rounded-[1.1rem] border border-stone-900/10 bg-stone-50/80 px-4 py-3 transition hover:border-stone-900/20 hover:bg-white">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="min-w-0 truncate text-sm font-semibold text-stone-900">{{ item.display_label }}</p>
+                  <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">
+                    {{ item.recent_turn_count }} turns
+                  </span>
+                </div>
+                <p class="mt-2 text-xs leading-5 text-stone-600">{{ item.session_count }} sessions in repo</p>
+                <p class="mt-1 text-xs leading-5 text-stone-500" title="{{ item.latest_timestamp|full_timestamp if item.latest_timestamp else '' }}">
+                  {{ item.latest_timestamp|humanize_timestamp if item.latest_timestamp else "No recent turn activity" }}
+                </p>
+              </a>
+            {% else %}
+              <div class="rounded-[1.1rem] border border-dashed border-stone-900/15 bg-stone-50/70 px-4 py-5 text-sm text-stone-600">
+                No repo activity in the last 7 days.
+              </div>
+            {% endfor %}
+          </div>
+        </article>
+      </section>
+
+      <section class="mb-8">
+        <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Sessions</p>
+            <h2 class="mt-2 text-2xl font-semibold text-stone-900">Error-Heavy Sessions</h2>
+          </div>
+          <p class="text-sm text-stone-600">command failures, aborted turns, and import warnings</p>
+        </div>
+
+        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {% for item in error_sessions %}
+            <a href="{{ item.session_href }}" class="block rounded-[1.6rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] transition hover:-translate-y-1 hover:border-stone-900/20 hover:bg-white">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-semibold text-stone-900">{{ item.title }}</p>
+                  <p class="mt-1 text-xs text-stone-500">{{ item.project_label }}</p>
+                </div>
+                <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
+                  {{ item.issue_count }} issues
+                </span>
+              </div>
+
+              <div class="mt-4 flex flex-wrap gap-2 text-xs font-medium text-stone-700">
+                {% if item.command_failures %}
+                  <span class="rounded-full bg-rose-100 px-3 py-1">{{ item.command_failures }} command{% if item.command_failures != 1 %}s{% endif %}</span>
+                {% endif %}
+                {% if item.aborted_turns %}
+                  <span class="rounded-full bg-amber-100 px-3 py-1">{{ item.aborted_turns }} aborted</span>
+                {% endif %}
+                {% if item.has_import_warning %}
+                  <span class="rounded-full bg-stone-200 px-3 py-1">import warning</span>
+                {% endif %}
+              </div>
+
+              <p class="mt-4 text-xs leading-5 text-stone-500">
+                {{ item.host }}{% if item.timestamp %} • <span title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>{% endif %}
+              </p>
+            </a>
+          {% else %}
+            <div class="rounded-[1.6rem] border border-dashed border-emerald-200 bg-emerald-50/70 p-6 text-sm leading-6 text-emerald-900 md:col-span-2 xl:col-span-3">
+              No error-heavy sessions were detected in the current index.
+            </div>
+          {% endfor %}
+        </div>
       </section>
 
       <section>
         <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p class="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Activity</p>
+            <p class="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Repos</p>
             <h2 class="mt-2 text-2xl font-semibold text-stone-900">Most Recently Updated Repos</h2>
           </div>
           <p class="text-sm text-stone-600">
