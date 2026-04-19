@@ -5,6 +5,7 @@ from urllib.parse import quote
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from ..api_tokens import find_active_api_token, touch_api_token_usage
@@ -160,20 +161,13 @@ def clear_auth_session(request: Request) -> None:
     request.session.clear()
 
 
-def install_auth(app: Any, settings: Settings) -> None:
-    validate_auth_settings(settings)
-    if settings.auth_enabled():
-        app.add_middleware(
-            SessionMiddleware,
-            secret_key=settings.session_secret or "disabled",
-            session_cookie="codex_viewer_session",
-            same_site="lax",
-            https_only=settings.auth_cookie_secure,
-            max_age=60 * 60 * 24 * 14,
-        )
+class AuthMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app: Any, *, settings: Settings) -> None:
+        super().__init__(app)
+        self.settings = settings
 
-    @app.middleware("http")
-    async def auth_middleware(request: Request, call_next: Any) -> Response:
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        settings = self.settings
         request.state.auth_enabled = settings.auth_enabled()
         request.state.auth_mode = settings.auth_mode
         request.state.auth_user = None
@@ -214,3 +208,17 @@ def install_auth(app: Any, settings: Settings) -> None:
             return RedirectResponse(url=f"/login?next={quote(next_path, safe='/?=&')}", status_code=303)
 
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
+
+def install_auth(app: Any, settings: Settings) -> None:
+    validate_auth_settings(settings)
+    app.add_middleware(AuthMiddleware, settings=settings)
+    if settings.auth_enabled():
+        app.add_middleware(
+            SessionMiddleware,
+            secret_key=settings.session_secret or "disabled",
+            session_cookie="codex_viewer_session",
+            same_site="lax",
+            https_only=settings.auth_cookie_secure,
+            max_age=60 * 60 * 24 * 14,
+        )

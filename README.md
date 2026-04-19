@@ -4,7 +4,7 @@ A small FastAPI app that centralizes Codex rollout sessions into a server-owned 
 
 ## Features
 
-- Imports real Codex rollout files from `~/.codex/sessions` by default
+- Server-first deployment where remote agents upload rollout data into a server-owned SQLite database
 - Stores normalized session metadata and timeline events in SQLite
 - Groups sessions by inferred GitHub remote when available, or by host-aware directory fallback
 - Includes a manual override interface for project grouping, organization, repository, and remote URL
@@ -31,7 +31,9 @@ This default container setup is intentionally server-first:
 
 The container defaults are defined in [compose.yml](/home/wulfuser/codex_viewer/compose.yml) and [Dockerfile](/home/wulfuser/codex_viewer/Dockerfile).
 
-If you want to run the server in single-box local import mode instead of remote upload mode:
+Single-box local import is still supported, but it is an advanced path rather than the default deployment model.
+
+If you want to run the server in single-box local import mode:
 
 1. change `CODEX_VIEWER_SYNC_MODE` to `local`
 2. mount your Codex session root into the container
@@ -67,13 +69,21 @@ volumes:
 
 ## Run
 
-0. Create a local env file if you are not using systemd:
+0. Create the role-specific env file you need if you are not using systemd:
 
    ```bash
-   cp .env.example .env
+   cp .env.server.example .env
    ```
 
-   For a development-oriented setup, you can start from:
+   This is the normal server path. The viewer defaults to a server-owned SQLite database and expects remotes to push data in.
+
+   For an agent-only host:
+
+   ```bash
+   cp .env.agent.example .env
+   ```
+
+   For local repo development:
 
    ```bash
    cp .env.development.example .env
@@ -150,20 +160,18 @@ Env files are loaded in this order:
 
 Shell or systemd-provided environment variables still win over values from these files.
 
-- `CODEX_SESSION_ROOTS`: comma-separated list of rollout roots to index
-- `CODEX_VIEWER_ENV`: optional env profile name such as `development`
-- `CODEX_VIEWER_SYNC_MODE`: `local` for direct SQLite import, `remote` for daemon-to-server upload
-- `CODEX_VIEWER_DB`: override the SQLite database path
+Role-specific examples:
+
+- `.env.server.example`: normal viewer server setup
+- `.env.agent.example`: remote agent daemon setup
+- `.env.development.example`: local repo development with server and daemon reload enabled
+
+Normal server setup:
+
 - `CODEX_VIEWER_DATA_DIR`: override the data directory
 - `CODEX_VIEWER_HOST`: bind address for the FastAPI server
 - `CODEX_VIEWER_PORT`: bind port for the FastAPI server
-- `CODEX_VIEWER_SERVER_URL`: base URL for remote daemon uploads, such as `http://viewer.internal:8000`
-- `CODEX_VIEWER_SYNC_API_TOKEN`: bearer token the daemon sends for `/api/sync/*`; create this token from the server's `/settings` page
-- `CODEX_VIEWER_AGENT_UPDATE_COMMAND`: optional local command the agent runs when the server advertises a different agent version
-- `CODEX_VIEWER_SYNC_INTERVAL`: daemon polling interval in seconds
-- `CODEX_VIEWER_REMOTE_TIMEOUT`: HTTP timeout for remote sync requests
 - `CODEX_VIEWER_LOG_LEVEL`: log verbosity for the server and daemon
-- `CODEX_VIEWER_SOURCE_HOST`: host label written onto imported sessions
 - `CODEX_VIEWER_AUTH_MODE`: `none`, `password`, `proxy`, or `password_or_proxy`
 - `CODEX_VIEWER_SESSION_SECRET`: optional override for the login session signing secret; if unset and UI auth is enabled, the viewer generates one and stores it in `data/.session-secret`
 - `CODEX_VIEWER_AUTH_PROXY_USER_HEADER`: trusted reverse-proxy header used for SSO identity, default `X-Forwarded-User`
@@ -172,6 +180,23 @@ Shell or systemd-provided environment variables still win over values from these
 - `CODEX_VIEWER_AUTH_PROXY_LOGIN_URL`: optional SSO entrypoint URL for proxy-only deployments
 - `CODEX_VIEWER_AUTH_PROXY_LOGOUT_URL`: optional IdP or proxy logout URL
 - `CODEX_VIEWER_AUTH_COOKIE_SECURE=1`: mark auth session cookies as secure
+
+Normal agent setup:
+
+- `CODEX_VIEWER_SERVER_URL`: base URL for remote daemon uploads, such as `http://viewer.internal:8000`
+- `CODEX_VIEWER_SYNC_API_TOKEN`: bearer token the daemon sends for `/api/sync/*`; create this token from the server's `/settings` page
+- `CODEX_VIEWER_SYNC_INTERVAL`: daemon polling interval in seconds
+
+Advanced or single-box overrides:
+
+- `CODEX_VIEWER_ENV`: optional env profile name such as `development`
+- `CODEX_VIEWER_SYNC_MODE`: `remote` by default; set `local` only for direct single-box SQLite import
+- `CODEX_SESSION_ROOTS`: comma-separated rollout roots for local import or customized agent scan paths
+- `CODEX_VIEWER_DB`: override the exact SQLite database path
+- `CODEX_VIEWER_SOURCE_HOST`: override the host label written onto imported sessions
+- `CODEX_VIEWER_REMOTE_TIMEOUT`: HTTP timeout for remote sync requests
+- `CODEX_VIEWER_DAEMON_REBUILD_ON_START`: force a full daemon rebuild on startup
+- `CODEX_VIEWER_AGENT_UPDATE_COMMAND`: optional local command the agent runs when the server advertises a different agent version
 
 ## UI Auth
 

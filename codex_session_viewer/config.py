@@ -177,7 +177,7 @@ class Settings:
         database_path = Path(
             os.getenv("CODEX_VIEWER_DB", data_dir / "codex_sessions.sqlite3")
         ).expanduser()
-        sync_mode = os.getenv("CODEX_VIEWER_SYNC_MODE", "local").strip().lower() or "local"
+        sync_mode = os.getenv("CODEX_VIEWER_SYNC_MODE", "remote").strip().lower() or "remote"
         app_version = __version__
         sync_api_version = SYNC_API_VERSION
         expected_agent_version = app_version
