@@ -46,4 +46,56 @@ if [[ "${agent_dev_reload}" == "1" ]]; then
   exit $?
 fi
 
-exec "${cmd[@]}"
+agent_restart_delay="${CODEX_VIEWER_AGENT_RESTART_DELAY:-5}"
+agent_restart_max_delay="${CODEX_VIEWER_AGENT_RESTART_MAX_DELAY:-60}"
+child_pid=""
+shutting_down=0
+
+agent_log() {
+  printf '[agent-daemon] %s\n' "$*"
+}
+
+forward_shutdown() {
+  shutting_down=1
+  if [[ -n "${child_pid}" ]] && kill -0 "${child_pid}" 2>/dev/null; then
+    kill -TERM "${child_pid}" 2>/dev/null || true
+  fi
+}
+
+trap forward_shutdown INT TERM
+
+while true; do
+  "${cmd[@]}" &
+  child_pid="$!"
+  agent_log "started pid=${child_pid}"
+
+  if wait "${child_pid}"; then
+    status=0
+  else
+    status=$?
+  fi
+  child_pid=""
+
+  if ((shutting_down)); then
+    exit 0
+  fi
+
+  if [[ "${status}" == "0" ]]; then
+    exit 0
+  fi
+
+  if [[ "${status}" == "75" ]]; then
+    agent_log "daemon requested restart"
+    sleep 1
+    continue
+  fi
+
+  agent_log "daemon exited with status=${status}; retrying in ${agent_restart_delay}s"
+  sleep "${agent_restart_delay}"
+  if [[ "${agent_restart_delay}" -lt "${agent_restart_max_delay}" ]]; then
+    agent_restart_delay=$(( agent_restart_delay * 2 ))
+    if [[ "${agent_restart_delay}" -gt "${agent_restart_max_delay}" ]]; then
+      agent_restart_delay="${agent_restart_max_delay}"
+    fi
+  fi
+done

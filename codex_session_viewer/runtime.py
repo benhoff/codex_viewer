@@ -8,7 +8,7 @@ import sqlite3
 import threading
 
 from .config import Settings
-from .remote_sync import RestartRequired, sync_sessions_remote
+from .remote_sync import RemoteSyncError, RestartRequired, sync_sessions_remote
 
 
 def get_events(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
@@ -88,6 +88,18 @@ def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start:
         except RestartRequired as exc:
             logger.info("Agent update completed, restarting daemon: %s", exc)
             return 75
+        except RemoteSyncError as exc:
+            first_run = False
+            logger.warning("Remote sync unavailable, will retry in %ss: %s", interval_seconds, exc)
+            if stop_event.wait(interval_seconds):
+                break
+            continue
+        except Exception:
+            first_run = False
+            logger.exception("Daemon sync pass crashed unexpectedly, retrying in %ss", interval_seconds)
+            if stop_event.wait(interval_seconds):
+                break
+            continue
         logger.info("Sync pass finished: %s", json.dumps(stats, sort_keys=True))
         first_run = False
         if stop_event.wait(interval_seconds):
