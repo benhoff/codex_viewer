@@ -22,9 +22,15 @@ from ...db import connect, write_transaction
 from ...environment_audit import fetch_host_environment_audit
 from ...importer import sync_sessions
 from ...local_auth import (
+    claim_initial_admin,
+    create_local_user,
     create_initial_admin,
     fetch_auth_status,
+    list_users,
+    normalize_user_role,
+    set_user_disabled,
     touch_user_login,
+    update_user_role,
     update_user_password,
     validate_new_password,
     validate_username,
@@ -62,6 +68,8 @@ from ...server_settings import (
 from ..auth import (
     build_auth_user,
     clear_auth_session,
+    require_admin_user,
+    require_authenticated_user,
     safe_next_path,
     set_password_session,
 )
@@ -87,18 +95,24 @@ def render_settings_page(
     password_success: str | None = None,
     server_settings_error: str | None = None,
     server_settings_success: str | None = None,
+    user_management_error: str | None = None,
+    user_management_success: str | None = None,
 ) -> HTMLResponse:
     context = get_app_context(request)
+    current_user = getattr(request.state, "auth_user", None)
+    can_manage_admin = bool(
+        (not context.settings.auth_enabled())
+        or (current_user and current_user.get("is_admin"))
+    )
     with connect(context.settings.database_path) as connection:
         server_settings = apply_server_settings(connection, context.settings)
-        api_tokens = list_api_tokens(connection)
+        api_tokens = list_api_tokens(connection) if can_manage_admin else []
         auth_status = fetch_auth_status(connection)
-    current_user = getattr(request.state, "auth_user", None)
+        users = list_users(connection) if can_manage_admin else []
     can_change_password = bool(
         current_user
         and current_user.get("auth_source") == "password"
         and current_user.get("user_id")
-        and current_user.get("is_admin")
     )
     return context.templates.TemplateResponse(
         request,
@@ -116,6 +130,10 @@ def render_settings_page(
             "server_settings_error": server_settings_error,
             "server_settings_success": server_settings_success,
             "can_change_password": can_change_password,
+            "can_manage_admin": can_manage_admin,
+            "managed_users": users,
+            "user_management_error": user_management_error,
+            "user_management_success": user_management_success,
         },
     )
 
@@ -541,8 +559,10 @@ async def login_submit(request: Request) -> Response:
     auth_user = build_auth_user(
         user_id=str(user["id"]),
         username=str(user["username"]),
-        display_name=str(user["username"]),
+        display_name=str(user["display_name"]),
+        email=str(user.get("email") or ""),
         auth_source="password",
+        role=str(user["role"]),
         is_admin=bool(user["is_admin"]),
     )
     set_password_session(request, auth_user)
@@ -777,13 +797,8 @@ def settings_page(request: Request) -> HTMLResponse:
 @router.post("/settings/password")
 async def settings_change_password(request: Request) -> HTMLResponse:
     context = get_app_context(request)
-    current_user = getattr(request.state, "auth_user", None)
-    if (
-        not current_user
-        or current_user.get("auth_source") != "password"
-        or not current_user.get("user_id")
-        or not current_user.get("is_admin")
-    ):
+    current_user = require_authenticated_user(request)
+    if current_user.get("auth_source") != "password":
         raise HTTPException(status_code=403, detail="Password changes require a local password-authenticated session.")
 
     fields = await parse_form_fields(request)
@@ -806,8 +821,75 @@ async def settings_change_password(request: Request) -> HTMLResponse:
     return render_settings_page(request, password_success="Password updated.")
 
 
+@router.post("/settings/users")
+async def settings_create_user(request: Request) -> HTMLResponse:
+    require_admin_user(request)
+    context = get_app_context(request)
+    if not context.settings.auth_allows_password():
+        raise HTTPException(status_code=403, detail="Local user creation requires password auth to be enabled.")
+
+    fields = await parse_form_fields(request)
+    username = fields.get("username", "").strip()
+    password = fields.get("password", "")
+    confirm_password = fields.get("confirm_password", "")
+    role = normalize_user_role(fields.get("role", "viewer"))
+
+    try:
+        validate_username(username)
+        validate_new_password(password)
+        if password != confirm_password:
+            raise ValueError("Passwords do not match.")
+        with connect(context.settings.database_path) as connection:
+            with write_transaction(connection):
+                create_local_user(
+                    connection,
+                    username=username,
+                    password=password,
+                    role=role,
+                )
+    except ValueError as exc:
+        return render_settings_page(request, user_management_error=str(exc))
+    except sqlite3.IntegrityError:
+        return render_settings_page(request, user_management_error="That username is already taken.")
+
+    return render_settings_page(request, user_management_success=f"Created {role} account {username}.")
+
+
+@router.post("/settings/users/actions")
+async def settings_user_action(request: Request) -> HTMLResponse:
+    current_user = require_admin_user(request)
+    context = get_app_context(request)
+    fields = await parse_form_fields(request)
+    target_user_id = fields.get("user_id", "").strip()
+    action = fields.get("action", "").strip()
+    if not target_user_id:
+        raise HTTPException(status_code=400, detail="Missing user id")
+
+    try:
+        with connect(context.settings.database_path) as connection:
+            with write_transaction(connection):
+                if action == "set_role":
+                    update_user_role(connection, target_user_id, fields.get("role", "viewer"))
+                    message = "User role updated."
+                elif action == "disable":
+                    if target_user_id == str(current_user["user_id"]):
+                        raise ValueError("You cannot disable your own account.")
+                    set_user_disabled(connection, target_user_id, True)
+                    message = "User disabled."
+                elif action == "enable":
+                    set_user_disabled(connection, target_user_id, False)
+                    message = "User enabled."
+                else:
+                    raise HTTPException(status_code=400, detail="Unsupported user action")
+    except ValueError as exc:
+        return render_settings_page(request, user_management_error=str(exc))
+
+    return render_settings_page(request, user_management_success=message)
+
+
 @router.post("/settings/server")
 async def settings_update_server(request: Request) -> HTMLResponse:
+    require_admin_user(request)
     context = get_app_context(request)
     fields = await parse_form_fields(request)
 
@@ -861,6 +943,7 @@ async def settings_update_server(request: Request) -> HTMLResponse:
 
 @router.post("/settings/api-tokens")
 async def create_settings_api_token(request: Request) -> HTMLResponse:
+    require_admin_user(request)
     context = get_app_context(request)
     fields = await parse_form_fields(request)
     label = fields.get("label", "")
@@ -872,6 +955,7 @@ async def create_settings_api_token(request: Request) -> HTMLResponse:
 
 @router.post("/settings/api-tokens/actions")
 async def settings_api_token_action(request: Request) -> RedirectResponse:
+    require_admin_user(request)
     context = get_app_context(request)
     fields = await parse_form_fields(request)
     token_id = fields.get("token_id", "").strip()
@@ -893,6 +977,7 @@ async def settings_api_token_action(request: Request) -> RedirectResponse:
 
 @router.post("/remotes/actions")
 async def remote_action(request: Request) -> RedirectResponse:
+    require_admin_user(request)
     context = get_app_context(request)
     fields = await parse_form_fields(request)
     source_host = fields.get("source_host", "").strip()
@@ -915,6 +1000,7 @@ async def remote_action(request: Request) -> RedirectResponse:
 
 @router.post("/refresh")
 def refresh(request: Request) -> RedirectResponse:
+    require_admin_user(request)
     context = get_app_context(request)
     sync_sessions(context.settings)
     return RedirectResponse(url="/", status_code=303)

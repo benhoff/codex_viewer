@@ -18,8 +18,12 @@
         <a href="{{ stream_href }}" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
           Open stream
         </a>
+        <a href="{{ environment_href }}" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-100">
+          Environment
+        </a>
       </div>
 
+      {% if not request.state.auth_enabled or (request.state.auth_user and request.state.auth_user.is_admin) %}
       <details class="group">
         <summary class="list-none">
           <span class="inline-flex cursor-pointer items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
@@ -27,9 +31,6 @@
           </span>
         </summary>
         <div class="mt-3 flex flex-wrap justify-end gap-2">
-          <a href="{{ environment_href }}" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-100">
-            Environment
-          </a>
           <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
             Edit
           </a>
@@ -43,6 +44,7 @@
           </form>
         </div>
       </details>
+      {% endif %}
     </div>
 
     <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:mb-8 sm:p-6 lg:p-7">

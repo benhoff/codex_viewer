@@ -8,6 +8,8 @@ from fastapi.staticfiles import StaticFiles
 from ..config import Settings
 from ..db import connect, init_db
 from ..importer import sync_sessions
+from ..local_auth import fetch_auth_status
+from ..saved_turns import migrate_global_saved_turns_to_owner
 from ..server_settings import apply_server_settings
 from .auth import install_auth
 from .context import AppContext, set_app_context
@@ -30,11 +32,19 @@ def create_app(
     app_settings.ensure_directories()
     init_db(app_settings.database_path)
     with connect(app_settings.database_path) as connection:
-        apply_server_settings(
-            connection,
-            app_settings,
-            preserve_sync_on_start=preserve_sync_on_start,
-        )
+        with connection:
+            apply_server_settings(
+                connection,
+                app_settings,
+                preserve_sync_on_start=preserve_sync_on_start,
+            )
+            if app_settings.auth_enabled():
+                auth_status = fetch_auth_status(connection)
+                if auth_status.admin_user and auth_status.admin_user.get("id"):
+                    migrate_global_saved_turns_to_owner(
+                        connection,
+                        owner_scope=str(auth_status.admin_user["id"]),
+                    )
     STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="Codex Session Viewer", version=app_settings.app_version)

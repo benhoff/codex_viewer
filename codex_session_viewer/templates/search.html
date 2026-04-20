@@ -30,37 +30,39 @@
                 <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-amber-800">Manual</span>
               {% endif %}
 
-              <details class="relative">
-                <summary class="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-full border border-stone-900/10 bg-white text-sm font-semibold text-stone-600 transition hover:border-stone-900/20 hover:text-stone-900">
-                  ...
-                </summary>
-                <div class="absolute right-0 top-11 z-20 w-56 rounded-[1.25rem] border border-stone-900/10 bg-white p-2 shadow-[0_18px_45px_-20px_rgba(41,37,36,0.45)]">
-                  <form action="/projects/actions" method="post">
-                    <input type="hidden" name="group_key" value="{{ group.key }}" />
-                    <input type="hidden" name="return_to" value="{{ return_to }}" />
-                    <button
-                      type="submit"
-                      name="action"
-                      value="delete"
-                      class="block w-full rounded-[0.9rem] px-3 py-2 text-left text-sm font-medium text-stone-700 transition hover:bg-stone-100 hover:text-stone-900"
-                    >
-                      Delete imported data
-                    </button>
-                  </form>
-                  <form action="/projects/actions" method="post" class="mt-1">
-                    <input type="hidden" name="group_key" value="{{ group.key }}" />
-                    <input type="hidden" name="return_to" value="{{ return_to }}" />
-                    <button
-                      type="submit"
-                      name="action"
-                      value="ignore"
-                      class="block w-full rounded-[0.9rem] px-3 py-2 text-left text-sm font-medium text-rose-700 transition hover:bg-rose-50"
-                    >
-                      Delete and stop tracking
-                    </button>
-                  </form>
-                </div>
-              </details>
+              {% if not request.state.auth_enabled or (request.state.auth_user and request.state.auth_user.is_admin) %}
+                <details class="relative">
+                  <summary class="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-full border border-stone-900/10 bg-white text-sm font-semibold text-stone-600 transition hover:border-stone-900/20 hover:text-stone-900">
+                    ...
+                  </summary>
+                  <div class="absolute right-0 top-11 z-20 w-56 rounded-[1.25rem] border border-stone-900/10 bg-white p-2 shadow-[0_18px_45px_-20px_rgba(41,37,36,0.45)]">
+                    <form action="/projects/actions" method="post">
+                      <input type="hidden" name="group_key" value="{{ group.key }}" />
+                      <input type="hidden" name="return_to" value="{{ return_to }}" />
+                      <button
+                        type="submit"
+                        name="action"
+                        value="delete"
+                        class="block w-full rounded-[0.9rem] px-3 py-2 text-left text-sm font-medium text-stone-700 transition hover:bg-stone-100 hover:text-stone-900"
+                      >
+                        Delete imported data
+                      </button>
+                    </form>
+                    <form action="/projects/actions" method="post" class="mt-1">
+                      <input type="hidden" name="group_key" value="{{ group.key }}" />
+                      <input type="hidden" name="return_to" value="{{ return_to }}" />
+                      <button
+                        type="submit"
+                        name="action"
+                        value="ignore"
+                        class="block w-full rounded-[0.9rem] px-3 py-2 text-left text-sm font-medium text-rose-700 transition hover:bg-rose-50"
+                      >
+                        Delete and stop tracking
+                      </button>
+                    </form>
+                  </div>
+                </details>
+              {% endif %}
             </div>
           </div>
 

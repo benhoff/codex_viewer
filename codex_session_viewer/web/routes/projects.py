@@ -20,6 +20,7 @@ from ...projects import (
     upsert_project_override,
 )
 from ...saved_turns import count_saved_turns_by_status, owner_scope_from_request
+from ..auth import require_admin_user
 from ..context import get_app_context, request_return_to
 from ..forms import parse_form_fields
 
@@ -134,6 +135,7 @@ def group_detail_directory_legacy(request: Request, host: str, directory: str) -
 
 @router.get("/projects/{owner_slug}/{project_slug}/edit", response_class=HTMLResponse)
 def group_edit(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
+    require_admin_user(request)
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
         group_key = resolve_group_key_from_detail_path(connection, owner_slug, project_slug)
@@ -220,6 +222,7 @@ def group_stream(request: Request, owner_slug: str, project_slug: str, page: int
 
 @router.post("/overrides")
 async def save_override(request: Request) -> RedirectResponse:
+    require_admin_user(request)
     context = get_app_context(request)
     fields = await parse_form_fields(request)
     match_project_key = fields.get("match_project_key", "").strip()
@@ -246,6 +249,7 @@ async def save_override(request: Request) -> RedirectResponse:
 
 @router.post("/projects/github-url")
 async def save_project_github_url(request: Request) -> RedirectResponse:
+    require_admin_user(request)
     context = get_app_context(request)
     fields = await parse_form_fields(request)
     group_key = fields.get("group_key", "").strip()
@@ -278,6 +282,7 @@ async def save_project_github_url(request: Request) -> RedirectResponse:
 
 @router.post("/projects/actions")
 async def project_action(request: Request) -> RedirectResponse:
+    require_admin_user(request)
     context = get_app_context(request)
     fields = await parse_form_fields(request)
     group_key = fields.get("group_key", "").strip()

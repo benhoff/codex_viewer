@@ -92,6 +92,13 @@ USER_COLUMN_DEFS = {
     "updated_at": "TEXT NOT NULL",
     "last_login_at": "TEXT",
     "is_admin": "INTEGER NOT NULL DEFAULT 0",
+    "role": "TEXT NOT NULL DEFAULT 'viewer'",
+    "auth_source": "TEXT NOT NULL DEFAULT 'password'",
+    "external_subject": "TEXT",
+    "display_name": "TEXT NOT NULL DEFAULT ''",
+    "email": "TEXT NOT NULL DEFAULT ''",
+    "disabled_at": "TEXT",
+    "last_seen_at": "TEXT",
 }
 
 AUTH_STATE_COLUMN_DEFS = {
@@ -468,6 +475,10 @@ ON saved_turns(session_id, turn_number);
 
 CREATE INDEX IF NOT EXISTS idx_users_username
 ON users(username);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_subject
+ON users(external_subject)
+WHERE external_subject IS NOT NULL AND TRIM(external_subject) <> '';
 """
 
 WRITE_LOCK = threading.RLock()
@@ -688,6 +699,47 @@ def ensure_user_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def backfill_user_access_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "users"):
+        return
+    connection.execute(
+        """
+        UPDATE users
+        SET role = CASE WHEN is_admin = 1 THEN 'admin' ELSE 'viewer' END
+        WHERE COALESCE(TRIM(role), '') = ''
+           OR (role = 'viewer' AND is_admin = 1)
+        """
+    )
+    connection.execute(
+        """
+        UPDATE users
+        SET auth_source = 'password'
+        WHERE COALESCE(TRIM(auth_source), '') = ''
+        """
+    )
+    connection.execute(
+        """
+        UPDATE users
+        SET display_name = username
+        WHERE COALESCE(TRIM(display_name), '') = ''
+        """
+    )
+    connection.execute(
+        """
+        UPDATE users
+        SET email = ''
+        WHERE email IS NULL
+        """
+    )
+    connection.execute(
+        """
+        UPDATE users
+        SET last_seen_at = COALESCE(last_seen_at, last_login_at)
+        WHERE last_seen_at IS NULL AND last_login_at IS NOT NULL
+        """
+    )
+
+
 def ensure_auth_state_columns(connection: sqlite3.Connection) -> None:
     if not table_exists(connection, "auth_state"):
         return
@@ -766,6 +818,7 @@ def init_db(database_path: Path) -> None:
             ensure_session_columns(connection)
             ensure_remote_agent_columns(connection)
             ensure_user_columns(connection)
+            backfill_user_access_columns(connection)
             ensure_auth_state_columns(connection)
             ensure_alert_incident_columns(connection)
             ensure_alert_delivery_columns(connection)

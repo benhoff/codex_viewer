@@ -11,7 +11,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from ..api_tokens import find_active_api_token, touch_api_token_usage
 from ..config import Settings
 from ..db import connect, write_transaction
-from ..local_auth import fetch_auth_status, fetch_user_by_id
+from ..local_auth import fetch_auth_status, fetch_user_by_id, touch_user_seen, upsert_proxy_user
+from ..onboarding import effective_bootstrap_required
 from .context import get_settings, request_return_to
 
 
@@ -27,6 +28,8 @@ PUBLIC_PREFIXES = (
 BOOTSTRAP_PUBLIC_PATHS = {
     "/api/health",
     "/setup",
+    "/setup/claim-admin",
+    "/setup/status",
 }
 
 
@@ -96,20 +99,27 @@ def build_auth_user(
     email: str | None = None,
     auth_source: str,
     user_id: str | None = None,
+    role: str = "viewer",
     is_admin: bool = False,
 ) -> dict[str, object]:
     clean_username = username.strip()
+    normalized_role = (role or "").strip().lower() or ("admin" if is_admin else "viewer")
     return {
         "user_id": (user_id or "").strip() or None,
         "username": clean_username,
         "display_name": (display_name or clean_username).strip() or clean_username,
         "email": (email or "").strip(),
         "auth_source": auth_source,
-        "is_admin": bool(is_admin),
+        "role": normalized_role,
+        "is_admin": normalized_role == "admin" or bool(is_admin),
     }
 
 
-def proxy_auth_user(request: Request, settings: Settings) -> dict[str, object] | None:
+def proxy_auth_user(
+    request: Request,
+    settings: Settings,
+    connection: Any,
+) -> dict[str, object] | None:
     if not settings.auth_allows_proxy():
         return None
     username = request.headers.get(settings.auth_proxy_user_header or "", "").strip()
@@ -117,31 +127,48 @@ def proxy_auth_user(request: Request, settings: Settings) -> dict[str, object] |
         return None
     display_name = request.headers.get(settings.auth_proxy_name_header or "", "").strip() or username
     email = request.headers.get(settings.auth_proxy_email_header or "", "").strip()
-    return build_auth_user(
+    user = upsert_proxy_user(
+        connection,
+        external_subject=username,
         username=username,
         display_name=display_name,
         email=email,
-        auth_source="sso",
+    )
+    if user.get("disabled_at"):
+        raise ValueError("This account has been disabled.")
+    return build_auth_user(
+        user_id=str(user["id"]),
+        username=str(user["username"]),
+        display_name=str(user["display_name"]),
+        email=str(user.get("email") or ""),
+        auth_source="proxy",
+        role=str(user["role"]),
+        is_admin=bool(user["is_admin"]),
     )
 
 
-def session_auth_user(request: Request, settings: Settings) -> dict[str, object] | None:
+def session_auth_user(request: Request, settings: Settings, connection: Any) -> dict[str, object] | None:
     payload = request.session.get("auth_user")
     if not isinstance(payload, dict):
         return None
     user_id = str(payload.get("user_id") or "").strip()
     if not user_id:
         return None
-    with connect(settings.database_path) as connection:
-        user = fetch_user_by_id(connection, user_id)
+    user = fetch_user_by_id(connection, user_id)
     if user is None:
         clear_auth_session(request)
         return None
+    if str(user["disabled_at"] or "").strip():
+        clear_auth_session(request)
+        return None
+    touch_user_seen(connection, user_id)
     return build_auth_user(
         user_id=user["id"],
         username=str(user["username"] or "").strip(),
-        display_name=str(user["username"] or "").strip(),
+        display_name=str(user["display_name"] or user["username"] or "").strip(),
+        email=str(user["email"] or "").strip(),
         auth_source="password",
+        role=str(user["role"] or "viewer"),
         is_admin=bool(user["is_admin"]),
     )
 
@@ -153,12 +180,35 @@ def set_password_session(request: Request, user: dict[str, object]) -> None:
         "display_name": user["display_name"],
         "email": user.get("email", ""),
         "auth_source": user["auth_source"],
+        "role": user.get("role", "viewer"),
         "is_admin": bool(user.get("is_admin")),
     }
 
 
 def clear_auth_session(request: Request) -> None:
     request.session.clear()
+
+
+def require_authenticated_user(request: Request) -> dict[str, object]:
+    user = getattr(request.state, "auth_user", None)
+    if not isinstance(user, dict) or not str(user.get("user_id") or "").strip():
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+def require_admin_user(request: Request) -> dict[str, object]:
+    if not bool(getattr(request.state, "auth_enabled", False)):
+        return build_auth_user(
+            username="local-operator",
+            display_name="Local operator",
+            auth_source="none",
+            role="admin",
+            is_admin=True,
+        )
+    user = require_authenticated_user(request)
+    if str(user.get("role") or "").strip().lower() != "admin" and not bool(user.get("is_admin")):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -178,22 +228,26 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not settings.auth_enabled():
             return await call_next(request)
 
-        with connect(settings.database_path) as connection:
-            auth_status = fetch_auth_status(connection)
+        try:
+            with connect(settings.database_path) as connection:
+                auth_status = fetch_auth_status(connection)
+                user = proxy_auth_user(request, settings, connection) or session_auth_user(request, settings, connection)
+        except ValueError as exc:
+            if wants_html_response(request):
+                return Response(content=str(exc), status_code=403)
+            return JSONResponse({"detail": str(exc)}, status_code=403)
 
-        request.state.bootstrap_required = auth_status.bootstrap_required
+        request.state.bootstrap_required = effective_bootstrap_required(settings, auth_status)
         request.state.bootstrap_completed_at = auth_status.bootstrap_completed_at
         request.state.local_admin = auth_status.local_admin
+        request.state.auth_user = user
 
-        if auth_status.bootstrap_required:
+        if request.state.bootstrap_required:
             if is_bootstrap_public_path(request.url.path):
                 return await call_next(request)
             if wants_html_response(request):
                 return RedirectResponse(url="/setup", status_code=303)
             return JSONResponse({"detail": "Initial setup required"}, status_code=403)
-
-        user = proxy_auth_user(request, settings) or session_auth_user(request, settings)
-        request.state.auth_user = user
 
         if is_public_path(request.url.path):
             return await call_next(request)

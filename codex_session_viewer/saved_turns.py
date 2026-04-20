@@ -23,11 +23,48 @@ def utc_now_iso() -> str:
 
 def owner_scope_from_request(request: Request) -> str:
     auth_user = getattr(request.state, "auth_user", None)
+    auth_enabled = bool(getattr(request.state, "auth_enabled", False))
     if isinstance(auth_user, dict):
         user_id = str(auth_user.get("user_id") or "").strip()
         if user_id:
             return user_id
+        if auth_enabled:
+            raise RuntimeError("Authenticated user is missing a durable user_id")
+    if auth_enabled:
+        raise RuntimeError("Owner-scoped state requires an authenticated user")
     return GLOBAL_OWNER_SCOPE
+
+
+def migrate_global_saved_turns_to_owner(
+    connection: sqlite3.Connection,
+    *,
+    owner_scope: str,
+) -> None:
+    target_scope = str(owner_scope or "").strip()
+    if not target_scope or target_scope == GLOBAL_OWNER_SCOPE:
+        return
+    connection.execute(
+        """
+        DELETE FROM saved_turns
+        WHERE owner_scope = ?
+          AND EXISTS (
+            SELECT 1
+            FROM saved_turns AS target
+            WHERE target.owner_scope = ?
+              AND target.session_id = saved_turns.session_id
+              AND target.turn_number = saved_turns.turn_number
+          )
+        """,
+        (GLOBAL_OWNER_SCOPE, target_scope),
+    )
+    connection.execute(
+        """
+        UPDATE saved_turns
+        SET owner_scope = ?
+        WHERE owner_scope = ?
+        """,
+        (target_scope, GLOBAL_OWNER_SCOPE),
+    )
 
 
 def count_saved_turns(
