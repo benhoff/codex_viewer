@@ -839,6 +839,7 @@ def command_call_workdir(event: dict[str, object]) -> str | None:
 def build_phase_strip(
     *,
     plan_count: int,
+    research_count: int,
     inspect_count: int,
     modify_count: int,
     verification_count: int,
@@ -847,6 +848,8 @@ def build_phase_strip(
     phases: list[dict[str, object]] = []
     if plan_count:
         phases.append({"key": "plan", "label": "Plan", "count": plan_count, "tone": "amber"})
+    if research_count:
+        phases.append({"key": "research", "label": "Research", "count": research_count, "tone": "cyan"})
     if inspect_count:
         phases.append({"key": "inspect", "label": "Inspect", "count": inspect_count, "tone": "sky"})
     if modify_count:
@@ -856,6 +859,30 @@ def build_phase_strip(
     if response_present:
         phases.append({"key": "respond", "label": "Respond", "count": 1, "tone": "stone"})
     return phases
+
+
+def is_research_event(event: dict[str, object]) -> bool:
+    if str(event.get("kind") or "") not in {"tool_call", "tool_result"}:
+        return False
+    tool_name = str(event.get("tool_name") or "").strip()
+    payload_type = str(event.get("payload_type") or "").strip()
+    return tool_name in {"web_search", "tool_search", "view_image"} or payload_type in {
+        "web_search_call",
+        "web_search_end",
+        "tool_search_call",
+        "tool_search_output",
+        "image_generation_call",
+        "image_generation_end",
+    }
+
+
+def is_context_event(event: dict[str, object]) -> bool:
+    record_type = str(event.get("record_type") or "").strip()
+    payload_type = str(event.get("payload_type") or "").strip()
+    return (
+        (record_type == "event_msg" and payload_type in {"context_compacted", "thread_rolled_back", "item_completed"})
+        or record_type == "compacted"
+    )
 
 
 def aggregate_file_manifest(patch_events: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -990,6 +1017,7 @@ def response_evidence(
     response_text: str,
     command_events: list[dict[str, object]],
     patch_events: list[dict[str, object]],
+    research_events: list[dict[str, object]],
     verification_verdict_data: dict[str, object],
     file_manifest: list[dict[str, object]],
 ) -> dict[str, object]:
@@ -1006,6 +1034,13 @@ def response_evidence(
             {
                 "href": f"#turn-{turn_number}-patches",
                 "label": f"{len(patch_events)} patches",
+            }
+        )
+    if research_events:
+        links.append(
+            {
+                "href": f"#turn-{turn_number}-research",
+                "label": f"{len(research_events)} research events",
             }
         )
     verification_count = int(verification_verdict_data.get("command_count") or 0)
@@ -1397,9 +1432,56 @@ def grouped_work_entries(detail_events: list[dict[str, object]]) -> list[dict[st
     return grouped_work_entries_from_merged(merge_compound_tool_events(detail_events))
 
 
-def turn_context_details(events: list[sqlite3.Row]) -> tuple[str | None, str | None]:
-    model: str | None = None
-    effort: str | None = None
+def _enumish_label(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip().replace("_", " ").replace("-", " ")
+
+
+def _sandbox_label(value: object) -> str | None:
+    if isinstance(value, dict):
+        sandbox_type = value.get("type")
+        return _enumish_label(sandbox_type)
+    return _enumish_label(value)
+
+
+def _network_label(payload: dict[str, object]) -> str | None:
+    sandbox_policy = payload.get("sandbox_policy")
+    if isinstance(sandbox_policy, dict):
+        network_access = sandbox_policy.get("network_access")
+        if isinstance(network_access, bool):
+            return "enabled" if network_access else "disabled"
+        if isinstance(network_access, str) and network_access.strip():
+            return _enumish_label(network_access)
+    network = payload.get("network")
+    if isinstance(network, dict):
+        allowed = network.get("allowed_domains")
+        denied = network.get("denied_domains")
+        allowed_count = len([item for item in allowed if isinstance(item, str) and item.strip()]) if isinstance(allowed, list) else 0
+        denied_count = len([item for item in denied if isinstance(item, str) and item.strip()]) if isinstance(denied, list) else 0
+        if allowed_count or denied_count:
+            parts: list[str] = []
+            if allowed_count:
+                parts.append(f"{allowed_count} allow")
+            if denied_count:
+                parts.append(f"{denied_count} deny")
+            return "restricted " + " / ".join(parts)
+        return "custom"
+    return None
+
+
+def _truncation_label(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    mode = _enumish_label(value.get("mode"))
+    limit = value.get("limit")
+    if mode and isinstance(limit, int):
+        return f"{mode} {limit:,}"
+    return mode
+
+
+def turn_context_snapshot(events: list[sqlite3.Row], *, cwd: str | None = None) -> dict[str, str]:
+    snapshot: dict[str, str] = {}
     for event in events:
         if str(event["record_type"] or "") != "turn_context":
             continue
@@ -1415,11 +1497,42 @@ def turn_context_details(events: list[sqlite3.Row]) -> tuple[str | None, str | N
             payload = record
         if not isinstance(payload, dict):
             continue
-        if isinstance(payload.get("model"), str) and payload["model"].strip():
-            model = payload["model"].strip()
-        if isinstance(payload.get("effort"), str) and payload["effort"].strip():
-            effort = payload["effort"].strip()
-    return model, effort
+        model = str(payload.get("model") or "").strip()
+        effort = str(payload.get("effort") or "").strip()
+        approval = _enumish_label(payload.get("approval_policy"))
+        sandbox = _sandbox_label(payload.get("sandbox_policy"))
+        network = _network_label(payload)
+        collaboration_mode = payload.get("collaboration_mode")
+        collaboration = None
+        if isinstance(collaboration_mode, dict):
+            collaboration = _enumish_label(collaboration_mode.get("mode"))
+        else:
+            collaboration = _enumish_label(collaboration_mode)
+        truncation = _truncation_label(payload.get("truncation_policy"))
+        turn_cwd = str(payload.get("cwd") or "").strip()
+
+        if model:
+            snapshot["model"] = model
+        if effort:
+            snapshot["effort"] = effort
+        if approval:
+            snapshot["approval_policy"] = approval
+        if sandbox:
+            snapshot["sandbox_policy"] = sandbox
+        if network:
+            snapshot["network_access"] = network
+        if collaboration:
+            snapshot["collaboration_mode"] = collaboration
+        if truncation:
+            snapshot["truncation_policy"] = truncation
+        if turn_cwd:
+            snapshot["cwd_display"] = collapse_path_for_display(turn_cwd, cwd)
+    return snapshot
+
+
+def turn_context_details(events: list[sqlite3.Row], *, cwd: str | None = None) -> tuple[str | None, str | None, dict[str, str]]:
+    snapshot = turn_context_snapshot(events, cwd=cwd)
+    return snapshot.get("model"), snapshot.get("effort"), snapshot
 
 
 def build_turns(
@@ -1472,8 +1585,8 @@ def build_turns(
         elif final_response_event is not None:
             response_text = str(final_response_event["display_text"] or "")
             response_timestamp = final_response_event["timestamp"]
-            response_state = "final"
-            response_label = "Final Response"
+            response_state = "update" if is_assistant_update(final_response_event) else "final"
+            response_label = "Latest Update" if response_state == "update" else "Final Response"
         elif abort_event is not None:
             response_text = abort_display_label(abort_event)
             response_timestamp = abort_event["timestamp"]
@@ -1488,7 +1601,7 @@ def build_turns(
         prompt_text = str(turn["prompt_text"])
         prompt_excerpt = shorten(prompt_text, 220)
         response_excerpt = shorten(response_text, 280) if response_text else "No assistant response captured."
-        agent_model, agent_effort = turn_context_details(all_events)
+        agent_model, agent_effort, execution_context = turn_context_details(all_events, cwd=cwd)
         turn_duration_seconds = task_duration_seconds(
             completion_event,
             str(turn["prompt_timestamp"]) if turn.get("prompt_timestamp") else None,
@@ -1505,7 +1618,7 @@ def build_turns(
                 skip = True
             if event["record_type"] == "turn_context":
                 skip = True
-            if event["record_type"] == "event_msg" and event["payload_type"] == "task_started":
+            if event["record_type"] == "event_msg" and event["payload_type"] in {"task_started", "turn_started"}:
                 skip = True
             if event["record_type"] == "compacted":
                 skip = True
@@ -1520,12 +1633,6 @@ def build_turns(
             ):
                 skip = True
             if abort_event is not None and event["event_index"] == abort_event["event_index"]:
-                skip = True
-            if (
-                event["kind"] == "message"
-                and event["role"] == "assistant"
-                and event["record_type"] == "response_item"
-            ):
                 skip = True
             if skip:
                 continue
@@ -1563,6 +1670,8 @@ def build_turns(
         plan_events = [event for event in merged_detail_events if event.get("plan_update")]
         command_events = [event for event in merged_detail_events if str(event.get("kind") or "") == "command"]
         patch_events = [event for event in merged_detail_events if str(event.get("group_key") or "") == "patch"]
+        research_events = [event for event in merged_detail_events if is_research_event(event)]
+        context_events = [event for event in merged_detail_events if is_context_event(event)]
         assistant_updates = [
             event
             for event in merged_detail_events
@@ -1587,6 +1696,7 @@ def build_turns(
         mutate_command_count = sum(1 for event in command_events if event.get("command_intent") == "mutate")
         phase_strip = build_phase_strip(
             plan_count=len(plan_events),
+            research_count=len(research_events),
             inspect_count=inspect_count,
             modify_count=len(patch_events) + mutate_command_count,
             verification_count=len(verification_commands),
@@ -1597,6 +1707,7 @@ def build_turns(
             response_text=response_text,
             command_events=command_events,
             patch_events=patch_events,
+            research_events=research_events,
             verification_verdict_data=verification_verdict_data,
             file_manifest=file_manifest,
         )
@@ -1617,6 +1728,7 @@ def build_turns(
             "duration_label": humanize_duration(turn_duration_seconds) if turn_duration_seconds is not None else "",
             "agent_model": agent_model,
             "agent_effort": agent_effort,
+            "audit_execution_context": execution_context,
             "response_text": response_text,
             "response_excerpt": response_excerpt,
             "response_timestamp": response_timestamp,
@@ -1629,6 +1741,8 @@ def build_turns(
             "audit_plan_events": plan_events,
             "audit_command_events": command_events,
             "audit_patch_events": patch_events,
+            "audit_research_events": research_events,
+            "audit_context_events": context_events,
             "audit_assistant_updates": assistant_updates,
             "audit_verification_commands": verification_commands,
             "audit_verification_state": verification_state,
@@ -1644,6 +1758,8 @@ def build_turns(
             "audit_summary": {
                 "command_count": len(command_events),
                 "patch_count": len(patch_events),
+                "research_count": len(research_events),
+                "context_count": len(context_events),
                 "files_touched_count": len(files_touched),
                 "verification_count": len(verification_commands),
                 "verification_state": verification_state,
@@ -1717,6 +1833,8 @@ def build_session_audit_summary(
     )
     total_commands = sum(int(turn["audit_summary"]["command_count"]) for turn in turns)
     total_patches = sum(int(turn["audit_summary"]["patch_count"]) for turn in turns)
+    total_research = sum(int(turn["audit_summary"].get("research_count") or 0) for turn in turns)
+    total_context_events = sum(int(turn["audit_summary"].get("context_count") or 0) for turn in turns)
     total_failures = sum(int(turn["audit_summary"]["failure_count"]) for turn in turns)
     total_warnings = sum(int(turn["audit_summary"]["warning_count"]) for turn in turns)
     total_verification = sum(int(turn["audit_summary"]["verification_count"]) for turn in turns)
@@ -1742,6 +1860,8 @@ def build_session_audit_summary(
         "turn_count": len(turns),
         "command_count": total_commands,
         "patch_count": total_patches,
+        "research_count": total_research,
+        "context_event_count": total_context_events,
         "files_touched_count": len(files_changed),
         "files_changed": files_changed,
         "failed_command_count": total_failures,

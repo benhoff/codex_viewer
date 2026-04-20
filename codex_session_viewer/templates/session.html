@@ -86,6 +86,102 @@
       </div>
     </section>
 
+    {% set has_usage_metrics = usage_pressure.usage_timestamp or usage_pressure.total_tokens or usage_pressure.context_window or usage_pressure.primary_limit_used_percent is not none or usage_pressure.secondary_limit_used_percent is not none or usage_pressure.rate_limit_name %}
+    {% if agent_snapshot.has_agent or has_usage_metrics %}
+    <section class="mb-6 grid gap-4 lg:grid-cols-2">
+      <article class="rounded-[1.4rem] border border-stone-900/10 bg-white/80 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.24)] backdrop-blur">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Agent Lineage</p>
+            <h2 class="mt-2 text-xl font-semibold text-stone-900">Role and parent session</h2>
+          </div>
+          {% if agent_snapshot.has_agent %}
+            <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-sky-800">{{ agent_snapshot.agent_role_label }}</span>
+          {% endif %}
+        </div>
+        <div class="mt-4 grid gap-3 sm:grid-cols-2">
+          <div class="rounded-[1rem] bg-stone-50/90 p-4">
+            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Nickname</p>
+            <p class="mt-2 text-sm font-semibold text-stone-900">{{ agent_snapshot.agent_nickname or "Top-level session" }}</p>
+          </div>
+          <div class="rounded-[1rem] bg-stone-50/90 p-4">
+            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Memory Mode</p>
+            <p class="mt-2 text-sm font-semibold text-stone-900">{{ agent_snapshot.memory_mode or "Default" }}</p>
+          </div>
+        </div>
+        <div class="mt-3 grid gap-3">
+          <div class="rounded-[1rem] bg-stone-50/90 p-4">
+            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Agent Path</p>
+            <p class="mt-2 break-all text-sm leading-6 text-stone-800">{{ agent_snapshot.agent_path or "No agent path was recorded for this session." }}</p>
+          </div>
+          <div class="rounded-[1rem] bg-stone-50/90 p-4">
+            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Parent Session</p>
+            {% if agent_snapshot.forked_from_id and parent_session_href %}
+              <a href="{{ parent_session_href }}" class="mt-2 inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-sm font-semibold text-stone-700 transition hover:bg-stone-100">{{ parent_session_title or agent_snapshot.forked_from_id }}</a>
+            {% elif agent_snapshot.forked_from_id %}
+              <p class="mt-2 break-all text-sm leading-6 text-stone-800">{{ agent_snapshot.forked_from_id }}</p>
+            {% else %}
+              <p class="mt-2 text-sm leading-6 text-stone-800">This session was not recorded as a spawned child session.</p>
+            {% endif %}
+          </div>
+        </div>
+      </article>
+
+      <article class="rounded-[1.4rem] border p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.24)] backdrop-blur {% if usage_pressure.status_tone == 'rose' %}border-rose-200 bg-rose-50/75{% elif usage_pressure.status_tone == 'amber' %}border-amber-200 bg-amber-50/75{% else %}border-stone-900/10 bg-white/80{% endif %}">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] {% if usage_pressure.status_tone == 'rose' %}text-rose-700{% elif usage_pressure.status_tone == 'amber' %}text-amber-700{% else %}text-stone-500{% endif %}">Usage Pressure</p>
+            <h2 class="mt-2 text-xl font-semibold text-stone-900">{{ usage_pressure.status_label }}</h2>
+            <p class="mt-2 text-sm text-stone-600">{{ usage_pressure.status_title }}</p>
+          </div>
+          {% if usage_pressure.usage_timestamp %}
+            <span class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ usage_pressure.usage_timestamp|full_timestamp }}">{{ usage_pressure.usage_timestamp|humanize_timestamp }}</span>
+          {% endif %}
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2">
+          {% for badge in usage_pressure.badges %}
+            <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">{{ badge.label }}</span>
+          {% endfor %}
+          {% if usage_pressure.rate_limit_name %}
+            <span class="rounded-full bg-stone-200 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ usage_pressure.rate_limit_name }}</span>
+          {% endif %}
+        </div>
+        <div class="mt-4 grid gap-3 sm:grid-cols-2">
+          <div class="rounded-[1rem] bg-white/75 p-4">
+            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Token Volume</p>
+            <p class="mt-2 text-sm font-semibold text-stone-900">
+              {{ "{:,}".format(usage_pressure.total_tokens or 0) }} total
+              {% if usage_pressure.blended_total_tokens %}
+                · {{ "{:,}".format(usage_pressure.blended_total_tokens) }} blended
+              {% endif %}
+            </p>
+            <p class="mt-1 text-xs text-stone-500">
+              {{ "{:,}".format(usage_pressure.input_tokens or 0) }} in · {{ "{:,}".format(usage_pressure.output_tokens or 0) }} out
+              {% if usage_pressure.cached_input_tokens %}
+                · {{ "{:,}".format(usage_pressure.cached_input_tokens) }} cached
+              {% endif %}
+            </p>
+          </div>
+          <div class="rounded-[1rem] bg-white/75 p-4">
+            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Context Window</p>
+            <p class="mt-2 text-sm font-semibold text-stone-900">
+              {% if usage_pressure.context_remaining_percent is not none %}
+                {{ usage_pressure.context_remaining_percent }}% remaining
+              {% elif usage_pressure.context_window %}
+                {{ "{:,}".format(usage_pressure.context_window) }} tokens
+              {% else %}
+                No context telemetry recorded
+              {% endif %}
+            </p>
+            {% if usage_pressure.context_window %}
+              <p class="mt-1 text-xs text-stone-500">Model window: {{ "{:,}".format(usage_pressure.context_window) }}</p>
+            {% endif %}
+          </div>
+        </div>
+      </article>
+    </section>
+    {% endif %}
+
     <div data-session-window-region>
     {% if session_view_mode == 'audit' %}
       <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/78 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.28)] backdrop-blur sm:mb-8 sm:p-6">
@@ -94,7 +190,7 @@
             <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Audit Summary</p>
             <h2 class="mt-2 text-2xl font-semibold text-stone-900">Evidence Ledger</h2>
             <p class="mt-2 text-sm text-stone-600">
-              Command, patch, verification, and file-change evidence for the current turn window.
+              Command, patch, research, verification, and context evidence for the current turn window.
             </p>
           </div>
           <div class="flex flex-wrap items-center justify-end gap-2">
@@ -141,6 +237,12 @@
             <div class="flex flex-wrap gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">
               <span class="rounded-full bg-white px-3 py-1">{{ audit_summary.files_touched_count }} files touched</span>
               <span class="rounded-full bg-white px-3 py-1">{{ audit_summary.verification_count }} verification runs</span>
+              {% if audit_summary.research_count %}
+                <span class="rounded-full bg-cyan-100 px-3 py-1 text-cyan-800">{{ audit_summary.research_count }} research events</span>
+              {% endif %}
+              {% if audit_summary.context_event_count %}
+                <span class="rounded-full bg-stone-100 px-3 py-1 text-stone-700">{{ audit_summary.context_event_count }} context shifts</span>
+              {% endif %}
               {% if audit_summary.warning_count %}
                 <span class="rounded-full bg-amber-100 px-3 py-1 text-amber-800">{{ audit_summary.warning_count }} warnings</span>
               {% endif %}
@@ -277,6 +379,12 @@
                     {% elif session_view_mode == 'audit' %}
                       <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.command_count }} commands</span>
                       <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.patch_count }} patches</span>
+                      {% if turn.audit_summary.research_count %}
+                        <span class="rounded-full bg-cyan-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-800">{{ turn.audit_summary.research_count }} research</span>
+                      {% endif %}
+                      {% if turn.audit_summary.context_count %}
+                        <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">{{ turn.audit_summary.context_count }} context</span>
+                      {% endif %}
                       <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.files_touched_count }} files</span>
                       <span class="rounded-full {% if turn.audit_verification_verdict.status == 'passed' %}bg-emerald-100 text-emerald-800{% elif turn.audit_verification_verdict.status == 'passed_with_warnings' %}bg-amber-100 text-amber-800{% elif turn.audit_verification_verdict.status == 'failed' %}bg-rose-100 text-rose-800{% else %}bg-stone-100 text-stone-600{% endif %} px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em]">
                         {{ turn.audit_verification_verdict.label }}
@@ -318,7 +426,7 @@
                 {% if session_view_mode == 'audit' and turn.audit_phase_strip %}
                   <div class="flex flex-wrap items-center gap-2">
                     {% for phase in turn.audit_phase_strip %}
-                      <span class="rounded-full {% if phase.tone == 'amber' %}bg-amber-100 text-amber-800{% elif phase.tone == 'sky' %}bg-sky-100 text-sky-800{% elif phase.tone == 'violet' %}bg-violet-100 text-violet-800{% elif phase.tone == 'emerald' %}bg-emerald-100 text-emerald-800{% else %}bg-stone-100 text-stone-700{% endif %} px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]">
+                      <span class="rounded-full {% if phase.tone == 'amber' %}bg-amber-100 text-amber-800{% elif phase.tone == 'cyan' %}bg-cyan-100 text-cyan-800{% elif phase.tone == 'sky' %}bg-sky-100 text-sky-800{% elif phase.tone == 'violet' %}bg-violet-100 text-violet-800{% elif phase.tone == 'emerald' %}bg-emerald-100 text-emerald-800{% else %}bg-stone-100 text-stone-700{% endif %} px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]">
                         {{ phase.label }} · {{ phase.count }}
                       </span>
                     {% endfor %}
@@ -537,6 +645,24 @@
                     {% if turn.agent_effort %}
                       <span class="rounded-full bg-stone-100 px-3 py-1">Level: {{ turn.agent_effort }}</span>
                     {% endif %}
+                    {% if turn.audit_execution_context.approval_policy %}
+                      <span class="rounded-full bg-white px-3 py-1">Approval: {{ turn.audit_execution_context.approval_policy }}</span>
+                    {% endif %}
+                    {% if turn.audit_execution_context.sandbox_policy %}
+                      <span class="rounded-full bg-white px-3 py-1">Sandbox: {{ turn.audit_execution_context.sandbox_policy }}</span>
+                    {% endif %}
+                    {% if turn.audit_execution_context.network_access %}
+                      <span class="rounded-full {% if turn.audit_execution_context.network_access == 'disabled' %}bg-stone-100 text-stone-700{% else %}bg-cyan-100 text-cyan-800{% endif %} px-3 py-1">Network: {{ turn.audit_execution_context.network_access }}</span>
+                    {% endif %}
+                    {% if turn.audit_execution_context.collaboration_mode %}
+                      <span class="rounded-full bg-white px-3 py-1">Collab: {{ turn.audit_execution_context.collaboration_mode }}</span>
+                    {% endif %}
+                    {% if turn.audit_execution_context.truncation_policy %}
+                      <span class="rounded-full bg-white px-3 py-1">Truncation: {{ turn.audit_execution_context.truncation_policy }}</span>
+                    {% endif %}
+                    {% if turn.audit_execution_context.cwd_display %}
+                      <span class="rounded-full bg-white px-3 py-1">cwd: {{ turn.audit_execution_context.cwd_display }}</span>
+                    {% endif %}
                   </div>
                 </section>
 
@@ -590,6 +716,23 @@
                             </div>
                           {% endif %}
                         </article>
+                      {% endfor %}
+                    </div>
+                  </details>
+                {% endif %}
+
+                {% if turn.audit_research_events %}
+                  <details id="turn-{{ turn.number }}-research" class="rounded-[1.2rem] border border-cyan-200 bg-cyan-50/70 p-4">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-800">Research</span>
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_research_events|length }} event{% if turn.audit_research_events|length != 1 %}s{% endif %}</span>
+                      </div>
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expand</span>
+                    </summary>
+                    <div class="mt-4 space-y-3">
+                      {% for event in turn.audit_research_events %}
+                        {% include "_work_event.html" %}
                       {% endfor %}
                     </div>
                   </details>
@@ -930,6 +1073,23 @@
                     </summary>
                     <div class="mt-4 space-y-3">
                       {% for event in turn.audit_assistant_updates %}
+                        {% include "_work_event.html" %}
+                      {% endfor %}
+                    </div>
+                  </details>
+                {% endif %}
+
+                {% if turn.audit_context_events %}
+                  <details id="turn-{{ turn.number }}-context" class="rounded-[1.2rem] border border-stone-200 bg-stone-50/80 p-4">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">Context Shifts</span>
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_context_events|length }} event{% if turn.audit_context_events|length != 1 %}s{% endif %}</span>
+                      </div>
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expand</span>
+                    </summary>
+                    <div class="mt-4 space-y-3">
+                      {% for event in turn.audit_context_events %}
                         {% include "_work_event.html" %}
                       {% endfor %}
                     </div>

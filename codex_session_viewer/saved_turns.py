@@ -271,7 +271,8 @@ def fetch_turn_snapshot(
             tool_name,
             call_id,
             command_text,
-            exit_code
+            exit_code,
+            record_json
         FROM events
         WHERE session_id = ?
         ORDER BY event_index ASC

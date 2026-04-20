@@ -1,0 +1,1082 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest import mock
+
+from codex_session_viewer.git_utils import infer_project_identity
+from codex_session_viewer.config import Settings
+from codex_session_viewer.db import connect, init_db, write_transaction
+from codex_session_viewer.importer import (
+    normalize_event,
+    normalized_event_to_dict,
+    parse_session_text,
+    parsed_session_from_payload,
+    parsed_session_to_payload,
+    sync_sessions,
+    upsert_parsed_session,
+)
+from codex_session_viewer.projects import (
+    build_project_access_context,
+    effective_project_fields,
+    fetch_group_detail,
+)
+from codex_session_viewer.session_status import is_task_complete, terminal_turn_summary
+from codex_session_viewer.session_artifacts import store_session_artifact
+from codex_session_viewer.session_view import build_turns
+
+
+def make_record_json(payload: dict[str, object], *, record_type: str = "response_item") -> str:
+    return json.dumps({"type": record_type, "payload": payload})
+
+
+def message_event(
+    *,
+    event_index: int,
+    role: str,
+    text: str,
+    phase: str | None = None,
+    timestamp: str = "2026-04-20T03:19:14Z",
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "type": "message",
+        "role": role,
+        "content": [{"type": "output_text", "text": text}],
+    }
+    if phase is not None:
+        payload["phase"] = phase
+    return {
+        "event_index": event_index,
+        "timestamp": timestamp,
+        "record_type": "response_item",
+        "payload_type": "message",
+        "kind": "message",
+        "role": role,
+        "title": "Assistant Message" if role == "assistant" else "User Message",
+        "display_text": text,
+        "detail_text": text,
+        "tool_name": None,
+        "call_id": None,
+        "command_text": None,
+        "exit_code": None,
+        "record_json": make_record_json(payload),
+    }
+
+
+class RolloutParsingTests(unittest.TestCase):
+    def test_build_turns_treats_commentary_as_update_not_final(self) -> None:
+        commentary = "Comparing current assumptions against upstream."
+        final_answer = "The phase-aware fix should land in session_status.py."
+        events = [
+            {
+                "event_index": 1,
+                "timestamp": "2026-04-20T03:19:14Z",
+                "record_type": "event_msg",
+                "payload_type": "user_message",
+                "kind": "message",
+                "role": "user",
+                "title": "User Message",
+                "display_text": "Find the parser drift.",
+                "detail_text": "Find the parser drift.",
+                "tool_name": None,
+                "call_id": None,
+                "command_text": None,
+                "exit_code": None,
+                "record_json": make_record_json(
+                    {"type": "user_message", "message": "Find the parser drift."},
+                    record_type="event_msg",
+                ),
+            },
+            message_event(event_index=2, role="assistant", text=commentary, phase="commentary"),
+            message_event(event_index=3, role="assistant", text=final_answer, phase="final_answer"),
+            {
+                "event_index": 4,
+                "timestamp": "2026-04-20T03:19:18Z",
+                "record_type": "event_msg",
+                "payload_type": "task_complete",
+                "kind": "system",
+                "role": None,
+                "title": "Task Complete",
+                "display_text": final_answer,
+                "detail_text": final_answer,
+                "tool_name": None,
+                "call_id": None,
+                "command_text": None,
+                "exit_code": None,
+                "record_json": make_record_json(
+                    {"type": "task_complete", "last_agent_message": final_answer},
+                    record_type="event_msg",
+                ),
+            },
+        ]
+
+        turns = build_turns(events)
+
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]["response_state"], "final")
+        self.assertEqual(turns[0]["response_text"], final_answer)
+        self.assertEqual(len(turns[0]["audit_assistant_updates"]), 1)
+        self.assertEqual(turns[0]["audit_assistant_updates"][0]["display_text"], commentary)
+
+    def test_terminal_turn_summary_uses_commentary_when_turn_is_still_open(self) -> None:
+        commentary = "Checking the upstream event schema before changing anything."
+        events = [
+            {
+                "event_index": 1,
+                "timestamp": "2026-04-20T03:19:14Z",
+                "record_type": "event_msg",
+                "payload_type": "user_message",
+                "kind": "message",
+                "role": "user",
+                "display_text": "Inspect the latest rollout format.",
+                "record_json": make_record_json(
+                    {"type": "user_message", "message": "Inspect the latest rollout format."},
+                    record_type="event_msg",
+                ),
+            },
+            message_event(event_index=2, role="assistant", text=commentary, phase="commentary"),
+        ]
+
+        self.assertEqual(terminal_turn_summary(events), commentary)
+        turns = build_turns(events)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]["response_state"], "update")
+        self.assertEqual(turns[0]["response_text"], commentary)
+
+    def test_normalize_event_supports_local_shell_call_and_turn_complete_alias(self) -> None:
+        shell_event = normalize_event(
+            {
+                "timestamp": "2026-04-20T03:19:15Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "local_shell_call",
+                    "call_id": "call_123",
+                    "status": "completed",
+                    "action": {
+                        "type": "exec",
+                        "command": ["rg", "phase", "codex_session_viewer"],
+                        "working_directory": "/home/wulfuser/codex_viewer",
+                    },
+                },
+            },
+            2,
+        )
+        self.assertIsNotNone(shell_event)
+        assert shell_event is not None
+        self.assertEqual(shell_event.kind, "tool_call")
+        self.assertEqual(shell_event.tool_name, "exec_command")
+        self.assertEqual(shell_event.call_id, "call_123")
+        self.assertIn("rg phase codex_session_viewer", shell_event.command_text or "")
+
+        completion_event = normalize_event(
+            {
+                "timestamp": "2026-04-20T03:19:18Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "turn_complete",
+                    "last_agent_message": "Done",
+                },
+            },
+            3,
+        )
+        self.assertIsNotNone(completion_event)
+        assert completion_event is not None
+        self.assertEqual(completion_event.title, "Task Complete")
+        self.assertTrue(is_task_complete(normalized_event_to_dict(completion_event)))
+
+    def test_build_turns_surfaces_execution_context_research_and_context_events(self) -> None:
+        user_event = {
+            "event_index": 1,
+            "timestamp": "2026-04-20T07:20:26Z",
+            "record_type": "event_msg",
+            "payload_type": "user_message",
+            "kind": "message",
+            "role": "user",
+            "title": "User Message",
+            "display_text": "Audit the session.",
+            "detail_text": "Audit the session.",
+            "tool_name": None,
+            "call_id": None,
+            "command_text": None,
+            "exit_code": None,
+            "record_json": make_record_json(
+                {"type": "user_message", "message": "Audit the session."},
+                record_type="event_msg",
+            ),
+        }
+        turn_context = normalize_event(
+            {
+                "timestamp": "2026-04-20T07:20:26.744Z",
+                "type": "turn_context",
+                "payload": {
+                    "cwd": "/home/wulfuser/codex_viewer",
+                    "approval_policy": "on-request",
+                    "sandbox_policy": {"type": "workspace-write", "network_access": False},
+                    "model": "gpt-5.4",
+                    "effort": "xhigh",
+                    "collaboration_mode": {"mode": "default"},
+                    "truncation_policy": {"mode": "tokens", "limit": 10000},
+                },
+            },
+            2,
+        )
+        research_call = normalize_event(
+            {
+                "timestamp": "2026-04-20T07:20:27Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "web_search_call",
+                    "status": "completed",
+                    "action": {
+                        "type": "open_page",
+                        "url": "https://www.rfc-editor.org/rfc/rfc9293.html",
+                    },
+                },
+            },
+            3,
+        )
+        research_result = normalize_event(
+            {
+                "timestamp": "2026-04-20T07:20:28Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "web_search_end",
+                    "call_id": "ws_123",
+                    "query": "https://www.rfc-editor.org/rfc/rfc9293.html",
+                    "action": {
+                        "type": "open_page",
+                        "url": "https://www.rfc-editor.org/rfc/rfc9293.html",
+                    },
+                },
+            },
+            4,
+        )
+        context_event = normalize_event(
+            {
+                "timestamp": "2026-04-20T07:20:29Z",
+                "type": "event_msg",
+                "payload": {"type": "context_compacted"},
+            },
+            5,
+        )
+        final_message = message_event(
+            event_index=6,
+            role="assistant",
+            text="Reviewed the rollout and surfaced the evidence.",
+            phase="final_answer",
+            timestamp="2026-04-20T07:20:30Z",
+        )
+        completion_event = {
+            "event_index": 7,
+            "timestamp": "2026-04-20T07:20:31Z",
+            "record_type": "event_msg",
+            "payload_type": "task_complete",
+            "kind": "system",
+            "role": None,
+            "title": "Task Complete",
+            "display_text": "Reviewed the rollout and surfaced the evidence.",
+            "detail_text": "Reviewed the rollout and surfaced the evidence.",
+            "tool_name": None,
+            "call_id": None,
+            "command_text": None,
+            "exit_code": None,
+            "record_json": make_record_json(
+                {"type": "task_complete", "last_agent_message": "Reviewed the rollout and surfaced the evidence."},
+                record_type="event_msg",
+            ),
+        }
+
+        events = [
+            user_event,
+            normalized_event_to_dict(turn_context),
+            normalized_event_to_dict(research_call),
+            normalized_event_to_dict(research_result),
+            normalized_event_to_dict(context_event),
+            final_message,
+            completion_event,
+        ]
+
+        turns = build_turns(events, cwd="/home/wulfuser/codex_viewer")
+
+        self.assertEqual(len(turns), 1)
+        turn = turns[0]
+        self.assertEqual(turn["audit_execution_context"]["approval_policy"], "on request")
+        self.assertEqual(turn["audit_execution_context"]["sandbox_policy"], "workspace write")
+        self.assertEqual(turn["audit_execution_context"]["network_access"], "disabled")
+        self.assertEqual(len(turn["audit_research_events"]), 2)
+        self.assertEqual(len(turn["audit_context_events"]), 1)
+        self.assertTrue(any(phase["key"] == "research" for phase in turn["audit_phase_strip"]))
+        self.assertTrue(any(link["label"] == "2 research events" for link in turn["audit_response_evidence"]["links"]))
+
+    def test_infer_project_identity_uses_generic_git_remote(self) -> None:
+        identity = infer_project_identity(
+            source_host="builder",
+            cwd="/workspace/repo",
+            github_org=None,
+            github_repo=None,
+            github_slug=None,
+            git_repository_url="git@bitbucket.org:finderscope/book-match-service.git",
+        )
+
+        self.assertEqual(identity["kind"], "git")
+        self.assertEqual(identity["key"], "git:bitbucket.org/finderscope/book-match-service")
+        self.assertEqual(identity["label"], "bitbucket.org/finderscope/book-match-service")
+
+    def test_infer_project_identity_scopes_local_git_remote_to_source_host(self) -> None:
+        first = infer_project_identity(
+            source_host="nanopct6-lts",
+            cwd="/home/wulfuser/wulf-linux-config",
+            github_org=None,
+            github_repo=None,
+            github_slug=None,
+            git_repository_url="../1_git_bare_repo/wulf_linux_config_bare/",
+        )
+        second = infer_project_identity(
+            source_host="nanopct6-lts",
+            cwd="/home/wulfuser/wulf-linux-config/subdir",
+            github_org=None,
+            github_repo=None,
+            github_slug=None,
+            git_repository_url="../1_git_bare_repo/wulf_linux_config_bare/",
+        )
+        other_host = infer_project_identity(
+            source_host="other-host",
+            cwd="/home/wulfuser/wulf-linux-config",
+            github_org=None,
+            github_repo=None,
+            github_slug=None,
+            git_repository_url="../1_git_bare_repo/wulf_linux_config_bare/",
+        )
+
+        self.assertEqual(first["kind"], "git")
+        self.assertEqual(
+            first["key"],
+            "git:nanopct6-lts:file:../1_git_bare_repo/wulf_linux_config_bare",
+        )
+        self.assertEqual(first["key"], second["key"])
+        self.assertNotEqual(first["key"], other_host["key"])
+        self.assertEqual(first["label"], "nanopct6-lts/wulf_linux_config_bare")
+
+    def test_effective_project_fields_use_generic_git_identity(self) -> None:
+        project = effective_project_fields(
+            {
+                "id": "session-1",
+                "project_id": None,
+                "project_visibility": "authenticated",
+                "source_host": "builder",
+                "cwd": "/workspace/repo",
+                "cwd_name": "repo",
+                "github_org": None,
+                "github_repo": None,
+                "github_slug": None,
+                "github_remote_url": None,
+                "git_repository_url": "git@bitbucket.org:finderscope/book-match-service.git",
+                "inferred_project_kind": "git",
+                "inferred_project_key": "git:bitbucket.org/finderscope/book-match-service",
+                "inferred_project_label": "bitbucket.org/finderscope/book-match-service",
+                "override_group_key": None,
+                "override_organization": None,
+                "override_repository": None,
+                "override_remote_url": None,
+                "override_display_label": None,
+            }
+        )
+
+        self.assertEqual(project["effective_project_kind"], "git")
+        self.assertEqual(project["effective_group_key"], "git:bitbucket.org/finderscope/book-match-service")
+        self.assertEqual(project["organization"], "bitbucket.org")
+        self.assertEqual(project["repository"], "finderscope/book-match-service")
+        self.assertEqual(project["display_label"], "bitbucket.org/finderscope/book-match-service")
+
+    def test_effective_project_fields_use_project_root_identity(self) -> None:
+        project = effective_project_fields(
+            {
+                "id": "session-2",
+                "project_id": None,
+                "project_visibility": "authenticated",
+                "source_host": "builder",
+                "cwd": "/workspace/repo/subdir",
+                "cwd_name": "subdir",
+                "github_org": None,
+                "github_repo": None,
+                "github_slug": None,
+                "github_remote_url": None,
+                "git_repository_url": None,
+                "inferred_project_kind": "project",
+                "inferred_project_key": "project:builder:/workspace/repo",
+                "inferred_project_label": "builder/repo",
+                "override_group_key": None,
+                "override_organization": None,
+                "override_repository": None,
+                "override_remote_url": None,
+                "override_display_label": None,
+            }
+        )
+
+        self.assertEqual(project["effective_project_kind"], "project")
+        self.assertEqual(project["organization"], "builder")
+        self.assertEqual(project["repository"], "repo")
+        self.assertEqual(project["display_label"], "builder/repo")
+
+    def test_parse_session_text_skips_git_probe_for_remote_host(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / "repo"
+            repo_path.mkdir()
+            subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", "git@bitbucket.org:finderscope/book-match-service.git"],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            raw_jsonl = "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "session_meta",
+                            "payload": {
+                                "id": "session-remote-probe",
+                                "timestamp": "2026-04-20T03:19:14Z",
+                                "cwd": str(repo_path),
+                                "originator": "tester",
+                                "cli_version": "1.0.0",
+                                "source": "cli",
+                                "model_provider": "openai",
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "user_message",
+                                "message": "Inspect repo grouping.",
+                            },
+                            "timestamp": "2026-04-20T03:19:15Z",
+                        }
+                    ),
+                ]
+            )
+
+            with mock.patch.dict(os.environ, {"CODEX_VIEWER_SOURCE_HOST": "local-host"}, clear=False):
+                parsed = parse_session_text(
+                    raw_jsonl,
+                    Path("/tmp/rollout-remote-probe.jsonl"),
+                    Path("/tmp"),
+                    "remote-host",
+                    file_size=len(raw_jsonl.encode("utf-8")),
+                    file_mtime_ns=0,
+                )
+
+            self.assertIsNone(parsed.git_repository_url)
+            self.assertEqual(parsed.inferred_project_kind, "directory")
+
+    def test_parse_session_text_uses_git_project_root_for_nested_local_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir) / "repo"
+            nested = project_root / "src" / "feature"
+            (project_root / ".git").mkdir(parents=True)
+            nested.mkdir(parents=True)
+            raw_jsonl = "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "session_meta",
+                            "payload": {
+                                "id": "session-project-root",
+                                "timestamp": "2026-04-20T03:19:14Z",
+                                "cwd": str(nested),
+                                "originator": "tester",
+                                "cli_version": "1.0.0",
+                                "source": "cli",
+                                "model_provider": "openai",
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "user_message",
+                                "message": "Use the project root instead of the nested cwd.",
+                            },
+                            "timestamp": "2026-04-20T03:19:15Z",
+                        }
+                    ),
+                ]
+            )
+
+            with mock.patch.dict(os.environ, {"CODEX_VIEWER_SOURCE_HOST": "local-host"}, clear=False):
+                parsed = parse_session_text(
+                    raw_jsonl,
+                    Path("/tmp/rollout-project-root.jsonl"),
+                    Path("/tmp"),
+                    "local-host",
+                    file_size=len(raw_jsonl.encode("utf-8")),
+                    file_mtime_ns=0,
+                )
+
+            self.assertEqual(parsed.inferred_project_kind, "project")
+            self.assertEqual(parsed.inferred_project_key, f"project:local-host:{project_root}")
+            self.assertEqual(parsed.inferred_project_label, "local-host/repo")
+
+    def test_parse_session_text_honors_alternate_project_root_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_home = Path(temp_dir) / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "config.toml").write_text(
+                "project_root_markers = [\".hg\"]\n",
+                encoding="utf-8",
+            )
+            project_root = Path(temp_dir) / "repo"
+            nested = project_root / "child"
+            project_root.mkdir()
+            (project_root / ".hg").write_text("hg", encoding="utf-8")
+            nested.mkdir(parents=True)
+            raw_jsonl = json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "session-alt-root-marker",
+                        "timestamp": "2026-04-20T03:19:14Z",
+                        "cwd": str(nested),
+                        "originator": "tester",
+                        "cli_version": "1.0.0",
+                        "source": "cli",
+                        "model_provider": "openai",
+                    },
+                }
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CODEX_HOME": str(codex_home),
+                    "CODEX_VIEWER_SOURCE_HOST": "local-host",
+                },
+                clear=False,
+            ):
+                parsed = parse_session_text(
+                    raw_jsonl,
+                    Path("/tmp/rollout-alt-root.jsonl"),
+                    Path("/tmp"),
+                    "local-host",
+                    file_size=len(raw_jsonl.encode("utf-8")),
+                    file_mtime_ns=0,
+                )
+
+            self.assertEqual(parsed.inferred_project_kind, "project")
+            self.assertEqual(parsed.inferred_project_key, f"project:local-host:{project_root}")
+            self.assertEqual(parsed.inferred_project_label, "local-host/repo")
+
+    def test_parse_session_text_uses_generic_git_probe_for_local_host(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / "repo"
+            repo_path.mkdir()
+            subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", "git@bitbucket.org:finderscope/book-match-service.git"],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            raw_jsonl = json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "session-local-probe",
+                        "timestamp": "2026-04-20T03:19:14Z",
+                        "cwd": str(repo_path),
+                        "originator": "tester",
+                        "cli_version": "1.0.0",
+                        "source": "cli",
+                        "model_provider": "openai",
+                    },
+                }
+            )
+
+            with mock.patch.dict(os.environ, {"CODEX_VIEWER_SOURCE_HOST": "local-host"}, clear=False):
+                parsed = parse_session_text(
+                    raw_jsonl,
+                    Path("/tmp/rollout-local-probe.jsonl"),
+                    Path("/tmp"),
+                    "local-host",
+                    file_size=len(raw_jsonl.encode("utf-8")),
+                    file_mtime_ns=0,
+                )
+
+            self.assertEqual(parsed.git_repository_url, "git@bitbucket.org:finderscope/book-match-service.git")
+            self.assertEqual(parsed.inferred_project_kind, "git")
+            self.assertEqual(
+                parsed.inferred_project_key,
+                "git:bitbucket.org/finderscope/book-match-service",
+            )
+
+    def test_sync_sessions_force_rebuild_preserves_artifact_backed_remote_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            session_root = project_root / "sessions"
+            session_root.mkdir()
+            data_dir = project_root / "data"
+            db_path = data_dir / "codex_sessions.sqlite3"
+            raw_jsonl = "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "session_meta",
+                            "payload": {
+                                "id": "session-artifact-rebuild",
+                                "timestamp": "2026-04-20T03:19:14Z",
+                                "cwd": "/remote/workspace/repo",
+                                "originator": "tester",
+                                "cli_version": "1.0.0",
+                                "source": "cli",
+                                "model_provider": "openai",
+                                "git": {
+                                    "repository_url": "git@bitbucket.org:finderscope/book-match-service.git",
+                                },
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "user_message",
+                                "message": "Keep remote artifact sessions during rebuild.",
+                            },
+                            "timestamp": "2026-04-20T03:19:15Z",
+                        }
+                    ),
+                ]
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CODEX_VIEWER_SOURCE_HOST": "local-host",
+                    "CODEX_VIEWER_DATA_DIR": str(data_dir),
+                    "CODEX_VIEWER_DB": str(db_path),
+                    "CODEX_SESSION_ROOTS": str(session_root),
+                },
+                clear=False,
+            ):
+                settings = Settings.from_env(project_root=project_root)
+                settings.ensure_directories()
+                init_db(settings.database_path)
+
+                parsed = parse_session_text(
+                    raw_jsonl,
+                    Path("/remote/root/rollout-artifact.jsonl"),
+                    Path("/remote/root"),
+                    "remote-host",
+                    file_size=len(raw_jsonl.encode("utf-8")),
+                    file_mtime_ns=0,
+                )
+
+                with connect(settings.database_path) as connection:
+                    with write_transaction(connection):
+                        parsed.raw_artifact_sha256 = store_session_artifact(connection, settings, raw_jsonl)
+                        upsert_parsed_session(connection, parsed)
+
+                stats = sync_sessions(settings, force=True)
+
+                self.assertEqual(stats["updated"], 1)
+                with connect(settings.database_path) as connection:
+                    row = connection.execute(
+                        "SELECT inferred_project_kind, inferred_project_key, source_host FROM sessions WHERE id = ?",
+                        ("session-artifact-rebuild",),
+                    ).fetchone()
+
+                self.assertIsNotNone(row)
+                assert row is not None
+                self.assertEqual(row["source_host"], "remote-host")
+                self.assertEqual(row["inferred_project_kind"], "git")
+                self.assertEqual(
+                    row["inferred_project_key"],
+                    "git:bitbucket.org/finderscope/book-match-service",
+                )
+
+    def test_parse_session_text_extracts_agent_lineage_and_usage_pressure(self) -> None:
+        raw_jsonl = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "agent-usage-session",
+                            "timestamp": "2026-04-20T03:19:14Z",
+                            "cwd": "/workspace/repo",
+                            "originator": "tester",
+                            "cli_version": "1.0.0",
+                            "source": "cli",
+                            "model_provider": "openai",
+                            "forked_from_id": "parent-session",
+                            "agent_nickname": "Worker 7",
+                            "agent_role": "worker",
+                            "agent_path": "root/worker-7",
+                            "memory_mode": "full",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:15Z",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "Check the new lineage telemetry.",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:16Z",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "model_context_window": 128000,
+                                "total_token_usage": {
+                                    "input_tokens": 40000,
+                                    "cached_input_tokens": 10000,
+                                    "output_tokens": 2000,
+                                    "reasoning_output_tokens": 500,
+                                    "total_tokens": 42000,
+                                },
+                            },
+                            "rate_limits": {
+                                "limit_name": "requests",
+                                "primary": {
+                                    "used_percent": 82.4,
+                                    "resets_at": 1770000000,
+                                },
+                                "secondary": {
+                                    "used_percent": 31.1,
+                                    "resets_at": 1770003600,
+                                },
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+
+        parsed = parse_session_text(
+            raw_jsonl,
+            Path("/tmp/agent-usage-session.jsonl"),
+            Path("/tmp"),
+            "local-host",
+            file_size=len(raw_jsonl.encode("utf-8")),
+            file_mtime_ns=0,
+        )
+
+        self.assertEqual(parsed.forked_from_id, "parent-session")
+        self.assertEqual(parsed.agent_nickname, "Worker 7")
+        self.assertEqual(parsed.agent_role, "worker")
+        self.assertEqual(parsed.agent_path, "root/worker-7")
+        self.assertEqual(parsed.memory_mode, "full")
+        self.assertEqual(parsed.latest_total_tokens, 42000)
+        self.assertEqual(parsed.latest_input_tokens, 40000)
+        self.assertEqual(parsed.latest_cached_input_tokens, 10000)
+        self.assertEqual(parsed.latest_output_tokens, 2000)
+        self.assertEqual(parsed.latest_context_window, 128000)
+        self.assertEqual(parsed.latest_context_remaining_percent, 74)
+        self.assertAlmostEqual(parsed.latest_primary_limit_used_percent or 0.0, 82.4)
+        self.assertEqual(parsed.latest_rate_limit_name, "requests")
+
+    def test_parsed_session_from_payload_backfills_lineage_and_usage_from_older_payloads(self) -> None:
+        raw_jsonl = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "legacy-payload-session",
+                            "timestamp": "2026-04-20T03:19:14Z",
+                            "cwd": "/workspace/repo",
+                            "originator": "tester",
+                            "cli_version": "1.0.0",
+                            "source": "cli",
+                            "model_provider": "openai",
+                            "forked_from_id": "parent-session",
+                            "agent_role": "explorer",
+                            "agent_path": "root/explorer-1",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:15Z",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "Recover fields from an older payload.",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:16Z",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "model_context_window": 64000,
+                                "total_token_usage": {
+                                    "input_tokens": 18000,
+                                    "cached_input_tokens": 2000,
+                                    "output_tokens": 1500,
+                                    "reasoning_output_tokens": 250,
+                                    "total_tokens": 19500,
+                                },
+                            },
+                            "rate_limits": {
+                                "primary": {"used_percent": 61.0, "resets_at": 1770000000},
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+
+        parsed = parse_session_text(
+            raw_jsonl,
+            Path("/tmp/legacy-payload-session.jsonl"),
+            Path("/tmp"),
+            "local-host",
+            file_size=len(raw_jsonl.encode("utf-8")),
+            file_mtime_ns=0,
+        )
+        payload = parsed_session_to_payload(parsed)
+        session_payload = payload["session"]
+        assert isinstance(session_payload, dict)
+        session_payload["rollup_version"] = 2
+        for key in (
+            "forked_from_id",
+            "agent_nickname",
+            "agent_role",
+            "agent_path",
+            "memory_mode",
+            "latest_usage_timestamp",
+            "latest_input_tokens",
+            "latest_cached_input_tokens",
+            "latest_output_tokens",
+            "latest_reasoning_output_tokens",
+            "latest_total_tokens",
+            "latest_context_window",
+            "latest_context_remaining_percent",
+            "latest_primary_limit_used_percent",
+            "latest_primary_limit_resets_at",
+            "latest_secondary_limit_used_percent",
+            "latest_secondary_limit_resets_at",
+            "latest_rate_limit_name",
+            "latest_rate_limit_reached_type",
+        ):
+            session_payload.pop(key, None)
+
+        restored = parsed_session_from_payload(payload)
+
+        self.assertEqual(restored.rollup_version, 3)
+        self.assertEqual(restored.forked_from_id, "parent-session")
+        self.assertEqual(restored.agent_role, "explorer")
+        self.assertEqual(restored.agent_path, "root/explorer-1")
+        self.assertEqual(restored.latest_input_tokens, 18000)
+        self.assertEqual(restored.latest_total_tokens, 19500)
+        self.assertEqual(restored.latest_context_window, 64000)
+        self.assertAlmostEqual(restored.latest_primary_limit_used_percent or 0.0, 61.0)
+
+    def test_upsert_parsed_session_persists_agent_and_usage_columns(self) -> None:
+        raw_jsonl = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "persisted-agent-session",
+                            "timestamp": "2026-04-20T03:19:14Z",
+                            "cwd": "/workspace/repo",
+                            "originator": "tester",
+                            "cli_version": "1.0.0",
+                            "source": "cli",
+                            "model_provider": "openai",
+                            "forked_from_id": "parent-session",
+                            "agent_nickname": "Research worker",
+                            "agent_role": "worker",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:15Z",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "Persist the new session insight columns.",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:16Z",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "model_context_window": 100000,
+                                "total_token_usage": {
+                                    "input_tokens": 30000,
+                                    "cached_input_tokens": 5000,
+                                    "output_tokens": 2500,
+                                    "reasoning_output_tokens": 300,
+                                    "total_tokens": 32500,
+                                },
+                            },
+                            "rate_limits": {
+                                "limit_name": "tokens",
+                                "primary": {"used_percent": 95.0, "resets_at": 1770000000},
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+
+        parsed = parse_session_text(
+            raw_jsonl,
+            Path("/tmp/persisted-agent-session.jsonl"),
+            Path("/tmp"),
+            "local-host",
+            file_size=len(raw_jsonl.encode("utf-8")),
+            file_mtime_ns=0,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "viewer.sqlite3"
+            init_db(db_path)
+            with connect(db_path) as connection:
+                with write_transaction(connection):
+                    upsert_parsed_session(connection, parsed)
+                row = connection.execute(
+                    """
+                    SELECT
+                        forked_from_id,
+                        agent_nickname,
+                        agent_role,
+                        latest_usage_timestamp,
+                        latest_total_tokens,
+                        latest_context_remaining_percent,
+                        latest_primary_limit_used_percent,
+                        latest_rate_limit_name
+                    FROM sessions
+                    WHERE id = ?
+                    """,
+                    ("persisted-agent-session",),
+                ).fetchone()
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row["forked_from_id"], "parent-session")
+        self.assertEqual(row["agent_nickname"], "Research worker")
+        self.assertEqual(row["agent_role"], "worker")
+        self.assertEqual(row["latest_total_tokens"], 32500)
+        self.assertEqual(row["latest_context_remaining_percent"], 77)
+        self.assertAlmostEqual(float(row["latest_primary_limit_used_percent"] or 0.0), 95.0)
+        self.assertEqual(row["latest_rate_limit_name"], "tokens")
+
+    def test_fetch_group_detail_handles_attention_sessions_with_usage_pressure(self) -> None:
+        raw_jsonl = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "project-detail-session",
+                            "timestamp": "2026-04-20T03:19:14Z",
+                            "cwd": "/workspace/repo",
+                            "originator": "tester",
+                            "cli_version": "1.0.0",
+                            "source": "cli",
+                            "model_provider": "openai",
+                            "forked_from_id": "parent-session",
+                            "agent_role": "worker",
+                            "git": {
+                                "repository_url": "https://github.com/openai/codex-viewer.git",
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:15Z",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "Open the project detail page.",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:16Z",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "model_context_window": 128000,
+                                "total_token_usage": {
+                                    "input_tokens": 40000,
+                                    "cached_input_tokens": 10000,
+                                    "output_tokens": 2000,
+                                    "reasoning_output_tokens": 500,
+                                    "total_tokens": 42000,
+                                },
+                            },
+                            "rate_limits": {
+                                "primary": {"used_percent": 82.4, "resets_at": 1770000000},
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+
+        parsed = parse_session_text(
+            raw_jsonl,
+            Path("/tmp/project-detail-session.jsonl"),
+            Path("/tmp"),
+            "local-host",
+            file_size=len(raw_jsonl.encode("utf-8")),
+            file_mtime_ns=0,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "viewer.sqlite3"
+            init_db(db_path)
+            with connect(db_path) as connection:
+                with write_transaction(connection):
+                    upsert_parsed_session(connection, parsed)
+                project_access = build_project_access_context(connection, auth_user=None, auth_enabled=False)
+                detail = fetch_group_detail(
+                    connection,
+                    "github:openai/codex-viewer",
+                    project_access=project_access,
+                )
+
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertEqual(detail["status_strip"]["health_label"], "High Usage")
+        self.assertEqual(len(detail["attention_sessions"]), 1)
+        self.assertEqual(detail["attention_sessions"][0]["attention_score"], 68)
+
+
+if __name__ == "__main__":
+    unittest.main()

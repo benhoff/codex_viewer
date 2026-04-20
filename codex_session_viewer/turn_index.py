@@ -19,8 +19,8 @@ from .session_status import (
 from .text_utils import shorten, strip_codex_wrappers
 
 
-TURN_INDEX_VERSION = 2
-TURN_SEARCH_VERSION = 1
+TURN_INDEX_VERSION = 3
+TURN_SEARCH_VERSION = 2
 
 MAX_PROMPT_SEARCH_CHARS = 8_000
 MAX_RESPONSE_SEARCH_CHARS = 12_000
@@ -53,6 +53,7 @@ def _compact_event(event: sqlite3.Row | dict[str, Any] | object) -> dict[str, An
         "tool_name": _event_value(event, "tool_name"),
         "command_text": _event_value(event, "command_text"),
         "exit_code": _event_value(event, "exit_code"),
+        "record_json": _event_value(event, "record_json"),
     }
 
 
@@ -216,7 +217,7 @@ def compute_session_turn_index(
         elif final_response_event is not None:
             response_text = str(final_response_event.get("display_text") or "")
             response_timestamp = final_response_event.get("timestamp")
-            response_state = "final"
+            response_state = "update" if is_assistant_update(final_response_event) else "final"
         elif abort_event is not None:
             response_text = abort_display_label(abort_event)
             response_timestamp = abort_event.get("timestamp")
@@ -404,7 +405,8 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
             detail_text,
             tool_name,
             command_text,
-            exit_code
+            exit_code,
+            record_json
         FROM events
         WHERE session_id IN ({placeholders})
         ORDER BY session_id ASC, event_index ASC
@@ -579,7 +581,8 @@ def _fetch_turn_search_events(
             detail_text,
             tool_name,
             command_text,
-            exit_code
+            exit_code,
+            record_json
         FROM events
         WHERE session_id IN ({placeholders})
         ORDER BY session_id ASC, event_index ASC
