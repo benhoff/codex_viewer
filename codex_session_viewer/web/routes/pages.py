@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ...agents import (
+    fetch_agents_dashboard,
     fetch_remote_agent_health,
     request_remote_raw_resend,
 )
@@ -18,6 +19,7 @@ from ...api_tokens import (
     revoke_api_token,
 )
 from ...db import connect, write_transaction
+from ...environment_audit import fetch_host_environment_audit
 from ...importer import sync_sessions
 from ...local_auth import (
     create_initial_admin,
@@ -793,15 +795,33 @@ def search_results(request: Request, q: str | None = Query(default=None)) -> HTM
 def remotes_health(request: Request) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
-        remotes = fetch_remote_agent_health(connection, context.settings)
+        agents_dashboard = fetch_agents_dashboard(connection, context.settings)
     return context.templates.TemplateResponse(
         request,
         name="remotes.html",
         context={
             "request": request,
             "settings": context.settings,
-            "remotes": remotes,
+            "agents_dashboard": agents_dashboard,
             "return_to": request_return_to(request),
+            "search_query": "",
+        },
+    )
+
+
+@router.get("/remotes/{source_host}/audit", response_class=HTMLResponse)
+def remote_environment_audit(request: Request, source_host: str) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        audit = fetch_host_environment_audit(connection, source_host, context.settings)
+    if audit["remote"] is None and int(audit["summary"]["session_count"] or 0) == 0:
+        raise HTTPException(status_code=404, detail="Remote host not found")
+    return context.templates.TemplateResponse(
+        request,
+        name="remote_audit.html",
+        context={
+            "request": request,
+            "audit": audit,
             "search_query": "",
         },
     )
@@ -924,7 +944,7 @@ async def remote_action(request: Request) -> RedirectResponse:
             request_remote_raw_resend(
                 connection,
                 source_host,
-                note="Requested from remotes view",
+                note="Requested from agents view",
             )
 
     return RedirectResponse(url=fields.get("return_to") or "/remotes", status_code=303)

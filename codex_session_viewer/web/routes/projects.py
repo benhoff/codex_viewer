@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ...db import connect, write_transaction
+from ...environment_audit import fetch_project_environment_audit
 from ...git_utils import normalize_github_remote
 from ...projects import (
     delete_sessions_for_project_keys,
@@ -139,6 +140,27 @@ def group_queue(request: Request, owner_slug: str, project_slug: str) -> Redirec
     if group_key is None:
         raise HTTPException(status_code=404, detail="Project group not found")
     return RedirectResponse(url=f"/queue?project={quote(group_key, safe='')}", status_code=308)
+
+
+@router.get("/projects/{owner_slug}/{project_slug}/environment", response_class=HTMLResponse)
+def group_environment(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        group_key = resolve_group_key_from_detail_path(connection, owner_slug, project_slug)
+        if group_key is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        audit = fetch_project_environment_audit(connection, group_key)
+        if audit is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+    return context.templates.TemplateResponse(
+        request,
+        name="project_environment.html",
+        context={
+            "request": request,
+            "audit": audit,
+            "search_query": "",
+        },
+    )
 
 
 @router.get("/projects/{owner_slug}/{project_slug}/stream", response_class=HTMLResponse)

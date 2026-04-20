@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 from .config import Settings
+from .projects import (
+    build_grouped_projects,
+    effective_project_fields,
+    fetch_recent_session_turn_activity_windows,
+    query_group_rows,
+)
 
 
 def utc_now_iso() -> str:
@@ -275,3 +282,295 @@ def fetch_remote_agent_health(
         """
     ).fetchall()
     return build_remote_agent_health(rows, settings)
+
+
+def _session_timestamp(row: sqlite3.Row) -> str:
+    return (
+        trimmed(row["last_turn_timestamp"])
+        or trimmed(row["session_timestamp"])
+        or trimmed(row["started_at"])
+        or trimmed(row["imported_at"])
+        or ""
+    )
+
+
+def _session_title(row: sqlite3.Row) -> str:
+    return (
+        trimmed(row["last_user_message"])
+        or trimmed(row["latest_turn_summary"])
+        or trimmed(row["summary"])
+        or "Session"
+    )
+
+
+def _new_agent_entry(source_host: str, remote: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "source_host": source_host,
+        "remote": remote,
+        "session_count_total": 0,
+        "command_failure_count_total": 0,
+        "aborted_turn_count_total": 0,
+        "recent_turn_count": 0,
+        "recent_session_count": 0,
+        "recent_command_failures": 0,
+        "recent_failure_sessions": 0,
+        "recent_aborted_turns": 0,
+        "projects_24h": {},
+        "recent_projects": {},
+        "recent_sessions": [],
+        "latest_session": None,
+        "latest_failed_session": None,
+    }
+
+
+def _session_link(session_id: str) -> str:
+    return f"/sessions/{quote(session_id, safe='')}"
+
+
+def _row_session_item(
+    row: sqlite3.Row,
+    *,
+    project_label: str,
+    project_href: str,
+) -> dict[str, Any]:
+    session_id = str(row["id"])
+    return {
+        "session_id": session_id,
+        "href": _session_link(session_id),
+        "timestamp": _session_timestamp(row),
+        "title": _session_title(row),
+        "project_label": project_label,
+        "project_href": project_href,
+        "command_failures": int(row["command_failure_count"] or 0),
+        "aborted_turns": int(row["aborted_turn_count"] or 0),
+        "viewer_warning": bool(trimmed(row["import_warning"])),
+    }
+
+
+def _latest_session(current: dict[str, Any] | None, candidate: dict[str, Any]) -> dict[str, Any]:
+    if current is None:
+        return candidate
+    if str(candidate.get("timestamp") or "") > str(current.get("timestamp") or ""):
+        return candidate
+    return current
+
+
+def _attention_badges(entry: dict[str, Any]) -> list[dict[str, str]]:
+    badges: list[dict[str, str]] = []
+    remote = entry.get("remote") or {}
+    if remote.get("pending_raw_resend"):
+        badges.append({"tone": "amber", "label": "Raw resend pending"})
+    if int(remote.get("last_fail_count") or 0) > 0 or remote.get("last_error"):
+        badges.append({"tone": "rose", "label": "Sync failure"})
+    if int(entry.get("recent_command_failures") or 0) > 1:
+        badges.append(
+            {
+                "tone": "rose",
+                "label": f"{int(entry['recent_command_failures'])} recent command failures",
+            }
+        )
+    return badges
+
+
+def _secondary_badges(entry: dict[str, Any]) -> list[dict[str, str]]:
+    badges: list[dict[str, str]] = []
+    remote = entry.get("remote") or {}
+    if remote.get("stale"):
+        badges.append({"tone": "stone", "label": "Offline"})
+    if remote.get("version_mismatch"):
+        badges.append({"tone": "amber", "label": "Version drift"})
+    if remote.get("api_mismatch"):
+        badges.append({"tone": "amber", "label": "API drift"})
+    update_state = str(remote.get("update_state") or "").strip()
+    if update_state and update_state not in {"", "current"}:
+        badges.append({"tone": "stone", "label": update_state.replace("_", " ")})
+    return badges
+
+
+def _recent_projects_list(entry: dict[str, Any]) -> list[dict[str, str]]:
+    values = list(entry["recent_projects"].values())
+    values.sort(key=lambda item: item["timestamp"], reverse=True)
+    return values[:4]
+
+
+def fetch_agents_dashboard(
+    connection: sqlite3.Connection,
+    settings: Settings,
+) -> dict[str, Any]:
+    remotes = fetch_remote_agent_health(connection, settings)
+    rows = query_group_rows(connection)
+    route_map = {
+        project.key: project.detail_href
+        for project in build_grouped_projects(rows)
+    }
+    recent_window_start = (datetime.now().astimezone() - timedelta(hours=24)).isoformat()
+    recent_turn_activity = fetch_recent_session_turn_activity_windows(
+        connection,
+        [row["id"] for row in rows],
+        recent_window_start,
+    )
+
+    entries: dict[str, dict[str, Any]] = {
+        str(remote["source_host"]): _new_agent_entry(str(remote["source_host"]), remote)
+        for remote in remotes
+    }
+
+    for row in rows:
+        project = effective_project_fields(row)
+        source_host = str(project["source_host"] or "").strip()
+        if not source_host:
+            continue
+        entry = entries.setdefault(source_host, _new_agent_entry(source_host, None))
+        entry["session_count_total"] += 1
+        entry["command_failure_count_total"] += int(row["command_failure_count"] or 0)
+        entry["aborted_turn_count_total"] += int(row["aborted_turn_count"] or 0)
+
+        project_href = route_map.get(project["effective_group_key"], "")
+        session_item = _row_session_item(
+            row,
+            project_label=str(project["display_label"]),
+            project_href=project_href,
+        )
+        if len(entry["recent_sessions"]) < 4:
+            entry["recent_sessions"].append(session_item)
+        entry["latest_session"] = _latest_session(entry["latest_session"], session_item)
+
+        session_problematic = (
+            int(row["command_failure_count"] or 0) > 0
+            or bool(trimmed(row["import_warning"]))
+            or int(row["aborted_turn_count"] or 0) > 1
+        )
+        if session_problematic:
+            entry["latest_failed_session"] = _latest_session(entry["latest_failed_session"], session_item)
+
+        recent = recent_turn_activity.get(str(row["id"]))
+        if recent:
+            entry["recent_turn_count"] += int(recent.get("turn_count", 0) or 0)
+            entry["recent_session_count"] += 1
+            entry["recent_command_failures"] += int(row["command_failure_count"] or 0)
+            entry["recent_aborted_turns"] += int(row["aborted_turn_count"] or 0)
+            if int(row["command_failure_count"] or 0) > 0:
+                entry["recent_failure_sessions"] += 1
+            entry["projects_24h"][project["display_label"]] = {
+                "label": str(project["display_label"]),
+                "href": project_href,
+            }
+
+        existing_project = entry["recent_projects"].get(project["display_label"])
+        if existing_project is None or session_item["timestamp"] > existing_project["timestamp"]:
+            entry["recent_projects"][project["display_label"]] = {
+                "label": str(project["display_label"]),
+                "href": project_href,
+                "timestamp": session_item["timestamp"],
+            }
+
+    agent_rows: list[dict[str, Any]] = []
+    for source_host, entry in entries.items():
+        remote = entry.get("remote") or {}
+        latest_session = entry.get("latest_session")
+        latest_failed_session = entry.get("latest_failed_session")
+        recent_projects = _recent_projects_list(entry)
+        issue_badges = _attention_badges(entry)
+        secondary_badges = _secondary_badges(entry)
+        is_attention = bool(issue_badges)
+        is_dormant = bool(remote.get("stale")) or (not is_attention and int(entry["recent_turn_count"] or 0) == 0)
+        if is_attention:
+            section = "attention"
+            summary = (
+                latest_failed_session["title"]
+                if latest_failed_session
+                else str(remote.get("last_error") or "Needs attention")
+            )
+            primary = latest_failed_session or latest_session
+            primary_label = "Open latest failed session" if latest_failed_session else "Open latest session"
+        elif is_dormant:
+            section = "dormant"
+            summary = (
+                f"Last repo {latest_session['project_label']}"
+                if latest_session
+                else "No recent session activity"
+            )
+            primary = latest_session
+            primary_label = "Open latest session"
+        else:
+            section = "active"
+            project_count_24h = len(entry["projects_24h"])
+            summary = (
+                f"{int(entry['recent_turn_count'])} turns · {int(entry['recent_session_count'])} sessions · "
+                f"{project_count_24h} project{'s' if project_count_24h != 1 else ''} in the last 24h"
+            )
+            primary = latest_session
+            primary_label = "Open latest session"
+
+        latest_repo = latest_session["project_label"] if latest_session else "No repo yet"
+        latest_repo_href = latest_session["project_href"] if latest_session else ""
+        row_item = {
+            "source_host": source_host,
+            "section": section,
+            "summary": summary,
+            "last_seen_at": trimmed(remote.get("last_seen_at")) or (latest_session["timestamp"] if latest_session else ""),
+            "last_sync_at": trimmed(remote.get("last_sync_at")),
+            "latest_repo": latest_repo,
+            "latest_repo_href": latest_repo_href,
+            "latest_session": latest_session,
+            "latest_failed_session": latest_failed_session,
+            "recent_turn_count": int(entry["recent_turn_count"] or 0),
+            "recent_session_count": int(entry["recent_session_count"] or 0),
+            "projects_touched_24h_count": len(entry["projects_24h"]),
+            "recent_command_failures": int(entry["recent_command_failures"] or 0),
+            "recent_aborted_turns": int(entry["recent_aborted_turns"] or 0),
+            "recent_projects": recent_projects,
+            "recent_sessions": entry["recent_sessions"],
+            "issue_badges": issue_badges,
+            "secondary_badges": secondary_badges,
+            "pending_raw_resend": bool(remote.get("pending_raw_resend")),
+            "requested_raw_resend_at": trimmed(remote.get("requested_raw_resend_at")),
+            "requested_raw_resend_note": trimmed(remote.get("requested_raw_resend_note")),
+            "last_raw_resend_at": trimmed(remote.get("last_raw_resend_at")),
+            "last_upload_count": int(remote.get("last_upload_count") or 0),
+            "last_skip_count": int(remote.get("last_skip_count") or 0),
+            "last_fail_count": int(remote.get("last_fail_count") or 0),
+            "agent_version": trimmed(remote.get("agent_version")) or "",
+            "sync_api_version": trimmed(remote.get("sync_api_version")) or "",
+            "sync_mode": trimmed(remote.get("sync_mode")) or "",
+            "update_state": trimmed(remote.get("update_state")) or "",
+            "update_message": trimmed(remote.get("update_message")) or "",
+            "last_error": trimmed(remote.get("last_error")) or "",
+            "primary_href": primary["href"] if primary else "",
+            "primary_label": primary_label,
+            "audit_href": f"/remotes/{quote(source_host, safe='')}/audit",
+            "toggle_id": f"agent-details-{quote(source_host, safe='')}",
+        }
+        agent_rows.append(row_item)
+
+    def sort_key(item: dict[str, Any]) -> tuple[str, str]:
+        latest = item["last_seen_at"] or (item["latest_session"]["timestamp"] if item["latest_session"] else "")
+        return (str(latest), str(item["source_host"]))
+
+    attention = sorted(
+        [item for item in agent_rows if item["section"] == "attention"],
+        key=sort_key,
+        reverse=True,
+    )
+    active = sorted(
+        [item for item in agent_rows if item["section"] == "active"],
+        key=lambda item: (item["recent_turn_count"], item["recent_session_count"], item["last_seen_at"] or ""),
+        reverse=True,
+    )
+    dormant = sorted(
+        [item for item in agent_rows if item["section"] == "dormant"],
+        key=sort_key,
+        reverse=True,
+    )
+
+    return {
+        "attention": attention,
+        "active": active,
+        "dormant": dormant,
+        "counts": {
+            "attention": len(attention),
+            "active": len(active),
+            "dormant": len(dormant),
+            "all": len(agent_rows),
+        },
+    }

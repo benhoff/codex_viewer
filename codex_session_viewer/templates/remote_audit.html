@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+
+{% block title %}{{ audit.source_host }} Audit | Codex Viewer{% endblock %}
+
+{% block content %}
+  <div class="mx-auto w-full max-w-6xl">
+    <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap gap-2 sm:gap-3">
+        <a href="/remotes" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Back to remotes
+        </a>
+      </div>
+    </div>
+
+    <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:mb-8 sm:p-6 lg:p-7">
+      <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div class="min-w-0 flex-1">
+          <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Host Environment Audit</p>
+          <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">{{ audit.source_host }}</h1>
+          <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
+            Declared tool surface, observed command usage, recurring failures, and profile fit inferred from past sessions on this host.
+          </p>
+          <div class="mt-4 flex flex-wrap gap-2">
+            {% if audit.remote %}
+              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">
+                Last seen {{ audit.remote.last_seen_at|humanize_timestamp }}
+              </span>
+              {% if audit.remote.stale %}
+                <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-50">Stale</span>
+              {% endif %}
+              {% if audit.remote.last_fail_count %}
+                <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
+                  {{ audit.remote.last_fail_count }} sync failures
+                </span>
+              {% endif %}
+              {% if audit.remote.last_error %}
+                <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Last sync errored</span>
+              {% endif %}
+            {% else %}
+              <span class="rounded-full bg-stone-200 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">Historical sessions only</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="grid w-full grid-cols-2 gap-3 lg:w-[24rem]">
+          <div class="rounded-[1.15rem] bg-stone-900 p-4 text-stone-50">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-300">Sessions</p>
+            <p class="mt-2 text-2xl font-semibold">{{ audit.summary.session_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-sky-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-sky-600">Turns</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ audit.summary.turn_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-amber-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-amber-600">Projects</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ audit.summary.project_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-rose-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-rose-600">Command Failures</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ audit.summary.command_failure_count }}</p>
+          </div>
+        </div>
+      </div>
+
+      {% if audit.summary.top_projects %}
+        <div class="mt-5 flex flex-wrap gap-2">
+          {% for item in audit.summary.top_projects %}
+            {% set detail_href = audit.project_links.get(item.project_label) %}
+            {% if detail_href %}
+              <a href="{{ detail_href }}" class="rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-stone-50">
+                {{ item.project_label }} · {{ item.session_count }}
+              </a>
+            {% else %}
+              <span class="rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700">
+                {{ item.project_label }} · {{ item.session_count }}
+              </span>
+            {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="mb-8 grid gap-6 xl:grid-cols-[1.2fr,0.8fr]">
+      <article class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Core Tools</h2>
+            <p class="mt-1 text-sm text-stone-600">Observed shell binaries and first-class tools used by the agent on this host.</p>
+          </div>
+          <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ audit.binaries|length }} binaries surfaced</p>
+        </div>
+
+        <div class="mt-5 flex flex-wrap gap-2">
+          {% for tool in audit.tool_surface %}
+            <span class="rounded-full bg-stone-100 px-3 py-1.5 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">
+              {{ tool.tool_name }} · {{ tool.count }}
+            </span>
+          {% endfor %}
+        </div>
+
+        <div class="mt-5 space-y-3">
+          {% for item in audit.binaries %}
+            <div class="rounded-[1.15rem] border border-stone-200 bg-stone-50/80 p-4">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="rounded-full px-3 py-1 text-[0.66rem] font-semibold uppercase tracking-[0.18em] {% if item.status == 'missing' %}bg-rose-100 text-rose-800{% elif item.status == 'blocked' %}bg-amber-100 text-amber-800{% elif item.status == 'unknown' %}bg-stone-200 text-stone-700{% else %}bg-emerald-100 text-emerald-800{% endif %}">
+                      {{ item.status_label }}
+                    </span>
+                    <span class="text-sm font-semibold text-stone-900">{{ item.binary }}</span>
+                    {% if item.wrapper_label %}
+                      <span class="text-xs text-stone-500">via {{ item.wrapper_label }}</span>
+                    {% endif %}
+                  </div>
+                  <p class="mt-2 overflow-x-auto whitespace-nowrap text-xs text-stone-500">{{ item.display_command }}</p>
+                </div>
+                <div class="flex flex-wrap gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">
+                  <span>{{ item.success_count }} ok</span>
+                  <span>{{ item.failure_count }} fail</span>
+                  <span>{{ item.attempt_count }} runs</span>
+                </div>
+              </div>
+              {% if item.project_labels %}
+                <div class="mt-3 flex flex-wrap gap-2">
+                  {% for label in item.project_labels[:4] %}
+                    <span class="rounded-full bg-white px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ label }}</span>
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </div>
+          {% else %}
+            <div class="rounded-[1.2rem] border border-dashed border-stone-900/15 bg-stone-50/60 p-6 text-sm text-stone-600">
+              No command observations have been imported for this host yet.
+            </div>
+          {% endfor %}
+        </div>
+      </article>
+
+      <article class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Task Profiles</h2>
+            <p class="mt-1 text-sm text-stone-600">How ready this host looks for common classes of work.</p>
+          </div>
+        </div>
+
+        <div class="mt-5 space-y-3">
+          {% for profile in audit.profiles %}
+            <div class="rounded-[1.15rem] border border-stone-200 bg-stone-50/80 p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <p class="text-sm font-semibold text-stone-900">{{ profile.label }}</p>
+                  <p class="mt-1 text-xs text-stone-500">{{ profile.required_met }}/{{ profile.required_total }} required tools observed</p>
+                </div>
+                <span class="rounded-full px-3 py-1 text-[0.66rem] font-semibold uppercase tracking-[0.18em] {% if profile.tone == 'rose' %}bg-rose-100 text-rose-800{% elif profile.tone == 'amber' %}bg-amber-100 text-amber-800{% elif profile.tone == 'emerald' %}bg-emerald-100 text-emerald-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                  {{ profile.status_label }}
+                </span>
+              </div>
+              <div class="mt-3 h-2 overflow-hidden rounded-full bg-stone-200">
+                <div class="h-full rounded-full {% if profile.tone == 'rose' %}bg-rose-500{% elif profile.tone == 'amber' %}bg-amber-500{% elif profile.tone == 'emerald' %}bg-emerald-500{% else %}bg-stone-400{% endif %}" style="width: {{ profile.score }}%"></div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </article>
+    </section>
+
+    <section class="mb-8 grid gap-6 xl:grid-cols-[1fr,1fr]">
+      <article class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Observed Failures</h2>
+            <p class="mt-1 text-sm text-stone-600">Grouped by cause instead of raw command strings.</p>
+          </div>
+        </div>
+        <div class="mt-5 space-y-3">
+          {% for item in audit.failure_groups %}
+            <div class="rounded-[1.15rem] border border-stone-200 bg-stone-50/80 p-4">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="rounded-full px-3 py-1 text-[0.66rem] font-semibold uppercase tracking-[0.18em] {% if item.tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                      {{ item.class_label }}
+                    </span>
+                    <span class="text-sm font-semibold text-stone-900">{{ item.count }} events</span>
+                  </div>
+                  {% if item.binaries %}
+                    <p class="mt-2 text-xs text-stone-500">Most common: {{ item.binaries|join(', ') }}</p>
+                  {% endif %}
+                </div>
+                <span class="rounded-full bg-white px-3 py-1 text-[0.66rem] font-semibold uppercase tracking-[0.18em] text-stone-700">{{ item.guidance_kind }}</span>
+              </div>
+              {% if item.examples %}
+                <div class="mt-3 space-y-2">
+                  {% for example in item.examples %}
+                    <a href="{{ example.session_href }}" class="block rounded-[1rem] border border-stone-200 bg-white/90 p-3 transition hover:bg-white">
+                      <p class="truncate text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">{{ example.project_label }}</p>
+                      <p class="mt-1 overflow-x-auto whitespace-nowrap text-sm text-stone-800">{{ example.command }}</p>
+                    </a>
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </div>
+          {% else %}
+            <div class="rounded-[1.2rem] border border-emerald-200 bg-emerald-50/80 p-6 text-sm text-emerald-900">
+              No non-zero command failures were observed for this host.
+            </div>
+          {% endfor %}
+        </div>
+      </article>
+
+      <article class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Install Guidance</h2>
+            <p class="mt-1 text-sm text-stone-600">What looks missing vs blocked by access or auth.</p>
+          </div>
+        </div>
+        <div class="mt-5 space-y-3">
+          {% for item in audit.install_guidance %}
+            <div class="rounded-[1.15rem] border border-stone-200 bg-stone-50/80 p-4">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="rounded-full px-3 py-1 text-[0.66rem] font-semibold uppercase tracking-[0.18em] {% if item.tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                      {{ item.label }}
+                    </span>
+                    <span class="text-sm font-semibold text-stone-900">{{ item.subject_label }}</span>
+                  </div>
+                  <p class="mt-2 text-xs text-stone-500">{{ item.guidance_kind }} · {{ item.count }} matching failures</p>
+                </div>
+              </div>
+              {% if item.project_labels %}
+                <div class="mt-3 flex flex-wrap gap-2">
+                  {% for label in item.project_labels %}
+                    <span class="rounded-full bg-white px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ label }}</span>
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </div>
+          {% else %}
+            <div class="rounded-[1.2rem] border border-emerald-200 bg-emerald-50/80 p-6 text-sm text-emerald-900">
+              No recurring missing or blocked capabilities have been inferred yet.
+            </div>
+          {% endfor %}
+        </div>
+      </article>
+    </section>
+
+    <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+      <div class="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Recent Evidence</h2>
+          <p class="mt-1 text-sm text-stone-600">Recent commands that shaped this host-level audit.</p>
+        </div>
+      </div>
+      <div class="mt-5 space-y-3">
+        {% for item in audit.recent_evidence %}
+          <a href="{{ item.session_href }}" class="block rounded-[1.15rem] border border-stone-200 bg-stone-50/80 p-4 transition hover:border-stone-300 hover:bg-white">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                {% if item.project_label %}
+                  <p class="truncate text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ item.project_label }}</p>
+                {% endif %}
+                <p class="mt-2 overflow-x-auto whitespace-nowrap text-sm font-semibold text-stone-900">{{ item.command }}</p>
+                <p class="mt-2 text-xs text-stone-500">{{ item.title }}</p>
+              </div>
+              <div class="flex flex-col items-end gap-2">
+                <span class="rounded-full px-3 py-1 text-[0.66rem] font-semibold uppercase tracking-[0.18em] {% if item.exit_code %}bg-rose-100 text-rose-800{% else %}bg-emerald-100 text-emerald-800{% endif %}">
+                  {% if item.exit_code %}exit {{ item.exit_code }}{% else %}ok{% endif %}
+                </span>
+                {% if item.timestamp %}
+                  <span class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>
+                {% endif %}
+              </div>
+            </div>
+          </a>
+        {% else %}
+          <div class="rounded-[1.2rem] border border-dashed border-stone-900/15 bg-stone-50/60 p-6 text-sm text-stone-600">
+            No recent command evidence is available yet for this host.
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+{% endblock %}
