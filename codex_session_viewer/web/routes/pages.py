@@ -93,6 +93,18 @@ FAILED_AGENT_STATES = {
 }
 
 
+def guided_setup_required(
+    request: Request,
+    *,
+    settings: object,
+    onboarding: dict[str, object],
+) -> bool:
+    if bool(getattr(request.state, "bootstrap_required", False)):
+        return True
+    sync_mode = str(getattr(settings, "sync_mode", "") or "").strip().lower()
+    return sync_mode == "remote" and bool(onboarding.get("onboarding_required"))
+
+
 def render_settings_page(
     request: Request,
     *,
@@ -508,6 +520,7 @@ def render_onboarding_status_fragment(request: Request) -> HTMLResponse:
         name="_setup_status.html",
         context={
             "request": request,
+            "settings": context.settings,
             "onboarding": onboarding,
         },
     )
@@ -661,7 +674,7 @@ def login_page(request: Request) -> Response:
         with connect(context.settings.database_path) as connection:
             with write_transaction(connection):
                 onboarding = reconcile_onboarding_state(connection, context.settings)
-        if onboarding["onboarding_required"]:
+        if guided_setup_required(request, settings=context.settings, onboarding=onboarding):
             return RedirectResponse(url="/setup", status_code=303)
         return RedirectResponse(url=safe_next_path(request.query_params.get("next")), status_code=303)
     if (
@@ -727,7 +740,10 @@ async def login_submit(request: Request) -> Response:
     with connect(context.settings.database_path) as connection:
         with write_transaction(connection):
             onboarding = reconcile_onboarding_state(connection, context.settings)
-    return RedirectResponse(url="/setup" if onboarding["onboarding_required"] else next_path, status_code=303)
+    return RedirectResponse(
+        url="/setup" if guided_setup_required(request, settings=context.settings, onboarding=onboarding) else next_path,
+        status_code=303,
+    )
 
 
 @router.post("/logout")
@@ -826,7 +842,7 @@ def index(
     with connect(context.settings.database_path) as connection:
         with write_transaction(connection):
             onboarding = reconcile_onboarding_state(connection, context.settings)
-    if onboarding["onboarding_required"]:
+    if guided_setup_required(request, settings=context.settings, onboarding=onboarding):
         return RedirectResponse(url="/setup", status_code=303)
     now = datetime.now().astimezone()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()

@@ -10,7 +10,11 @@
           <div>
             <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-700">Onboarding In Progress</p>
             <p class="mt-2 text-sm leading-6 text-amber-900">
-              The guided setup is still waiting on the first healthy machine connection. You can keep working here, but the primary flow lives in the setup wizard.
+              {% if settings.sync_mode == 'local' %}
+                The guided setup is still waiting on the first successful local import. You can keep working here, but the primary flow lives in the setup wizard.
+              {% else %}
+                The guided setup is still waiting on the first healthy machine connection. You can keep working here, but the primary flow lives in the setup wizard.
+              {% endif %}
             </p>
           </div>
           <a href="/setup" class="inline-flex items-center rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 transition hover:bg-amber-100">

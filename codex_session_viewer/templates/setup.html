@@ -10,7 +10,11 @@
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Guided Setup</p>
           <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl">Finish first-run onboarding</h1>
           <p class="mt-3 max-w-3xl text-[0.98rem] leading-7 text-stone-600">
-            This wizard keeps auth, token creation, first machine contact, and sync verification in one place until the first healthy upload is confirmed.
+            {% if settings.sync_mode == 'local' %}
+              This wizard keeps auth and first-import verification in one place until the viewer has pulled in local Codex sessions.
+            {% else %}
+              This wizard keeps auth, token creation, first machine contact, and sync verification in one place until the first healthy upload is confirmed.
+            {% endif %}
           </p>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
@@ -24,9 +28,13 @@
           </div>
         </div>
       </div>
-      {% if '127.0.0.1' in setup_server_url or 'localhost' in setup_server_url %}
+      {% if settings.sync_mode != 'local' and ('127.0.0.1' in setup_server_url or 'localhost' in setup_server_url) %}
         <div class="mt-5 rounded-[1.2rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
           The current server URL looks local to this machine. If your first machine runs somewhere else on the network, update `CODEX_VIEWER_SERVER_URL` in the snippet below to a reachable host name or IP.
+        </div>
+      {% elif settings.sync_mode == 'local' %}
+        <div class="mt-5 rounded-[1.2rem] border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-900">
+          Local mode is the fastest path: no sync token, no daemon, and no extra machine required. The viewer imports from `CODEX_SESSION_ROOTS`, which defaults to `~/.codex/sessions`.
         </div>
       {% endif %}
     </section>
@@ -42,7 +50,11 @@
               <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Auth</p>
               <h2 class="mt-2 font-display text-2xl text-stone-900">Browser Access</h2>
               <p class="mt-2 text-sm leading-6 text-stone-600">
-                Confirm how the web UI is protected before connecting the first machine.
+                {% if settings.sync_mode == 'local' %}
+                  Confirm how the web UI is protected before the first local import.
+                {% else %}
+                  Confirm how the web UI is protected before connecting the first machine.
+                {% endif %}
               </p>
             </div>
             <span class="rounded-full bg-stone-900 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-50">{{ settings.auth_mode|replace('_', ' ') }}</span>
@@ -83,7 +95,11 @@
               <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Create Admin</p>
               <h2 class="mt-2 font-display text-2xl text-stone-900">First Admin Account</h2>
               <p class="mt-2 text-sm leading-6 text-stone-600">
-                Shared installs need one admin before tokens, machine controls, and server policy can be managed.
+                {% if settings.sync_mode == 'local' %}
+                  Shared installs need one admin before local settings and access policy can be managed.
+                {% else %}
+                  Shared installs need one admin before tokens, machine controls, and server policy can be managed.
+                {% endif %}
               </p>
             </div>
             {% if onboarding.bootstrap_required %}
@@ -172,6 +188,38 @@
       </div>
 
       <div class="space-y-6">
+        {% if settings.sync_mode == 'local' %}
+        <section class="rounded-[1.7rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Import Local Sessions</p>
+              <h2 class="mt-2 font-display text-2xl text-stone-900">Library Source</h2>
+              <p class="mt-2 text-sm leading-6 text-stone-600">
+                Local mode reads Codex sessions directly from disk. You can stay with the default path or override `CODEX_SESSION_ROOTS`.
+              </p>
+            </div>
+            <span class="rounded-full bg-stone-900 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-50">
+              {{ onboarding.imported_session_count }} imported
+            </span>
+          </div>
+
+          <div class="mt-5 grid gap-3 sm:grid-cols-2">
+            <div class="rounded-[1.15rem] bg-stone-50 p-4">
+              <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Configured roots</p>
+              <p class="mt-2 text-sm leading-6 text-stone-900">{{ onboarding.session_roots|join(", ") }}</p>
+            </div>
+            <div class="rounded-[1.15rem] bg-stone-50 p-4">
+              <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Roots found</p>
+              <p class="mt-2 text-sm font-semibold text-stone-900">{{ onboarding.existing_session_root_count }} / {{ onboarding.session_roots|length }}</p>
+            </div>
+          </div>
+
+          <div class="mt-5 rounded-[1.2rem] border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-700">
+            <p><span class="font-semibold">Manual sync:</span> `PYTHONPATH=.deps python3 -m codex_session_viewer sync`</p>
+            <p class="mt-2"><span class="font-semibold">Common fix:</span> if nothing imports, set `CODEX_SESSION_ROOTS` to the directory that actually contains your Codex `*.jsonl` sessions and restart the server.</p>
+          </div>
+        </section>
+        {% else %}
         <section class="rounded-[1.7rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
           <div class="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -266,6 +314,7 @@
             </div>
           {% endif %}
         </section>
+        {% endif %}
       </div>
     </section>
   </div>
