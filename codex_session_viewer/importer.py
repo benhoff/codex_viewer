@@ -1064,12 +1064,16 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
     imported = 0
     updated = 0
     skipped = 0
+    project_registry_changed = False
 
     with connect(settings.database_path) as connection:
         with write_transaction(connection):
+            from .projects import sync_project_registry
+
             if force:
                 connection.execute("DELETE FROM events")
                 connection.execute("DELETE FROM sessions")
+                project_registry_changed = True
 
             existing_rows = connection.execute(
                 """
@@ -1111,10 +1115,14 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
                     skipped += 1
                     continue
                 upsert_parsed_session(connection, parsed)
+                project_registry_changed = True
 
                 if record:
                     updated += 1
                 else:
                     imported += 1
+
+            if project_registry_changed:
+                sync_project_registry(connection)
 
     return {"imported": imported, "updated": updated, "skipped": skipped}

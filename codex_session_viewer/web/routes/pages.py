@@ -39,12 +39,15 @@ from ...local_auth import (
 )
 from ...onboarding import effective_bootstrap_required, reconcile_onboarding_state
 from ...projects import (
+    build_project_access_context,
     build_grouped_projects,
     dashboard_stats,
     effective_project_fields,
     fetch_group_detail,
     fetch_recent_session_turn_activity_windows,
+    fetch_session_with_project,
     query_group_rows,
+    row_is_visible_to_project_access,
     summarize_attention_status,
 )
 from ...saved_turns import (
@@ -156,18 +159,29 @@ def render_queue_page(
     queue_sort = normalize_saved_turn_sort(sort)
     queue_project = None
     with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
         if project_key:
-            detail = fetch_group_detail(connection, project_key)
+            detail = fetch_group_detail(connection, project_key, project_access=project_access)
             if detail is None:
                 raise HTTPException(status_code=404, detail="Project group not found")
             queue_project = detail["group"]
-        counts = count_saved_turns_by_status(connection, owner_scope, project_key=project_key)
+        counts = count_saved_turns_by_status(
+            connection,
+            owner_scope,
+            project_key=project_key,
+            project_access=project_access,
+        )
         items = list_saved_turns(
             connection,
             owner_scope,
             status=status,
             sort=queue_sort,
             project_key=project_key,
+            project_access=project_access,
         )
     queue_scope_suffix = f"&project={quote(project_key, safe='')}" if project_key else ""
     return context.templates.TemplateResponse(
@@ -268,7 +282,16 @@ def queue_action_response(
         context = get_app_context(request)
         owner_scope = owner_scope_from_request(request)
         with connect(context.settings.database_path) as connection:
-            open_count = count_saved_turns_by_status(connection, owner_scope).get("open", 0)
+            project_access = build_project_access_context(
+                connection,
+                auth_user=getattr(request.state, "auth_user", None),
+                auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+            )
+            open_count = count_saved_turns_by_status(
+                connection,
+                owner_scope,
+                project_access=project_access,
+            ).get("open", 0)
         return JSONResponse(
             {
                 "ok": True,
@@ -738,6 +761,14 @@ async def queue_action(request: Request) -> Response:
         raise HTTPException(status_code=400, detail="Unsupported queue action")
 
     with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        session = fetch_session_with_project(connection, session_id)
+        if session is None or not row_is_visible_to_project_access(session, project_access):
+            raise HTTPException(status_code=404, detail="Session not found")
         with write_transaction(connection):
             if action == "save":
                 snapshot = fetch_turn_snapshot(connection, session_id, turn_number)
@@ -800,9 +831,18 @@ def index(
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     hot_window_start = (now - timedelta(days=7)).isoformat()
     with connect(context.settings.database_path) as connection:
-        all_rows = query_group_rows(connection)
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        all_rows = query_group_rows(connection, project_access=project_access)
         has_filters = bool((q or "").strip() or (host or "").strip())
-        rows = query_group_rows(connection, q=q, host=host) if has_filters else all_rows
+        rows = (
+            query_group_rows(connection, q=q, host=host, project_access=project_access)
+            if has_filters
+            else all_rows
+        )
         hot_turn_activity = fetch_recent_session_turn_activity_windows(
             connection,
             [row["id"] for row in rows],
@@ -874,8 +914,13 @@ def search_results(request: Request, q: str | None = Query(default=None)) -> HTM
         return RedirectResponse(url="/", status_code=303)
 
     with connect(context.settings.database_path) as connection:
-        all_rows = query_group_rows(connection)
-        rows = query_group_rows(connection, q=search_query)
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        all_rows = query_group_rows(connection, project_access=project_access)
+        rows = query_group_rows(connection, q=search_query, project_access=project_access)
         groups = build_grouped_projects(
             rows,
             route_rows=all_rows,
@@ -901,7 +946,16 @@ def remotes_health(request: Request) -> HTMLResponse:
     with connect(context.settings.database_path) as connection:
         with write_transaction(connection):
             onboarding = reconcile_onboarding_state(connection, context.settings)
-        agents_dashboard = fetch_agents_dashboard(connection, context.settings)
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        agents_dashboard = fetch_agents_dashboard(
+            connection,
+            context.settings,
+            project_access=project_access,
+        )
     return context.templates.TemplateResponse(
         request,
         name="remotes.html",
@@ -920,7 +974,17 @@ def remotes_health(request: Request) -> HTMLResponse:
 def remote_environment_audit(request: Request, source_host: str) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
-        audit = fetch_host_environment_audit(connection, source_host, context.settings)
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        audit = fetch_host_environment_audit(
+            connection,
+            source_host,
+            context.settings,
+            project_access=project_access,
+        )
     if audit["remote"] is None and int(audit["summary"]["session_count"] or 0) == 0:
         raise HTTPException(status_code=404, detail="Remote host not found")
     return context.templates.TemplateResponse(

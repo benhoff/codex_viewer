@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 from .config import Settings
 from .projects import (
+    ProjectAccessContext,
     build_grouped_projects,
     effective_project_fields,
     fetch_recent_session_turn_activity_windows,
@@ -624,9 +625,11 @@ def _agent_issue_details(entry: dict[str, Any]) -> list[dict[str, str]]:
 def fetch_agents_dashboard(
     connection: sqlite3.Connection,
     settings: Settings,
+    *,
+    project_access: ProjectAccessContext | None = None,
 ) -> dict[str, Any]:
     remotes = fetch_remote_agent_health(connection, settings)
-    rows = query_group_rows(connection)
+    rows = query_group_rows(connection, project_access=project_access)
     route_map = {
         project.key: project.detail_href
         for project in build_grouped_projects(rows)

@@ -21,9 +21,14 @@
         <a href="{{ environment_href }}" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-100">
           Environment
         </a>
+        {% if can_manage_project_acl %}
+        <a href="{{ edit_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Edit
+        </a>
+        {% endif %}
       </div>
 
-      {% if not request.state.auth_enabled or (request.state.auth_user and request.state.auth_user.is_admin) %}
+      {% if can_manage_project_acl %}
       <details class="group">
         <summary class="list-none">
           <span class="inline-flex cursor-pointer items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
@@ -31,9 +36,6 @@
           </span>
         </summary>
         <div class="mt-3 flex flex-wrap justify-end gap-2">
-          <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
-            Edit
-          </a>
           <form method="post" action="/projects/actions" onsubmit="return confirm('Delete this repo and all imported sessions from the viewer?');">
             <input type="hidden" name="group_key" value="{{ group.key }}">
             <input type="hidden" name="action" value="delete">
@@ -52,9 +54,12 @@
         <div class="min-w-0 flex-1">
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500" title="{{ group.latest_timestamp|full_timestamp }}">{{ group.latest_timestamp|humanize_timestamp }}</p>
           <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">{{ group.display_label }}</h1>
-          <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
-            {{ group.organization }} / {{ group.repository }}
-          </p>
+          <div class="mt-3 flex flex-wrap items-center gap-2 text-sm leading-7 text-stone-600 sm:text-base">
+            <span>{{ group.organization }} / {{ group.repository }}</span>
+            {% if group.visibility == 'private' %}
+              <span class="rounded-full bg-amber-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-amber-800">Private</span>
+            {% endif %}
+          </div>
           {% if group.remote_url and not group.remote_url.startswith('/') %}
             <p class="mt-2 break-all text-sm leading-6 text-stone-500">{{ group.remote_url }}</p>
           {% endif %}

@@ -6,7 +6,11 @@ from typing import Any
 
 from fastapi import Request
 
-from .projects import effective_project_fields
+from .projects import (
+    ProjectAccessContext,
+    effective_project_fields,
+    filter_rows_for_project_access,
+)
 from .session_view import build_turns
 from .text_utils import shorten
 
@@ -73,30 +77,35 @@ def count_saved_turns(
     *,
     status: str = "open",
     project_key: str | None = None,
+    project_access: ProjectAccessContext | None = None,
 ) -> int:
+    where_clause = "WHERE st.owner_scope = ? AND st.status = ?"
+    params: list[object] = [owner_scope, status]
     if project_key:
-        row = connection.execute(
-            f"""
-            SELECT COUNT(*) AS count
-            FROM saved_turns AS st
-            INNER JOIN sessions AS s
-                ON s.id = st.session_id
-            LEFT JOIN project_overrides AS o
-                ON o.match_project_key = s.inferred_project_key
-            WHERE st.owner_scope = ? AND st.status = ? AND {EFFECTIVE_GROUP_KEY_SQL} = ?
-            """,
-            (owner_scope, status, project_key),
-        ).fetchone()
-    else:
-        row = connection.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM saved_turns
-            WHERE owner_scope = ? AND status = ?
-            """,
-            (owner_scope, status),
-        ).fetchone()
-    return int(row["count"] or 0) if row is not None else 0
+        where_clause += f" AND {EFFECTIVE_GROUP_KEY_SQL} = ?"
+        params.append(project_key)
+    rows = connection.execute(
+        f"""
+        SELECT
+            st.session_id,
+            s.inferred_project_key,
+            o.override_group_key,
+            p.id AS project_id,
+            p.visibility AS project_visibility
+        FROM saved_turns AS st
+        INNER JOIN sessions AS s
+            ON s.id = st.session_id
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
+        {where_clause}
+        """,
+        params,
+    ).fetchall()
+    return len(filter_rows_for_project_access(rows, project_access))
 
 
 def count_saved_turns_by_status(
@@ -104,36 +113,39 @@ def count_saved_turns_by_status(
     owner_scope: str,
     *,
     project_key: str | None = None,
+    project_access: ProjectAccessContext | None = None,
 ) -> dict[str, int]:
+    where_clause = "WHERE st.owner_scope = ?"
+    params: list[object] = [owner_scope]
     if project_key:
-        rows = connection.execute(
-            f"""
-            SELECT st.status, COUNT(*) AS count
-            FROM saved_turns AS st
-            INNER JOIN sessions AS s
-                ON s.id = st.session_id
-            LEFT JOIN project_overrides AS o
-                ON o.match_project_key = s.inferred_project_key
-            WHERE st.owner_scope = ? AND {EFFECTIVE_GROUP_KEY_SQL} = ?
-            GROUP BY st.status
-            """,
-            (owner_scope, project_key),
-        ).fetchall()
-    else:
-        rows = connection.execute(
-            """
-            SELECT status, COUNT(*) AS count
-            FROM saved_turns
-            WHERE owner_scope = ?
-            GROUP BY status
-            """,
-            (owner_scope,),
-        ).fetchall()
+        where_clause += f" AND {EFFECTIVE_GROUP_KEY_SQL} = ?"
+        params.append(project_key)
+    rows = connection.execute(
+        f"""
+        SELECT
+            st.status,
+            s.inferred_project_key,
+            o.override_group_key,
+            p.id AS project_id,
+            p.visibility AS project_visibility
+        FROM saved_turns AS st
+        INNER JOIN sessions AS s
+            ON s.id = st.session_id
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
+        {where_clause}
+        """,
+        params,
+    ).fetchall()
     counts = {"open": 0, "resolved": 0}
-    for row in rows:
+    for row in filter_rows_for_project_access(rows, project_access):
         status = str(row["status"] or "")
         if status in counts:
-            counts[status] = int(row["count"] or 0)
+            counts[status] += 1
     return counts
 
 
@@ -287,6 +299,7 @@ def list_saved_turns(
     status: str = "open",
     sort: str = "newest",
     project_key: str | None = None,
+    project_access: ProjectAccessContext | None = None,
 ) -> list[dict[str, Any]]:
     order_clause = (
         "ORDER BY st.created_at DESC, st.turn_number DESC"
@@ -323,6 +336,8 @@ def list_saved_turns(
             s.inferred_project_kind,
             s.inferred_project_key,
             s.inferred_project_label,
+            p.id AS project_id,
+            p.visibility AS project_visibility,
             o.override_group_key,
             o.override_organization,
             o.override_repository,
@@ -333,6 +348,10 @@ def list_saved_turns(
             ON s.id = st.session_id
         LEFT JOIN project_overrides AS o
             ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
         {where_clause}
         {order_clause}
         """,
@@ -340,7 +359,7 @@ def list_saved_turns(
     ).fetchall()
 
     items: list[dict[str, Any]] = []
-    for row in rows:
+    for row in filter_rows_for_project_access(rows, project_access):
         project = effective_project_fields(row)
         activity_timestamp = (
             str(row["resolved_at"] or "").strip()

@@ -9,9 +9,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from ...db import connect
 from ...projects import (
+    build_project_access_context,
     effective_project_fields,
     fetch_session_with_project,
-    project_edit_href,
+    row_is_visible_to_project_access,
 )
 from ...runtime import export_markdown, get_events
 from ...saved_turns import fetch_session_saved_turn_states, owner_scope_from_request
@@ -118,8 +119,15 @@ def session_detail(
     session_view_mode = "audit" if str(view or "").strip().lower() == "audit" else "conversation"
     requested_turn = turn
     with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
         session = fetch_session_with_project(connection, session_id)
         if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if not row_is_visible_to_project_access(session, project_access):
             raise HTTPException(status_code=404, detail="Session not found")
         window = fetch_session_turn_window(
             connection,
@@ -142,6 +150,7 @@ def session_detail(
     project = effective_project_fields(session)
     group_key = str(project["effective_group_key"])
     group_href = f"/projects/key/{quote(group_key, safe='')}"
+    edit_href = f"/projects/edit?key={quote(group_key, safe='')}" if project_access.bypass else ""
     starting_turn_number = int(window["context_turn"]["turn_number"]) if window.get("context_turn") else int(window.get("oldest_turn") or 1)
     turns_chrono = build_turns(
         events,
@@ -241,7 +250,7 @@ def session_detail(
             "session_display_summary": session_display_summary,
             "project": project,
             "group_href": group_href,
-            "edit_href": f"/projects/edit?key={quote(group_key, safe='')}",
+            "edit_href": edit_href,
             "session_view_mode": session_view_mode,
             "audit_summary": audit_summary,
             "audit_focus": audit_focus,
@@ -258,8 +267,15 @@ def session_detail(
 def export_raw(request: Request, session_id: str) -> PlainTextResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
         session = fetch_session_with_project(connection, session_id)
         if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if not row_is_visible_to_project_access(session, project_access):
             raise HTTPException(status_code=404, detail="Session not found")
     source_path = Path(session["source_path"])
     if not source_path.exists():
@@ -273,8 +289,15 @@ def export_raw(request: Request, session_id: str) -> PlainTextResponse:
 def export_json(request: Request, session_id: str) -> JSONResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
         session = fetch_session_with_project(connection, session_id)
         if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if not row_is_visible_to_project_access(session, project_access):
             raise HTTPException(status_code=404, detail="Session not found")
         events = get_events(connection, session_id)
     payload = {
@@ -289,8 +312,15 @@ def export_json(request: Request, session_id: str) -> JSONResponse:
 def export_session_markdown(request: Request, session_id: str) -> PlainTextResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
         session = fetch_session_with_project(connection, session_id)
         if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if not row_is_visible_to_project_access(session, project_access):
             raise HTTPException(status_code=404, detail="Session not found")
         events = get_events(connection, session_id)
     headers = {"Content-Disposition": f'attachment; filename="{session_id}.md"'}

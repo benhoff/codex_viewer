@@ -12,8 +12,10 @@ from urllib.parse import quote
 
 from .agents import fetch_remote_agent_health
 from .projects import (
+    ProjectAccessContext,
     build_grouped_projects,
     effective_project_fields,
+    filter_rows_for_project_access,
     project_detail_href_for_route,
     project_route_segments,
     query_group_rows,
@@ -292,11 +294,18 @@ def classify_failure(command_text: str | None, exit_code: int | None, detail_tex
     }
 
 
-def _visible_session_rows_for_host(connection: sqlite3.Connection, source_host: str) -> list[sqlite3.Row]:
-    return connection.execute(
+def _visible_session_rows_for_host(
+    connection: sqlite3.Connection,
+    source_host: str,
+    *,
+    project_access: ProjectAccessContext | None = None,
+) -> list[sqlite3.Row]:
+    rows = connection.execute(
         """
         SELECT
             s.*,
+            p.id AS project_id,
+            p.visibility AS project_visibility,
             o.override_group_key,
             o.override_organization,
             o.override_repository,
@@ -305,6 +314,10 @@ def _visible_session_rows_for_host(connection: sqlite3.Connection, source_host: 
         FROM sessions AS s
         LEFT JOIN project_overrides AS o
             ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
         WHERE s.source_host = ?
           AND NOT EXISTS (
             SELECT 1
@@ -315,10 +328,16 @@ def _visible_session_rows_for_host(connection: sqlite3.Connection, source_host: 
         """,
         (source_host,),
     ).fetchall()
+    return filter_rows_for_project_access(rows, project_access)
 
 
-def _visible_session_rows_for_project(connection: sqlite3.Connection, group_key: str) -> list[sqlite3.Row]:
-    return query_group_rows_for_key(connection, group_key)
+def _visible_session_rows_for_project(
+    connection: sqlite3.Connection,
+    group_key: str,
+    *,
+    project_access: ProjectAccessContext | None = None,
+) -> list[sqlite3.Row]:
+    return query_group_rows_for_key(connection, group_key, project_access=project_access)
 
 
 def _database_cache_key(connection: sqlite3.Connection) -> str:
@@ -837,17 +856,34 @@ def fetch_host_environment_audit(
     connection: sqlite3.Connection,
     source_host: str,
     settings: Any,
+    *,
+    project_access: ProjectAccessContext | None = None,
 ) -> dict[str, Any]:
-    session_rows = _visible_session_rows_for_host(connection, source_host)
-    project_rows = query_group_rows(connection)
+    session_rows = _visible_session_rows_for_host(connection, source_host, project_access=project_access)
+    project_rows = query_group_rows(connection, project_access=project_access)
     grouped_projects = build_grouped_projects(project_rows)
     route_map = {project.key: project.detail_href for project in grouped_projects}
+    visible_source_project_keys = sorted(
+        {
+            str(effective_project_fields(row)["inferred_project_key"])
+            for row in session_rows
+            if trimmed(effective_project_fields(row)["inferred_project_key"])
+        }
+    )
     project_labels_by_key = {
         effective_project_fields(row)["inferred_project_key"]: effective_project_fields(row)["display_label"]
         for row in session_rows
     }
-    command_rows = _command_rows_for_sessions(connection, source_host=source_host)
-    tool_rows = _tool_rows_for_sessions(connection, source_host=source_host)
+    command_rows = _command_rows_for_sessions(
+        connection,
+        source_host=source_host,
+        source_project_keys=visible_source_project_keys,
+    )
+    tool_rows = _tool_rows_for_sessions(
+        connection,
+        source_host=source_host,
+        source_project_keys=visible_source_project_keys,
+    )
     binary_map, signals, recent_evidence, failure_rows = _build_observations(command_rows, project_labels_by_key)
     remote_snapshot = next(
         (item for item in fetch_remote_agent_health(connection, settings) if str(item["source_host"]) == source_host),
@@ -947,9 +983,11 @@ def _host_fit_for_project(
     connection: sqlite3.Connection,
     host: str,
     requirements: list[dict[str, Any]],
+    *,
+    project_access: ProjectAccessContext | None = None,
 ) -> dict[str, Any]:
     host_commands = _command_rows_for_sessions(connection, source_host=host)
-    host_project_rows = _visible_session_rows_for_host(connection, host)
+    host_project_rows = _visible_session_rows_for_host(connection, host, project_access=project_access)
     project_labels_by_key = {
         effective_project_fields(row)["inferred_project_key"]: effective_project_fields(row)["display_label"]
         for row in host_project_rows
@@ -1016,8 +1054,10 @@ def _host_fit_for_project(
 def fetch_project_environment_audit(
     connection: sqlite3.Connection,
     group_key: str,
+    *,
+    project_access: ProjectAccessContext | None = None,
 ) -> dict[str, Any] | None:
-    session_rows = _visible_session_rows_for_project(connection, group_key)
+    session_rows = _visible_session_rows_for_project(connection, group_key, project_access=project_access)
     if not session_rows:
         return None
     fingerprint = _project_audit_fingerprint(connection, group_key, session_rows)
@@ -1047,7 +1087,10 @@ def fetch_project_environment_audit(
     requirements = _infer_project_requirements(binary_map, signals)
     profiles = _score_profiles(binary_map, signals)
     hosts = sorted({trimmed(row["source_host"]) or "unknown-host" for row in session_rows})
-    host_fit = [_host_fit_for_project(connection, host, requirements) for host in hosts]
+    host_fit = [
+        _host_fit_for_project(connection, host, requirements, project_access=project_access)
+        for host in hosts
+    ]
     host_fit.sort(key=lambda item: (0 if item["status"] == "fail" else 1 if item["status"] == "warn" else 2, item["score"], item["source_host"]))
     guidance = []
     for requirement in requirements:

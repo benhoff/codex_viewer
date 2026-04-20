@@ -102,6 +102,31 @@ USER_COLUMN_DEFS = {
     "last_seen_at": "TEXT",
 }
 
+PROJECT_COLUMN_DEFS = {
+    "id": "TEXT PRIMARY KEY",
+    "current_group_key": "TEXT NOT NULL UNIQUE",
+    "display_label": "TEXT NOT NULL DEFAULT ''",
+    "visibility": "TEXT NOT NULL DEFAULT 'authenticated'",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
+PROJECT_SOURCE_COLUMN_DEFS = {
+    "match_project_key": "TEXT PRIMARY KEY",
+    "project_id": "TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
+PROJECT_ACL_COLUMN_DEFS = {
+    "project_id": "TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE",
+    "user_id": "TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE",
+    "role": "TEXT NOT NULL DEFAULT 'viewer'",
+    "granted_by_user_id": "TEXT REFERENCES users(id) ON DELETE SET NULL",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
 AUTH_STATE_COLUMN_DEFS = {
     "singleton": "INTEGER PRIMARY KEY CHECK(singleton = 1)",
     "bootstrap_completed_at": "TEXT",
@@ -349,6 +374,32 @@ CREATE TABLE IF NOT EXISTS users (
     is_admin INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    current_group_key TEXT NOT NULL UNIQUE,
+    display_label TEXT NOT NULL DEFAULT '',
+    visibility TEXT NOT NULL DEFAULT 'authenticated',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_sources (
+    match_project_key TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_acl (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'viewer',
+    granted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS auth_state (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
     bootstrap_completed_at TEXT,
@@ -491,6 +542,18 @@ ON api_tokens(last_used_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_project_overrides_override_group_key
 ON project_overrides(override_group_key);
+
+CREATE INDEX IF NOT EXISTS idx_projects_visibility
+ON projects(visibility, current_group_key);
+
+CREATE INDEX IF NOT EXISTS idx_project_sources_project_id
+ON project_sources(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_project_acl_user_id
+ON project_acl(user_id, project_id);
+
+CREATE INDEX IF NOT EXISTS idx_project_acl_project_role
+ON project_acl(project_id, role);
 
 CREATE INDEX IF NOT EXISTS idx_saved_turns_owner_status_updated
 ON saved_turns(owner_scope, status, updated_at DESC);
@@ -724,6 +787,39 @@ def ensure_user_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_project_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "projects"):
+        return
+    project_columns = table_columns(connection, "projects")
+    for column_name, column_def in PROJECT_COLUMN_DEFS.items():
+        if column_name not in project_columns and column_name != "id":
+            connection.execute(
+                f"ALTER TABLE projects ADD COLUMN {column_name} {column_def}"
+            )
+
+
+def ensure_project_source_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "project_sources"):
+        return
+    project_source_columns = table_columns(connection, "project_sources")
+    for column_name, column_def in PROJECT_SOURCE_COLUMN_DEFS.items():
+        if column_name not in project_source_columns and column_name != "match_project_key":
+            connection.execute(
+                f"ALTER TABLE project_sources ADD COLUMN {column_name} {column_def}"
+            )
+
+
+def ensure_project_acl_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "project_acl"):
+        return
+    project_acl_columns = table_columns(connection, "project_acl")
+    for column_name, column_def in PROJECT_ACL_COLUMN_DEFS.items():
+        if column_name not in project_acl_columns:
+            connection.execute(
+                f"ALTER TABLE project_acl ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def backfill_user_access_columns(connection: sqlite3.Connection) -> None:
     if not table_exists(connection, "users"):
         return
@@ -855,6 +951,9 @@ def init_db(database_path: Path) -> None:
             ensure_remote_agent_columns(connection)
             ensure_user_columns(connection)
             backfill_user_access_columns(connection)
+            ensure_project_columns(connection)
+            ensure_project_source_columns(connection)
+            ensure_project_acl_columns(connection)
             ensure_auth_state_columns(connection)
             ensure_onboarding_state_columns(connection)
             ensure_alert_incident_columns(connection)
@@ -875,4 +974,7 @@ def init_db(database_path: Path) -> None:
             backfill_session_rollups(connection)
             backfill_session_turn_activity_daily(connection)
             backfill_session_turns(connection)
+            from .projects import sync_project_registry
+
+            sync_project_registry(connection)
         connection.execute("PRAGMA foreign_keys = ON")

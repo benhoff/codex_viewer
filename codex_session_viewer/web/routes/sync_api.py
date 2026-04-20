@@ -23,7 +23,7 @@ from ...onboarding import (
     record_first_heartbeat,
     record_first_session_ingested,
 )
-from ...projects import ignored_project_keys
+from ...projects import ignored_project_keys, sync_project_registry
 from ..auth import require_sync_api_auth
 from ..context import get_settings
 
@@ -139,6 +139,7 @@ async def sync_session(request: Request) -> JSONResponse:
                     }
                 )
             upsert_parsed_session(connection, parsed)
+            sync_project_registry(connection)
             record_first_session_ingested(
                 connection,
                 source_host=parsed.source_host,
@@ -207,6 +208,7 @@ async def sync_session_raw(request: Request) -> JSONResponse:
                     }
                 )
             upsert_parsed_session(connection, parsed)
+            sync_project_registry(connection)
             record_first_session_ingested(
                 connection,
                 source_host=parsed.source_host,

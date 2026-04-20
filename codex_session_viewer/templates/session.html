@@ -12,9 +12,11 @@
         <a href="{{ group_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
           Back to repo
         </a>
+        {% if edit_href %}
         <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
           Edit repo
         </a>
+        {% endif %}
       </div>
       <div data-session-view-toggle-group class="flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/80 p-1 shadow-[0_14px_35px_-24px_rgba(41,37,36,0.35)]">
         <a

@@ -3,14 +3,19 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
+from uuid import uuid4
 
 from .session_rollups import activity_date_key
 from .session_status import is_user_turn_start, prefers_event_msg_user_turns, terminal_turn_summary
 from .text_utils import shorten, strip_codex_wrappers
+
+PROJECT_VISIBILITIES = {"authenticated", "private"}
+PROJECT_ACCESS_ROLES = {"viewer", "editor"}
 
 
 OVERRIDE_SELECT = """
@@ -49,6 +54,10 @@ GROUP_ROW_SELECT = f"""
     s.inferred_project_kind,
     s.inferred_project_key,
     s.inferred_project_label,
+    p.id AS project_id,
+    p.current_group_key AS current_project_group_key,
+    p.display_label AS current_project_display_label,
+    p.visibility AS project_visibility,
     {OVERRIDE_SELECT}
 """
 
@@ -90,6 +99,10 @@ TURN_STREAM_SELECT = f"""
     s.inferred_project_key,
     s.inferred_project_label,
     s.import_warning,
+    p.id AS project_id,
+    p.current_group_key AS current_project_group_key,
+    p.display_label AS current_project_display_label,
+    p.visibility AS project_visibility,
     {OVERRIDE_SELECT}
 """
 
@@ -108,6 +121,29 @@ def trimmed(value: object) -> str | None:
 def count_label(count: int, singular: str, plural: str | None = None) -> str:
     suffix = singular if count == 1 else (plural or f"{singular}s")
     return f"{count} {suffix}"
+
+
+def normalize_project_visibility(value: str | None) -> str:
+    candidate = str(value or "").strip().lower()
+    return candidate if candidate in PROJECT_VISIBILITIES else "authenticated"
+
+
+def normalize_project_acl_role(value: str | None) -> str:
+    candidate = str(value or "").strip().lower()
+    return candidate if candidate in PROJECT_ACCESS_ROLES else "viewer"
+
+
+def _project_acl_role_rank(value: str | None) -> int:
+    role = normalize_project_acl_role(value)
+    return 2 if role == "editor" else 1
+
+
+@dataclass(slots=True)
+class ProjectAccessContext:
+    auth_enabled: bool
+    bypass: bool
+    user_id: str | None
+    project_roles: dict[str, str]
 
 
 def build_command_exit_badges(
@@ -197,6 +233,8 @@ def assign_project_detail_hrefs(projects: list["GroupedProject"]) -> None:
 def build_project_route_map(projects: list["GroupedProject"]) -> dict[str, str]:
     route_projects = [
         GroupedProject(
+            project_id=project.project_id,
+            visibility=project.visibility,
             key=project.key,
             organization=project.organization,
             repository=project.repository,
@@ -225,7 +263,12 @@ def build_project_route_map(projects: list["GroupedProject"]) -> dict[str, str]:
 def joined_session_query(
     where_clause: str = "",
     order_clause: str = "",
-    select_clause: str = "s.*, " + OVERRIDE_SELECT,
+    select_clause: str = (
+        "s.*, "
+        + OVERRIDE_SELECT
+        + ", p.id AS project_id, p.current_group_key AS current_project_group_key, "
+        + "p.display_label AS current_project_display_label, p.visibility AS project_visibility"
+    ),
 ) -> str:
     return f"""
         SELECT
@@ -233,6 +276,10 @@ def joined_session_query(
         FROM sessions AS s
         LEFT JOIN project_overrides AS o
             ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
         {where_clause}
         {order_clause}
     """
@@ -291,6 +338,8 @@ def effective_project_fields(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any
         effective_kind = "github"
 
     return {
+        "project_id": trimmed(row["project_id"]),
+        "project_visibility": normalize_project_visibility(row["project_visibility"]),
         "effective_group_key": effective_group_key,
         "effective_project_kind": effective_kind,
         "organization": organization,
@@ -316,6 +365,472 @@ def effective_project_fields(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any
         "github_slug": trimmed(row["github_slug"]),
         "github_remote_url": trimmed(row["github_remote_url"]),
     }
+
+
+def build_project_access_context(
+    connection: sqlite3.Connection,
+    *,
+    auth_user: dict[str, Any] | None = None,
+    auth_enabled: bool = False,
+) -> ProjectAccessContext:
+    if not auth_enabled:
+        return ProjectAccessContext(
+            auth_enabled=False,
+            bypass=True,
+            user_id=None,
+            project_roles={},
+        )
+
+    user = auth_user or {}
+    if bool(user.get("is_admin")) or str(user.get("role") or "").strip().lower() == "admin":
+        return ProjectAccessContext(
+            auth_enabled=True,
+            bypass=True,
+            user_id=str(user.get("user_id") or "").strip() or None,
+            project_roles={},
+        )
+
+    user_id = str(user.get("user_id") or "").strip() or None
+    if not user_id:
+        return ProjectAccessContext(
+            auth_enabled=True,
+            bypass=False,
+            user_id=None,
+            project_roles={},
+        )
+
+    rows = connection.execute(
+        """
+        SELECT project_id, role
+        FROM project_acl
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    ).fetchall()
+    return ProjectAccessContext(
+        auth_enabled=True,
+        bypass=False,
+        user_id=user_id,
+        project_roles={
+            str(row["project_id"]): normalize_project_acl_role(row["role"])
+            for row in rows
+            if trimmed(row["project_id"])
+        },
+    )
+
+
+def row_is_visible_to_project_access(
+    row: sqlite3.Row | dict[str, Any],
+    access: ProjectAccessContext | None,
+) -> bool:
+    if access is None or access.bypass:
+        return True
+    project_visibility = normalize_project_visibility(row["project_visibility"])
+    if project_visibility != "private":
+        return True
+    project_id = trimmed(row["project_id"])
+    return bool(project_id and project_id in access.project_roles)
+
+
+def filter_rows_for_project_access(
+    rows: list[sqlite3.Row],
+    access: ProjectAccessContext | None,
+) -> list[sqlite3.Row]:
+    if access is None or access.bypass:
+        return rows
+    return [row for row in rows if row_is_visible_to_project_access(row, access)]
+
+
+def can_edit_project(
+    project_id: str | None,
+    access: ProjectAccessContext | None,
+) -> bool:
+    if access is None or access.bypass:
+        return True
+    project_key = trimmed(project_id)
+    if not project_key:
+        return False
+    return normalize_project_acl_role(access.project_roles.get(project_key)) == "editor"
+
+
+def list_project_acl_members(
+    connection: sqlite3.Connection,
+    project_id: str,
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT
+            pa.project_id,
+            pa.user_id,
+            pa.role,
+            pa.granted_by_user_id,
+            pa.created_at,
+            pa.updated_at,
+            u.username,
+            u.display_name,
+            u.email,
+            u.auth_source,
+            u.disabled_at
+        FROM project_acl AS pa
+        INNER JOIN users AS u
+            ON u.id = pa.user_id
+        WHERE pa.project_id = ?
+        ORDER BY
+            CASE WHEN pa.role = 'editor' THEN 0 ELSE 1 END ASC,
+            LOWER(COALESCE(NULLIF(TRIM(u.display_name), ''), u.username)) ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [
+        {
+            "project_id": str(row["project_id"]),
+            "user_id": str(row["user_id"]),
+            "role": normalize_project_acl_role(row["role"]),
+            "username": str(row["username"] or ""),
+            "display_name": str(row["display_name"] or row["username"] or ""),
+            "email": str(row["email"] or ""),
+            "auth_source": str(row["auth_source"] or ""),
+            "disabled_at": str(row["disabled_at"] or ""),
+            "created_at": str(row["created_at"] or ""),
+            "updated_at": str(row["updated_at"] or ""),
+        }
+        for row in rows
+    ]
+
+
+def update_project_visibility(
+    connection: sqlite3.Connection,
+    project_id: str,
+    visibility: str,
+) -> None:
+    connection.execute(
+        """
+        UPDATE projects
+        SET visibility = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            normalize_project_visibility(visibility),
+            utc_now_iso(),
+            project_id,
+        ),
+    )
+
+
+def upsert_project_acl_member(
+    connection: sqlite3.Connection,
+    *,
+    project_id: str,
+    user_id: str,
+    role: str,
+    granted_by_user_id: str | None,
+) -> None:
+    now = utc_now_iso()
+    connection.execute(
+        """
+        INSERT INTO project_acl (
+            project_id,
+            user_id,
+            role,
+            granted_by_user_id,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(project_id, user_id)
+        DO UPDATE SET
+            role = excluded.role,
+            granted_by_user_id = excluded.granted_by_user_id,
+            updated_at = excluded.updated_at
+        """,
+        (
+            project_id,
+            user_id,
+            normalize_project_acl_role(role),
+            trimmed(granted_by_user_id),
+            now,
+            now,
+        ),
+    )
+
+
+def remove_project_acl_member(
+    connection: sqlite3.Connection,
+    *,
+    project_id: str,
+    user_id: str,
+) -> None:
+    connection.execute(
+        """
+        DELETE FROM project_acl
+        WHERE project_id = ? AND user_id = ?
+        """,
+        (project_id, user_id),
+    )
+
+
+def _merge_project_acl_memberships(
+    connection: sqlite3.Connection,
+    *,
+    from_project_id: str,
+    to_project_id: str,
+) -> None:
+    if from_project_id == to_project_id:
+        return
+    rows = connection.execute(
+        """
+        SELECT user_id, role, granted_by_user_id, created_at, updated_at
+        FROM project_acl
+        WHERE project_id = ?
+        """,
+        (from_project_id,),
+    ).fetchall()
+    for row in rows:
+        existing = connection.execute(
+            """
+            SELECT role
+            FROM project_acl
+            WHERE project_id = ? AND user_id = ?
+            """,
+            (to_project_id, str(row["user_id"])),
+        ).fetchone()
+        next_role = normalize_project_acl_role(row["role"])
+        if existing is not None and _project_acl_role_rank(existing["role"]) >= _project_acl_role_rank(next_role):
+            continue
+        connection.execute(
+            """
+            INSERT INTO project_acl (
+                project_id,
+                user_id,
+                role,
+                granted_by_user_id,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, user_id)
+            DO UPDATE SET
+                role = excluded.role,
+                granted_by_user_id = excluded.granted_by_user_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                to_project_id,
+                str(row["user_id"]),
+                next_role,
+                trimmed(row["granted_by_user_id"]),
+                str(row["created_at"] or utc_now_iso()),
+                utc_now_iso(),
+            ),
+        )
+
+
+def sync_project_registry(connection: sqlite3.Connection) -> None:
+    rows = connection.execute(
+        joined_session_query(
+            visible_session_where(),
+            "",
+            """
+            s.inferred_project_key,
+            s.inferred_project_label,
+            s.inferred_project_kind,
+            s.source_host,
+            s.cwd,
+            s.cwd_name,
+            s.git_repository_url,
+            s.github_remote_url,
+            s.github_org,
+            s.github_repo,
+            s.github_slug,
+            p.id AS project_id,
+            p.visibility AS project_visibility,
+            """
+            + OVERRIDE_SELECT,
+        )
+    ).fetchall()
+
+    grouped: dict[str, dict[str, Any]] = {}
+    active_source_keys: set[str] = set()
+    for row in rows:
+        project = effective_project_fields(row)
+        source_key = str(project["inferred_project_key"] or "").strip()
+        if not source_key:
+            continue
+        active_source_keys.add(source_key)
+        entry = grouped.setdefault(
+            str(project["effective_group_key"]),
+            {
+                "group_key": str(project["effective_group_key"]),
+                "display_label": str(project["display_label"]),
+                "source_keys": set(),
+            },
+        )
+        entry["source_keys"].add(source_key)
+        if not entry["display_label"] and project["display_label"]:
+            entry["display_label"] = str(project["display_label"])
+
+    existing_projects = connection.execute(
+        """
+        SELECT id, current_group_key, display_label, visibility, created_at
+        FROM projects
+        ORDER BY created_at ASC, id ASC
+        """
+    ).fetchall()
+    project_by_id = {str(row["id"]): row for row in existing_projects}
+    project_id_by_group_key = {
+        str(row["current_group_key"]): str(row["id"])
+        for row in existing_projects
+        if trimmed(row["current_group_key"])
+    }
+    source_rows = connection.execute(
+        """
+        SELECT match_project_key, project_id
+        FROM project_sources
+        """
+    ).fetchall()
+    source_to_project_id = {
+        str(row["match_project_key"]): str(row["project_id"])
+        for row in source_rows
+        if trimmed(row["match_project_key"]) and trimmed(row["project_id"])
+    }
+
+    now = utc_now_iso()
+    claimed_project_ids: set[str] = set()
+    target_sources: dict[str, str] = {}
+    merged_project_pairs: set[tuple[str, str]] = set()
+    project_targets: dict[str, dict[str, Any]] = {}
+
+    for group_key in sorted(grouped):
+        entry = grouped[group_key]
+        source_keys = sorted(str(key) for key in entry["source_keys"] if trimmed(key))
+        candidate_ids = [
+            source_to_project_id[source_key]
+            for source_key in source_keys
+            if source_to_project_id.get(source_key) in project_by_id
+        ]
+        counts = Counter(candidate_ids)
+        exact_project_id = project_id_by_group_key.get(group_key)
+
+        chosen_project_id: str | None = None
+        if exact_project_id and exact_project_id not in claimed_project_ids and (exact_project_id in counts or not counts):
+            chosen_project_id = exact_project_id
+        else:
+            for project_id, _count in counts.most_common():
+                if project_id not in claimed_project_ids:
+                    chosen_project_id = project_id
+                    break
+
+        if chosen_project_id is None:
+            chosen_project_id = uuid4().hex
+
+        project_targets[chosen_project_id] = {
+            "group_key": group_key,
+            "display_label": str(entry["display_label"] or group_key),
+            "is_new": chosen_project_id not in project_by_id,
+        }
+
+        claimed_project_ids.add(chosen_project_id)
+        for source_key in source_keys:
+            target_sources[source_key] = chosen_project_id
+        for candidate_id in counts:
+            if candidate_id != chosen_project_id:
+                merged_project_pairs.add((candidate_id, chosen_project_id))
+
+    for project_id, target in project_targets.items():
+        if bool(target["is_new"]):
+            connection.execute(
+                """
+                INSERT INTO projects (
+                    id,
+                    current_group_key,
+                    display_label,
+                    visibility,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, 'authenticated', ?, ?)
+                """,
+                (
+                    project_id,
+                    f"pending:{project_id}",
+                    str(target["display_label"]),
+                    now,
+                    now,
+                ),
+            )
+            continue
+
+        existing_group_key = trimmed(project_by_id[project_id]["current_group_key"])
+        if existing_group_key != str(target["group_key"]):
+            connection.execute(
+                """
+                UPDATE projects
+                SET current_group_key = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (f"pending:{project_id}", now, project_id),
+            )
+
+    for project_id, target in project_targets.items():
+        connection.execute(
+            """
+            UPDATE projects
+            SET
+                current_group_key = ?,
+                display_label = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                str(target["group_key"]),
+                str(target["display_label"]),
+                now,
+                project_id,
+            ),
+        )
+
+    for from_project_id, to_project_id in sorted(merged_project_pairs):
+        _merge_project_acl_memberships(
+            connection,
+            from_project_id=from_project_id,
+            to_project_id=to_project_id,
+        )
+
+    for source_key, project_id in target_sources.items():
+        connection.execute(
+            """
+            INSERT INTO project_sources (
+                match_project_key,
+                project_id,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(match_project_key)
+            DO UPDATE SET
+                project_id = excluded.project_id,
+                updated_at = excluded.updated_at
+            """,
+            (source_key, project_id, now, now),
+        )
+
+    if active_source_keys:
+        placeholders = ", ".join("?" for _ in active_source_keys)
+        connection.execute(
+            f"""
+            DELETE FROM project_sources
+            WHERE match_project_key NOT IN ({placeholders})
+            """,
+            sorted(active_source_keys),
+        )
+    else:
+        connection.execute("DELETE FROM project_sources")
+
+    connection.execute(
+        """
+        DELETE FROM projects
+        WHERE id NOT IN (
+            SELECT DISTINCT project_id
+            FROM project_sources
+        )
+        """
+    )
 
 
 def fetch_session_stream_summaries(
@@ -587,6 +1102,8 @@ def query_group_rows(
     connection: sqlite3.Connection,
     q: str | None = None,
     host: str | None = None,
+    *,
+    project_access: ProjectAccessContext | None = None,
 ) -> list[sqlite3.Row]:
     conditions = []
     params: list[Any] = []
@@ -613,7 +1130,7 @@ def query_group_rows(
         conditions.append("s.source_host LIKE ?")
         params.append(f"%{host}%")
 
-    return connection.execute(
+    rows = connection.execute(
         joined_session_query(
             visible_session_where(conditions),
             "ORDER BY COALESCE(s.session_timestamp, s.started_at, s.imported_at) DESC",
@@ -621,17 +1138,20 @@ def query_group_rows(
         ),
         params,
     ).fetchall()
+    return filter_rows_for_project_access(rows, project_access)
 
 
 def query_group_rows_for_key(
     connection: sqlite3.Connection,
     group_key: str,
+    *,
+    project_access: ProjectAccessContext | None = None,
 ) -> list[sqlite3.Row]:
     key = trimmed(group_key)
     if not key:
         return []
 
-    return connection.execute(
+    rows = connection.execute(
         joined_session_query(
             visible_session_where([GROUP_KEY_MATCH_SQL]),
             "ORDER BY COALESCE(s.session_timestamp, s.started_at, s.imported_at) DESC",
@@ -639,16 +1159,19 @@ def query_group_rows_for_key(
         ),
         (key, key),
     ).fetchall()
+    return filter_rows_for_project_access(rows, project_access)
 
 
 def resolve_project_detail_hrefs(
     connection: sqlite3.Connection,
     group_keys: list[str],
+    *,
+    project_access: ProjectAccessContext | None = None,
 ) -> dict[str, str]:
     keys = {trimmed(key) for key in group_keys if trimmed(key)}
     if not keys:
         return {}
-    groups = build_grouped_projects(query_group_rows(connection))
+    groups = build_grouped_projects(query_group_rows(connection, project_access=project_access))
     return {
         group.key: group.detail_href
         for group in groups
@@ -809,6 +1332,8 @@ def paginate_items(
 
 @dataclass(slots=True)
 class GroupedProject:
+    project_id: str | None
+    visibility: str
     key: str
     organization: str
     repository: str
@@ -854,6 +1379,8 @@ def _collect_grouped_projects(
         group = grouped.setdefault(
             project["effective_group_key"],
             {
+                "project_id": project["project_id"],
+                "visibility": project["project_visibility"],
                 "key": project["effective_group_key"],
                 "organization": project["organization"],
                 "repository": project["repository"],
@@ -890,6 +1417,8 @@ def _collect_grouped_projects(
 
     return [
         GroupedProject(
+            project_id=trimmed(group["project_id"]),
+            visibility=normalize_project_visibility(group["visibility"]),
             key=group["key"],
             organization=group["organization"],
             repository=group["repository"],
@@ -982,8 +1511,9 @@ def fetch_group_detail(
     *,
     sessions_page: int = 1,
     sessions_page_size: int = 24,
+    project_access: ProjectAccessContext | None = None,
 ) -> dict[str, Any] | None:
-    matching_rows = query_group_rows_for_key(connection, group_key)
+    matching_rows = query_group_rows_for_key(connection, group_key, project_access=project_access)
     if not matching_rows:
         return None
 
@@ -1200,8 +1730,10 @@ def fetch_group_detail(
 def resolve_project_detail_href(
     connection: sqlite3.Connection,
     group_key: str,
+    *,
+    project_access: ProjectAccessContext | None = None,
 ) -> str:
-    groups = build_grouped_projects(query_group_rows(connection))
+    groups = build_grouped_projects(query_group_rows(connection, project_access=project_access))
     for group in groups:
         if group.key == group_key:
             return group.detail_href
@@ -1212,9 +1744,11 @@ def resolve_group_key_from_detail_path(
     connection: sqlite3.Connection,
     owner_slug: str,
     project_slug: str,
+    *,
+    project_access: ProjectAccessContext | None = None,
 ) -> str | None:
     target = project_detail_href_for_route(owner_slug, project_slug)
-    groups = build_grouped_projects(query_group_rows(connection))
+    groups = build_grouped_projects(query_group_rows(connection, project_access=project_access))
     for group in groups:
         if group.detail_href == target:
             return group.key
