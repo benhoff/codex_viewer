@@ -10,6 +10,7 @@ from ...agents import (
     fetch_pending_remote_actions,
     upsert_remote_agent_status,
 )
+from ...alerts import reconcile_remote_alerts_for_host
 from ...db import connect, write_transaction
 from ...importer import (
     fetch_host_sync_manifest,
@@ -96,6 +97,7 @@ async def sync_heartbeat(request: Request) -> JSONResponse:
                 acknowledged_raw_resend_token=str(payload.get("acknowledged_raw_resend_token") or "") or None,
                 last_raw_resend_at=str(payload.get("last_raw_resend_at") or "") or None,
             )
+            reconcile_remote_alerts_for_host(connection, settings, source_host)
     return JSONResponse({"status": "ok", "source_host": source_host})
 
 

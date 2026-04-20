@@ -51,6 +51,9 @@ from ...saved_turns import (
 )
 from ...server_settings import (
     apply_server_settings,
+    normalize_alert_provider,
+    normalize_alert_realert_minutes,
+    normalize_alert_webhook_url,
     normalize_expected_agent_version,
     normalize_page_size,
     parse_bool_value,
@@ -815,6 +818,17 @@ async def settings_update_server(request: Request) -> HTMLResponse:
             context.settings.app_version,
         )
         sync_on_start = parse_bool_value(fields.get("sync_on_start"), False)
+        alerts_enabled = parse_bool_value(fields.get("alerts_enabled"), False)
+        alerts_provider = normalize_alert_provider(fields.get("alerts_provider", "webhook"))
+        alerts_webhook_url = normalize_alert_webhook_url(
+            fields.get("alerts_webhook_url", ""),
+            alerts_enabled=alerts_enabled,
+            alerts_provider=alerts_provider,
+        )
+        alerts_realert_minutes = normalize_alert_realert_minutes(
+            fields.get("alerts_realert_minutes", "")
+        )
+        alerts_send_resolutions = parse_bool_value(fields.get("alerts_send_resolutions"), False)
         with connect(context.settings.database_path) as connection:
             with write_transaction(connection):
                 snapshot = update_server_settings(
@@ -822,10 +836,20 @@ async def settings_update_server(request: Request) -> HTMLResponse:
                     page_size=page_size,
                     expected_agent_version=expected_agent_version,
                     sync_on_start=sync_on_start,
+                    alerts_enabled=alerts_enabled,
+                    alerts_provider=alerts_provider,
+                    alerts_webhook_url=alerts_webhook_url,
+                    alerts_realert_minutes=alerts_realert_minutes,
+                    alerts_send_resolutions=alerts_send_resolutions,
                 )
         context.settings.page_size = snapshot.page_size
         context.settings.expected_agent_version = snapshot.expected_agent_version
         context.settings.sync_on_start = snapshot.sync_on_start
+        context.settings.alerts_enabled = snapshot.alerts_enabled
+        context.settings.alerts_provider = snapshot.alerts_provider
+        context.settings.alerts_webhook_url = snapshot.alerts_webhook_url
+        context.settings.alerts_realert_minutes = snapshot.alerts_realert_minutes
+        context.settings.alerts_send_resolutions = snapshot.alerts_send_resolutions
     except ValueError as exc:
         return render_settings_page(request, server_settings_error=str(exc))
 

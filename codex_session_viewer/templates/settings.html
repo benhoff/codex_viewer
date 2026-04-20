@@ -35,7 +35,7 @@
         </div>
       {% endif %}
 
-      <div class="mt-5 grid gap-3 sm:grid-cols-3">
+      <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         <div class="rounded-[1.15rem] bg-stone-50 p-4">
           <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Home Page Repo Limit</p>
           <p class="mt-2 text-sm font-semibold text-stone-900">{{ server_settings.page_size }}</p>
@@ -48,9 +48,21 @@
           <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Startup Sync</p>
           <p class="mt-2 text-sm font-semibold text-stone-900">{{ "Enabled" if server_settings.sync_on_start else "Disabled" }}</p>
         </div>
+        <div class="rounded-[1.15rem] bg-stone-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Push Alerts</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900">{{ "Enabled" if server_settings.alerts_enabled else "Disabled" }}</p>
+        </div>
+        <div class="rounded-[1.15rem] bg-stone-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Alert Provider</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900">{{ server_settings.alerts_provider }}</p>
+        </div>
+        <div class="rounded-[1.15rem] bg-stone-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Re-Alert Window</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900">{{ server_settings.alerts_realert_minutes }} min</p>
+        </div>
       </div>
 
-      <form action="/settings/server" method="post" class="mt-5 grid gap-4 lg:grid-cols-3">
+      <form action="/settings/server" method="post" class="mt-5 grid gap-4 xl:grid-cols-2">
         <label class="block">
           <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Home Page Repo Limit</span>
           <input
@@ -71,17 +83,69 @@
             class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
           />
         </label>
-        <label class="flex items-center gap-3 rounded-[1.15rem] bg-stone-50 px-4 py-4 lg:mt-7">
-          <input
-            type="checkbox"
-            name="sync_on_start"
-            value="1"
-            {% if server_settings.sync_on_start %}checked{% endif %}
-            class="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-400"
-          />
-          <span class="text-sm font-medium text-stone-800">Run local sync automatically on server startup</span>
+        <label class="block">
+          <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Alert Provider</span>
+          <select
+            name="alerts_provider"
+            class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+          >
+            <option value="webhook" {% if server_settings.alerts_provider == 'webhook' %}selected{% endif %}>webhook</option>
+          </select>
         </label>
-        <div class="lg:col-span-3">
+        <label class="block xl:col-span-2">
+          <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Alert Webhook URL</span>
+          <input
+            type="url"
+            name="alerts_webhook_url"
+            value="{{ server_settings.alerts_webhook_url or '' }}"
+            placeholder="https://hooks.example.com/services/..."
+            class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+          />
+        </label>
+        <label class="block">
+          <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Re-Alert Window</span>
+          <input
+            type="number"
+            min="1"
+            max="10080"
+            name="alerts_realert_minutes"
+            value="{{ server_settings.alerts_realert_minutes }}"
+            class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+          />
+        </label>
+        <div class="grid gap-3 xl:col-span-2 md:grid-cols-3">
+          <label class="flex items-center gap-3 rounded-[1.15rem] bg-stone-50 px-4 py-4">
+            <input
+              type="checkbox"
+              name="sync_on_start"
+              value="1"
+              {% if server_settings.sync_on_start %}checked{% endif %}
+              class="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-400"
+            />
+            <span class="text-sm font-medium text-stone-800">Run local sync automatically on server startup</span>
+          </label>
+          <label class="flex items-center gap-3 rounded-[1.15rem] bg-stone-50 px-4 py-4">
+            <input
+              type="checkbox"
+              name="alerts_enabled"
+              value="1"
+              {% if server_settings.alerts_enabled %}checked{% endif %}
+              class="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-400"
+            />
+            <span class="text-sm font-medium text-stone-800">Enable push alerts</span>
+          </label>
+          <label class="flex items-center gap-3 rounded-[1.15rem] bg-stone-50 px-4 py-4">
+            <input
+              type="checkbox"
+              name="alerts_send_resolutions"
+              value="1"
+              {% if server_settings.alerts_send_resolutions %}checked{% endif %}
+              class="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-400"
+            />
+            <span class="text-sm font-medium text-stone-800">Send recovery notifications</span>
+          </label>
+        </div>
+        <div class="xl:col-span-2">
           <button
             type="submit"
             class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
