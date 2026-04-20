@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
+from ..command_render import render_command_markup
 from ..markdown_utils import render_markdown
 from ..db import connect
 from ..saved_turns import count_saved_turns, owner_scope_from_request
@@ -40,6 +41,7 @@ def build_templates(app_version: str) -> Jinja2Templates:
     env.filters["humanize_timestamp"] = humanize_timestamp
     env.filters["full_timestamp"] = full_timestamp
     env.filters["render_markdown"] = render_markdown
+    env.filters["render_command_markup"] = render_command_markup
     env.globals["review_queue_open_count"] = review_queue_open_count
     env.globals["static_asset_url"] = (
         lambda request, path: versioned_static_url(request, path, app_version)

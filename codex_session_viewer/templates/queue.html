@@ -99,11 +99,16 @@
                 <input type="hidden" name="turn_number" value="{{ item.turn_number }}" />
                 <input type="hidden" name="return_to" value="{{ queue_return_to }}" />
                 {% if item.status == 'open' %}
-                  <button data-queue-action-button type="submit" name="action" value="resolve" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100">
+                  <input type="hidden" name="action" value="resolve" />
+                {% else %}
+                  <input type="hidden" name="action" value="reopen" />
+                {% endif %}
+                {% if item.status == 'open' %}
+                  <button data-queue-action-button type="submit" data-queue-action="resolve" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100">
                     Resolve
                   </button>
                 {% else %}
-                  <button data-queue-action-button type="submit" name="action" value="reopen" class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100">
+                  <button data-queue-action-button type="submit" data-queue-action="reopen" class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100">
                     Reopen
                   </button>
                 {% endif %}
@@ -194,7 +199,7 @@
 
       async function submitQueueAction(form, button) {
         const formData = new FormData(form);
-        const action = String(button.value || formData.get("action") || "").toLowerCase();
+        const action = String(button.dataset.queueAction || formData.get("action") || "").toLowerCase();
         const item = form.closest("[data-queue-item]");
         button.disabled = true;
         button.classList.add("opacity-60");
@@ -203,13 +208,17 @@
         }
 
         try {
+          const body = new URLSearchParams([...formData.entries()].map(([key, value]) => [key, String(value)]));
+          if (action) {
+            body.set("action", action);
+          }
           const response = await fetch(form.action, {
             method: "POST",
             headers: {
               "Accept": "application/json",
               "x-codex-viewer-fetch": "1"
             },
-            body: new URLSearchParams([...formData.entries()].map(([key, value]) => [key, String(value)]))
+            body
           });
           if (!response.ok) {
             throw new Error("queue action failed");

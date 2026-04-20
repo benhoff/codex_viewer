@@ -4,16 +4,36 @@
 
 {% block content %}
   <div class="mx-auto w-full max-w-5xl">
-    <div class="mb-5 flex flex-wrap gap-2 sm:gap-3">
-      <a href="/" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
-        Back to projects
-      </a>
-      <a href="{{ group_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
-        Back to repo
-      </a>
-      <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
-        Edit repo
-      </a>
+    <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap gap-2 sm:gap-3">
+        <a href="/" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Back to projects
+        </a>
+        <a href="{{ group_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Back to repo
+        </a>
+        <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
+          Edit repo
+        </a>
+      </div>
+      <div data-session-view-toggle-group class="flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/80 p-1 shadow-[0_14px_35px_-24px_rgba(41,37,36,0.35)]">
+        <a
+          href="{{ request.url.path }}?view=conversation"
+          data-session-view-toggle
+          data-target-view="conversation"
+          class="rounded-full px-4 py-2 text-sm font-semibold transition {% if session_view_mode == 'conversation' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}"
+        >
+          Conversation
+        </a>
+        <a
+          href="{{ request.url.path }}?view=audit"
+          data-session-view-toggle
+          data-target-view="audit"
+          class="rounded-full px-4 py-2 text-sm font-semibold transition {% if session_view_mode == 'audit' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}"
+        >
+          Audit
+        </a>
+      </div>
     </div>
 
     <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:mb-8 sm:p-6 lg:p-7">
@@ -52,48 +72,239 @@
       </div>
     </section>
 
+    <div data-session-window-region>
+    {% if session_view_mode == 'audit' %}
+      <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/78 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.28)] backdrop-blur sm:mb-8 sm:p-6">
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Audit Summary</p>
+            <h2 class="mt-2 text-2xl font-semibold text-stone-900">Evidence Ledger</h2>
+            <p class="mt-2 text-sm text-stone-600">
+              Command, patch, verification, and file-change evidence for the current turn window.
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            <a
+              href="{{ request.url.path }}?view=conversation"
+              data-session-view-toggle
+              data-target-view="conversation"
+              class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50"
+            >
+              Back to conversation
+            </a>
+            <div class="flex flex-wrap gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">
+              {% if audit_summary.git_branch %}
+                <span class="rounded-full bg-stone-100 px-3 py-1">Branch: {{ audit_summary.git_branch }}</span>
+              {% endif %}
+              {% if audit_summary.git_commit_hash %}
+                <span class="rounded-full bg-stone-100 px-3 py-1">Commit: {{ audit_summary.git_commit_hash[:10] }}</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div class="rounded-[1.15rem] bg-stone-900 p-4 text-stone-50">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-300">Turns</p>
+            <p class="mt-2 text-2xl font-semibold">{{ audit_summary.turn_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-sky-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-sky-600">Commands</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ audit_summary.command_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-amber-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-amber-600">Patches</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ audit_summary.patch_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-rose-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-rose-600">Failed Commands</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ audit_summary.failed_command_count }}</p>
+          </div>
+        </div>
+
+        <div class="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr),18rem]">
+          <div class="rounded-[1.15rem] border border-stone-200 bg-stone-50/80 p-4">
+            <div class="flex flex-wrap gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">
+              <span class="rounded-full bg-white px-3 py-1">{{ audit_summary.files_touched_count }} files touched</span>
+              <span class="rounded-full bg-white px-3 py-1">{{ audit_summary.verification_count }} verification runs</span>
+              {% if audit_summary.warning_count %}
+                <span class="rounded-full bg-amber-100 px-3 py-1 text-amber-800">{{ audit_summary.warning_count }} warnings</span>
+              {% endif %}
+              <span class="rounded-full bg-white px-3 py-1">{{ audit_summary.aborted_turn_count }} aborted turns</span>
+              {% if audit_summary.started_at %}
+                <span class="rounded-full bg-white px-3 py-1" title="{{ audit_summary.started_at|full_timestamp }}">Started {{ audit_summary.started_at|humanize_timestamp }}</span>
+              {% endif %}
+              {% if audit_summary.ended_at %}
+                <span class="rounded-full bg-white px-3 py-1" title="{{ audit_summary.ended_at|full_timestamp }}">Ended {{ audit_summary.ended_at|humanize_timestamp }}</span>
+              {% endif %}
+            </div>
+          </div>
+          <details class="rounded-[1.15rem] border border-stone-200 bg-stone-50/80 p-4">
+            <summary class="list-none">
+              <span class="inline-flex items-center rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">
+                Files Changed
+              </span>
+            </summary>
+            <div class="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+              {% for path in audit_summary.files_changed %}
+                <div class="rounded-[0.95rem] bg-white px-3 py-2 text-sm text-stone-700">{{ path }}</div>
+              {% else %}
+                <p class="text-sm text-stone-500">No patched files were detected in this session.</p>
+              {% endfor %}
+            </div>
+          </details>
+        </div>
+      </section>
+    {% endif %}
+
     <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
       <div class="mb-5 flex items-center justify-between gap-3">
-        <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Turns</h2>
-        <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ turns|length }} prompt / response pairs</p>
+        <div>
+          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Turns</h2>
+          <p class="mt-1 text-sm text-stone-600">
+            {% if pagination.oldest_turn and pagination.newest_turn %}
+              Showing turns {{ pagination.newest_turn }}-{{ pagination.oldest_turn }} of {{ pagination.total_turns }}
+            {% else %}
+              No turns were indexed for this session.
+            {% endif %}
+          </p>
+        </div>
+        <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ turns|length }} loaded in this view</p>
       </div>
+
+      {% if pagination.total_turns > turns|length and not audit_focus_turn %}
+        <div class="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-[1.2rem] border border-stone-200 bg-stone-50/80 px-4 py-3">
+          <div class="text-sm text-stone-600">
+            {% if session_view_mode == 'audit' %}
+              Audit view loads the newest {{ pagination.window_size }} turns by default.
+            {% else %}
+              Conversation view loads the newest {{ pagination.window_size }} turns by default.
+            {% endif %}
+          </div>
+          <div class="flex flex-wrap gap-2">
+            {% if pagination.has_newer and pagination.newer_href %}
+              <a href="{{ pagination.newer_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                Newer turns
+              </a>
+            {% endif %}
+            {% if pagination.has_older and pagination.older_href %}
+              <a href="{{ pagination.older_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                Older turns
+              </a>
+            {% endif %}
+            {% if pagination.has_newer %}
+              <a href="{{ pagination.latest_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
+                Back to latest
+              </a>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
 
       <div class="space-y-4">
         {% for turn in turns %}
           {% set saved_turn_status = saved_turn_states.get(turn.number) %}
+          {% if session_view_mode == 'audit' and audit_focus_turn == turn.number and audit_focus %}
+            <section class="rounded-[1.2rem] border border-sky-200 bg-sky-50/80 px-4 py-3 shadow-[0_14px_35px_-24px_rgba(14,116,144,0.18)]">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="rounded-full bg-sky-900 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white">Audit view</span>
+                  <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-sky-800">Turn {{ audit_focus.turn_number }}</span>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <a href="{{ audit_focus.back_to_conversation_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                    Back to conversation
+                  </a>
+                  {% if audit_focus.prev_href %}
+                    <a href="{{ audit_focus.prev_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                      Prev
+                    </a>
+                  {% endif %}
+                  {% if audit_focus.next_href %}
+                    <a href="{{ audit_focus.next_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                      Next
+                    </a>
+                  {% endif %}
+                  <a href="{{ audit_focus.full_audit_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-sky-200 bg-sky-100 px-3 py-1.5 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-200">
+                    Show full audit stream
+                  </a>
+                </div>
+              </div>
+            </section>
+          {% endif %}
           <details
-            open
+            {% if session_view_mode == 'conversation' or (session_view_mode == 'audit' and audit_focus_turn == turn.number) %}open{% endif %}
             data-turn-card
             data-turn-number="{{ turn.number }}"
+            data-session-view-mode="{{ session_view_mode }}"
             data-saved-turn-status="{{ saved_turn_status or '' }}"
             class="rounded-[1.35rem] border border-stone-200 bg-stone-50/70 p-4 sm:p-5"
             ontoggle="const badge = this.querySelector('[data-turn-toggle-badge]'); if (badge) { badge.textContent = this.open ? 'Click header to collapse ▾' : 'Click header to expand ▸'; }"
           >
             <summary class="cursor-pointer list-none">
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-50">Turn {{ turn.number }}</span>
-                  {% if turn.work_count %}
-                    <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ turn.work_count }} work items</span>
-                  {% endif %}
+              <div class="space-y-3">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-50">Turn {{ turn.number }}</span>
+                    {% if session_view_mode == 'conversation' and turn.work_count %}
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ turn.work_count }} work items</span>
+                    {% elif session_view_mode == 'audit' %}
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.command_count }} commands</span>
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.patch_count }} patches</span>
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.files_touched_count }} files</span>
+                      <span class="rounded-full {% if turn.audit_verification_verdict.status == 'passed' %}bg-emerald-100 text-emerald-800{% elif turn.audit_verification_verdict.status == 'passed_with_warnings' %}bg-amber-100 text-amber-800{% elif turn.audit_verification_verdict.status == 'failed' %}bg-rose-100 text-rose-800{% else %}bg-stone-100 text-stone-600{% endif %} px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em]">
+                        {{ turn.audit_verification_verdict.label }}
+                      </span>
+                      {% if turn.audit_summary.failure_count %}
+                        <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-800">{{ turn.audit_summary.failure_count }} failures</span>
+                      {% endif %}
+                      {% if turn.audit_summary.warning_count %}
+                        <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">{{ turn.audit_summary.warning_count }} warnings</span>
+                      {% endif %}
+                      {% if turn.audit_summary.canceled %}
+                        <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Canceled</span>
+                      {% endif %}
+                      {% if turn.duration_label %}
+                        <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">{{ turn.duration_label }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span
+                      data-review-status-badge
+                      class="{% if saved_turn_status %}inline-flex{% else %}hidden{% endif %} rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if saved_turn_status == 'open' %}bg-amber-100 text-amber-800{% else %}bg-emerald-100 text-emerald-800{% endif %}"
+                    >
+                      {% if saved_turn_status == 'open' %}Saved{% elif saved_turn_status == 'resolved' %}Resolved{% endif %}
+                    </span>
+                    {% if turn.prompt_timestamp %}
+                      <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ turn.prompt_timestamp|full_timestamp }}">{{ turn.prompt_timestamp|humanize_timestamp }}</p>
+                    {% endif %}
+                    <span data-turn-toggle-badge class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{% if session_view_mode == 'conversation' %}Click header to collapse ▾{% else %}Click header to expand ▸{% endif %}</span>
+                  </div>
                 </div>
-                <div class="flex flex-wrap items-center gap-2">
-                  <span
-                    data-review-status-badge
-                    class="{% if saved_turn_status %}inline-flex{% else %}hidden{% endif %} rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if saved_turn_status == 'open' %}bg-amber-100 text-amber-800{% else %}bg-emerald-100 text-emerald-800{% endif %}"
-                  >
-                    {% if saved_turn_status == 'open' %}Saved{% elif saved_turn_status == 'resolved' %}Resolved{% endif %}
-                  </span>
-                  {% if turn.prompt_timestamp %}
-                    <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ turn.prompt_timestamp|full_timestamp }}">{{ turn.prompt_timestamp|humanize_timestamp }}</p>
-                  {% endif %}
-                  <span data-turn-toggle-badge class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Click header to collapse ▾</span>
-                </div>
+                {% if session_view_mode == 'audit' and turn.audit_phase_strip %}
+                  <div class="flex flex-wrap items-center gap-2">
+                    {% for phase in turn.audit_phase_strip %}
+                      <span class="rounded-full {% if phase.tone == 'amber' %}bg-amber-100 text-amber-800{% elif phase.tone == 'sky' %}bg-sky-100 text-sky-800{% elif phase.tone == 'violet' %}bg-violet-100 text-violet-800{% elif phase.tone == 'emerald' %}bg-emerald-100 text-emerald-800{% else %}bg-stone-100 text-stone-700{% endif %} px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]">
+                        {{ phase.label }} · {{ phase.count }}
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
               </div>
             </summary>
 
             <div class="mt-5 space-y-4">
               <div class="flex flex-wrap items-center justify-end gap-2">
+                {% if session_view_mode == 'conversation' %}
+                  <a
+                    href="{{ request.url.path }}?view=audit&turn={{ turn.number }}&focus=1"
+                    data-session-window-link
+                    class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100"
+                  >
+                    Audit this turn
+                  </a>
+                {% endif %}
                 <button
                   type="button"
                   data-review-action-button
@@ -111,6 +322,7 @@
                 </button>
               </div>
 
+              {% if session_view_mode == 'conversation' %}
               <div class="rounded-[1.2rem] border border-rose-200 bg-rose-50/90 p-4">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                   <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-rose-700">Full Prompt</p>
@@ -256,8 +468,477 @@
                   </button>
                 </div>
               </div>
+              {% else %}
+              <div class="space-y-4">
+                <section class="rounded-[1.2rem] border border-stone-200 bg-white/85 p-4">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Prompt</p>
+                    {% if turn.prompt_timestamp %}
+                      <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ turn.prompt_timestamp|full_timestamp }}">{{ turn.prompt_timestamp|humanize_timestamp }}</span>
+                    {% endif %}
+                  </div>
+                  <div class="mt-3 space-y-3">
+                    {% if turn.prompt_segments %}
+                      {% for segment in turn.prompt_segments %}
+                        {% if segment.kind == 'text' %}
+                          <pre class="overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ segment.text }}</pre>
+                        {% else %}
+                          <details class="rounded-[1rem] border border-stone-200 bg-stone-50/85 p-3">
+                            <summary class="list-none">
+                              <span class="inline-flex cursor-pointer items-center rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700 transition hover:bg-stone-50">
+                                Show large block ({{ "{:,}".format(segment.char_count) }} chars)
+                              </span>
+                            </summary>
+                            <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ segment.text }}</pre>
+                          </details>
+                        {% endif %}
+                      {% endfor %}
+                    {% else %}
+                      <pre class="overflow-x-auto whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ turn.prompt_text }}</pre>
+                    {% endif %}
+                  </div>
+                  <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-stone-200 pt-3 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-600">
+                    {% if turn.agent_model %}
+                      <span class="rounded-full bg-stone-100 px-3 py-1">{{ turn.agent_model }}</span>
+                    {% endif %}
+                    {% if turn.agent_effort %}
+                      <span class="rounded-full bg-stone-100 px-3 py-1">Level: {{ turn.agent_effort }}</span>
+                    {% endif %}
+                  </div>
+                </section>
+
+                {% if turn.audit_plan_events %}
+                  <details class="rounded-[1.2rem] border border-amber-200 bg-amber-50/70 p-4">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Plan</span>
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_plan_events|length }} update{% if turn.audit_plan_events|length != 1 %}s{% endif %}</span>
+                      </div>
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expand</span>
+                    </summary>
+                    <div class="mt-4 space-y-3">
+                      {% for event in turn.audit_plan_events %}
+                        <article class="rounded-[1rem] border border-amber-200/80 bg-white/90 p-4">
+                          <div class="flex flex-wrap items-center justify-between gap-3">
+                            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-700">Plan update</p>
+                            {% if event.timestamp %}
+                              <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ event.timestamp|full_timestamp }}">{{ event.timestamp|humanize_timestamp }}</span>
+                            {% endif %}
+                          </div>
+                          {% if event.plan_diff and event.has_plan_diff %}
+                            <div class="mt-3 flex flex-wrap gap-2">
+                              {% for step in event.plan_diff.added %}
+                                <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-sky-800">Added: {{ step }}</span>
+                              {% endfor %}
+                              {% for step in event.plan_diff.completed %}
+                                <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">Completed: {{ step }}</span>
+                              {% endfor %}
+                              {% for step in event.plan_diff.in_progress %}
+                                <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-amber-800">In progress: {{ step }}</span>
+                              {% endfor %}
+                              {% for step in event.plan_diff.removed %}
+                                <span class="rounded-full bg-stone-200 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">Removed: {{ step }}</span>
+                              {% endfor %}
+                            </div>
+                          {% endif %}
+                          {% if event.plan_explanation %}
+                            <p class="mt-3 text-[0.95rem] leading-6 text-stone-800">{{ event.plan_explanation }}</p>
+                          {% endif %}
+                          {% if event.plan_steps %}
+                            <div class="mt-4 space-y-2">
+                              {% for step in event.plan_steps %}
+                                <div class="flex items-start gap-3 rounded-[0.95rem] bg-stone-50 px-3 py-3">
+                                  <span class="mt-0.5 rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] {% if step.status == 'completed' %}bg-emerald-100 text-emerald-700{% elif step.status == 'in_progress' %}bg-amber-100 text-amber-700{% elif step.status == 'pending' %}bg-stone-200 text-stone-700{% else %}bg-sky-100 text-sky-700{% endif %}">
+                                    {{ step.status_label }}
+                                  </span>
+                                  <p class="min-w-0 flex-1 text-[0.94rem] leading-6 text-stone-800">{{ step.step }}</p>
+                                </div>
+                              {% endfor %}
+                            </div>
+                          {% endif %}
+                        </article>
+                      {% endfor %}
+                    </div>
+                  </details>
+                {% endif %}
+
+                <details id="turn-{{ turn.number }}-commands" class="rounded-[1.2rem] border border-sky-200 bg-sky-50/70 p-4">
+                  <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-sky-800">Commands</span>
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.command_count }}</span>
+                    </div>
+                    <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expand</span>
+                  </summary>
+                  <div class="mt-4 space-y-3">
+                    {% for event in turn.audit_command_events %}
+                      <article id="turn-{{ turn.number }}-commands-{{ loop.index }}" class="rounded-[1rem] border p-4 {% if event.has_failure %}border-rose-200 bg-rose-50/70{% else %}border-sky-200 bg-white/90{% endif %}">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-sky-800">{{ event.primary_command_label or event.title }}</span>
+                            {% if event.command_intent == 'inspect' %}
+                              <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">Inspect</span>
+                            {% elif event.command_intent == 'mutate' %}
+                              <span class="rounded-full bg-violet-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-violet-800">Mutate</span>
+                            {% endif %}
+                            {% if event.verification_kind %}
+                              <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-emerald-800">{{ event.verification_kind }}</span>
+                            {% endif %}
+                            {% if event.exit_code is not none %}
+                              <span class="rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if event.exit_code == 0 %}bg-emerald-100 text-emerald-800{% else %}bg-rose-100 text-rose-800{% endif %}">
+                                exit {{ event.exit_code }}
+                              </span>
+                            {% endif %}
+                            {% if event.warning_count %}
+                              <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">{{ event.warning_count }} warnings</span>
+                            {% endif %}
+                            {% if event.duration_label %}
+                              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ event.duration_label }}</span>
+                            {% endif %}
+                          </div>
+                          {% if event.timestamp %}
+                            <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ event.timestamp|full_timestamp }}">{{ event.timestamp|humanize_timestamp }}</span>
+                          {% endif %}
+                        </div>
+                        {% if event.cwd_display %}
+                          <p class="mt-3 text-[0.78rem] font-medium text-stone-500">cwd <span class="font-mono text-[0.8rem] text-stone-600">{{ event.cwd_display }}</span></p>
+                        {% endif %}
+                        {% if event.command_wrapper %}
+                          <p class="mt-3 text-[0.78rem] font-medium text-stone-500">via <span class="font-mono text-[0.8rem] text-stone-600">{{ event.command_wrapper }}</span></p>
+                        {% endif %}
+                        {% if event.display_command_text or event.command_text %}
+                          <div class="mt-3">{{ (event.display_command_text or event.command_text)|render_command_markup }}</div>
+                        {% elif event.summary_text %}
+                          <p class="mt-3 text-[0.95rem] leading-6 text-stone-800">{{ event.summary_text }}</p>
+                        {% endif %}
+                        {% if event.warning_lines %}
+                          <div class="mt-3 rounded-[0.95rem] border border-amber-200 bg-amber-50/80 p-3">
+                            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Warnings</p>
+                            <div class="mt-2 space-y-2">
+                              {% for line in event.warning_lines %}
+                                <p class="text-sm leading-6 text-amber-900">{{ line }}</p>
+                              {% endfor %}
+                            </div>
+                          </div>
+                        {% endif %}
+                        {% if event.output_text %}
+                          <details class="mt-3 rounded-[0.95rem] bg-white/80 p-3 text-sm text-stone-700">
+                            <summary class="cursor-pointer font-semibold text-stone-700">
+                              {% if event.output_preview_truncated %}Show output{% else %}Show detail{% endif %}
+                            </summary>
+                            {% if event.output_preview %}
+                              <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.9rem] leading-6 text-stone-700">{{ event.output_preview }}</pre>
+                            {% endif %}
+                            {% if event.output_preview_truncated %}
+                              <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.9rem] leading-6 text-stone-700">{{ event.output_text }}</pre>
+                            {% endif %}
+                          </details>
+                        {% endif %}
+                      </article>
+                    {% else %}
+                      <div class="rounded-[1rem] border border-dashed border-sky-200 bg-white/80 px-4 py-4 text-sm text-stone-600">
+                        No commands were recorded for this turn.
+                      </div>
+                    {% endfor %}
+                  </div>
+                </details>
+
+                <details id="turn-{{ turn.number }}-patches" class="rounded-[1.2rem] border border-amber-200 bg-amber-50/70 p-4">
+                  <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Patches</span>
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.patch_count }}</span>
+                    </div>
+                    <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expand</span>
+                  </summary>
+                  <div class="mt-4 space-y-3">
+                    {% for event in turn.audit_patch_events %}
+                      <article id="turn-{{ turn.number }}-patches-{{ loop.index }}" class="rounded-[1rem] border border-amber-200 bg-white/90 p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Patch</span>
+                            <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ event.patch_file_count or 0 }} files</span>
+                          </div>
+                          {% if event.timestamp %}
+                            <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ event.timestamp|full_timestamp }}">{{ event.timestamp|humanize_timestamp }}</span>
+                          {% endif %}
+                        </div>
+                        <div class="mt-3 flex flex-wrap gap-2">
+                          {% for file in event.patch_files %}
+                            <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ file.operation }} · {{ file.path }}</span>
+                          {% else %}
+                            <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">No file metadata</span>
+                          {% endfor %}
+                        </div>
+                        {% if event.patch_manifest %}
+                          <div class="mt-3 grid gap-2 sm:grid-cols-2">
+                            {% for file in event.patch_manifest %}
+                              <div class="rounded-[0.95rem] border border-amber-200/80 bg-amber-50/50 p-3">
+                                <div class="flex flex-wrap items-center gap-2">
+                                  <span class="rounded-full bg-white px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-amber-800">{{ file.operation }}</span>
+                                  {% if file.move_path %}
+                                    <span class="rounded-full bg-white px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-600">move → {{ file.move_path }}</span>
+                                  {% endif %}
+                                </div>
+                                <p class="mt-2 break-all font-mono text-[0.84rem] leading-6 text-stone-800">{{ file.path }}</p>
+                                <div class="mt-2 flex flex-wrap gap-2 text-[0.66rem] font-semibold uppercase tracking-[0.16em]">
+                                  <span class="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-800">+{{ file.additions }}</span>
+                                  <span class="rounded-full bg-rose-100 px-2.5 py-1 text-rose-800">-{{ file.deletions }}</span>
+                                  <span class="rounded-full bg-white px-2.5 py-1 text-stone-700">{{ file.hunks }} hunks</span>
+                                </div>
+                              </div>
+                            {% endfor %}
+                          </div>
+                        {% endif %}
+                        {% if event.patch_diff_lines or event.tool_output_text or event.patch_metadata_text %}
+                          <details class="mt-3 rounded-[0.95rem] bg-white/80 p-3 text-sm text-stone-700">
+                            <summary class="cursor-pointer font-semibold text-stone-700">Show patch diff</summary>
+                            {% if event.patch_diff_lines %}
+                              <div class="mt-3 overflow-x-auto rounded-[0.95rem] border border-stone-200 bg-stone-950/95">
+                                <div class="min-w-full divide-y divide-stone-800/80">
+                                  {% for line in event.patch_diff_lines %}
+                                    {% if line.kind == 'addition' %}
+                                      <div class="grid grid-cols-[1.75rem_minmax(0,1fr)] bg-emerald-950/80 text-emerald-100">
+                                        <span class="border-r border-emerald-900/80 px-2 py-1 text-center font-mono text-[0.82rem] leading-6 text-emerald-300">+</span>
+                                        <pre class="overflow-x-auto whitespace-pre-wrap break-words px-3 py-1 text-[0.84rem] leading-6">{{ line.content }}</pre>
+                                      </div>
+                                    {% elif line.kind == 'deletion' %}
+                                      <div class="grid grid-cols-[1.75rem_minmax(0,1fr)] bg-rose-950/80 text-rose-100">
+                                        <span class="border-r border-rose-900/80 px-2 py-1 text-center font-mono text-[0.82rem] leading-6 text-rose-300">-</span>
+                                        <pre class="overflow-x-auto whitespace-pre-wrap break-words px-3 py-1 text-[0.84rem] leading-6">{{ line.content }}</pre>
+                                      </div>
+                                    {% elif line.kind == 'hunk' %}
+                                      <div class="bg-sky-950/80 px-3 py-1 font-mono text-[0.82rem] leading-6 text-sky-200">{{ line.rendered }}</div>
+                                    {% elif line.kind == 'file_header' %}
+                                      <div class="bg-amber-950/70 px-3 py-1 font-mono text-[0.82rem] leading-6 text-amber-200">{{ line.rendered }}</div>
+                                    {% elif line.kind == 'boundary' %}
+                                      <div class="bg-stone-900/90 px-3 py-1 font-mono text-[0.8rem] leading-6 text-stone-300">{{ line.rendered }}</div>
+                                    {% elif line.kind == 'context' %}
+                                      <div class="grid grid-cols-[1.75rem_minmax(0,1fr)] bg-stone-950/95 text-stone-200">
+                                        <span class="border-r border-stone-800/80 px-2 py-1 text-center font-mono text-[0.82rem] leading-6 text-stone-600">&nbsp;</span>
+                                        <pre class="overflow-x-auto whitespace-pre-wrap break-words px-3 py-1 text-[0.84rem] leading-6">{{ line.content }}</pre>
+                                      </div>
+                                    {% else %}
+                                      <div class="bg-stone-950/95 px-3 py-1 font-mono text-[0.82rem] leading-6 text-stone-200">{{ line.rendered }}</div>
+                                    {% endif %}
+                                  {% endfor %}
+                                </div>
+                              </div>
+                            {% endif %}
+                            {% if event.tool_output_text %}
+                              <details class="mt-3 rounded-[0.85rem] bg-white/80 p-3 text-sm text-stone-700">
+                                <summary class="cursor-pointer font-semibold text-stone-700">Show patch tool output</summary>
+                                <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.9rem] leading-6 text-stone-700">{{ event.tool_output_text }}</pre>
+                              </details>
+                            {% endif %}
+                            {% if event.patch_metadata_text and not event.patch_diff_lines %}
+                              <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.9rem] leading-6 text-stone-700">{{ event.patch_metadata_text }}</pre>
+                            {% endif %}
+                          </details>
+                        {% endif %}
+                      </article>
+                    {% else %}
+                      <div class="rounded-[1rem] border border-dashed border-amber-200 bg-white/80 px-4 py-4 text-sm text-stone-600">
+                        No patches were applied during this turn.
+                      </div>
+                    {% endfor %}
+                  </div>
+                </details>
+
+                <section id="turn-{{ turn.number }}-files" class="rounded-[1.2rem] border border-violet-200 bg-violet-50/70 p-4">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-violet-800">Files Changed</span>
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.files_touched_count }}</span>
+                    </div>
+                    <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Applied change manifest</span>
+                  </div>
+                  <div class="mt-4 space-y-2">
+                    {% for file in turn.audit_file_manifest %}
+                      <div class="rounded-[0.95rem] border border-violet-200/80 bg-white/90 px-4 py-3">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                          <p class="break-all font-mono text-[0.84rem] leading-6 text-stone-800">{{ file.path }}</p>
+                          <div class="flex flex-wrap gap-2 text-[0.66rem] font-semibold uppercase tracking-[0.16em]">
+                            <span class="rounded-full bg-white px-2.5 py-1 text-stone-700">{{ file.operations }}</span>
+                            <span class="rounded-full bg-white px-2.5 py-1 text-stone-700">{{ file.touches }} touches</span>
+                            <span class="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-800">+{{ file.additions }}</span>
+                            <span class="rounded-full bg-rose-100 px-2.5 py-1 text-rose-800">-{{ file.deletions }}</span>
+                            <span class="rounded-full bg-white px-2.5 py-1 text-stone-700">{{ file.hunks }} hunks</span>
+                          </div>
+                        </div>
+                      </div>
+                    {% else %}
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">No file edits detected</span>
+                    {% endfor %}
+                  </div>
+                </section>
+
+                <details id="turn-{{ turn.number }}-verification" class="rounded-[1.2rem] border border-emerald-200 bg-emerald-50/70 p-4">
+                  <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-emerald-800">Verification</span>
+                      {% if turn.audit_verification_verdict.status == 'passed' %}
+                        <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-emerald-800">Passed</span>
+                      {% elif turn.audit_verification_verdict.status == 'passed_with_warnings' %}
+                        <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Passed with warnings</span>
+                      {% elif turn.audit_verification_verdict.status == 'failed' %}
+                        <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-800">Failed</span>
+                      {% else %}
+                        <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">None</span>
+                      {% endif %}
+                      {% if turn.audit_verification_verdict.warning_count %}
+                        <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">{{ turn.audit_verification_verdict.warning_count }} warnings</span>
+                      {% endif %}
+                    </div>
+                    <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expand</span>
+                  </summary>
+                  <div class="mt-4 space-y-3">
+                    {% for event in turn.audit_verification_commands %}
+                      <article id="turn-{{ turn.number }}-verification-{{ loop.index }}" class="rounded-[1rem] border p-4 {% if event.exit_code == 0 %}border-emerald-200 bg-white/90{% else %}border-rose-200 bg-rose-50/70{% endif %}">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-sky-800">{{ event.primary_command_label or event.title }}</span>
+                            <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-emerald-800">{{ event.verification_kind }}</span>
+                            {% if event.exit_code is not none %}
+                              <span class="rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if event.exit_code == 0 %}bg-emerald-100 text-emerald-800{% else %}bg-rose-100 text-rose-800{% endif %}">
+                                exit {{ event.exit_code }}
+                              </span>
+                            {% endif %}
+                            {% if event.warning_count %}
+                              <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">{{ event.warning_count }} warnings</span>
+                            {% endif %}
+                            {% if event.duration_label %}
+                              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ event.duration_label }}</span>
+                            {% endif %}
+                          </div>
+                          {% if event.timestamp %}
+                            <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ event.timestamp|full_timestamp }}">{{ event.timestamp|humanize_timestamp }}</span>
+                          {% endif %}
+                        </div>
+                        {% if event.cwd_display %}
+                          <p class="mt-3 text-[0.78rem] font-medium text-stone-500">cwd <span class="font-mono text-[0.8rem] text-stone-600">{{ event.cwd_display }}</span></p>
+                        {% endif %}
+                        {% if event.command_wrapper %}
+                          <p class="mt-3 text-[0.78rem] font-medium text-stone-500">via <span class="font-mono text-[0.8rem] text-stone-600">{{ event.command_wrapper }}</span></p>
+                        {% endif %}
+                        {% if event.display_command_text or event.command_text %}
+                          <div class="mt-3">{{ (event.display_command_text or event.command_text)|render_command_markup }}</div>
+                        {% endif %}
+                        {% if event.warning_lines %}
+                          <div class="mt-3 rounded-[0.95rem] border border-amber-200 bg-amber-50/80 p-3">
+                            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Warnings</p>
+                            <div class="mt-2 space-y-2">
+                              {% for line in event.warning_lines %}
+                                <p class="text-sm leading-6 text-amber-900">{{ line }}</p>
+                              {% endfor %}
+                            </div>
+                          </div>
+                        {% endif %}
+                        {% if event.output_text %}
+                          <details class="mt-3 rounded-[0.95rem] bg-white/80 p-3 text-sm text-stone-700">
+                            <summary class="cursor-pointer font-semibold text-stone-700">Show output</summary>
+                            <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.9rem] leading-6 text-stone-700">{{ event.output_text }}</pre>
+                          </details>
+                        {% endif %}
+                      </article>
+                    {% else %}
+                      <div class="rounded-[1rem] border border-dashed border-emerald-200 bg-white/80 px-4 py-4 text-sm text-stone-600">
+                        No test, lint, check, or build verification commands were detected in this turn.
+                      </div>
+                    {% endfor %}
+                  </div>
+                </details>
+
+                {% if turn.audit_assistant_updates %}
+                  <details class="rounded-[1.2rem] border border-stone-200 bg-white/85 p-4">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">Decision Trail</span>
+                        <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_assistant_updates|length }} updates</span>
+                      </div>
+                      <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expand</span>
+                    </summary>
+                    <div class="mt-4 space-y-3">
+                      {% for event in turn.audit_assistant_updates %}
+                        {% include "_work_event.html" %}
+                      {% endfor %}
+                    </div>
+                  </details>
+                {% endif %}
+
+                <section class="rounded-[1.2rem] border p-4 {% if turn.response_state == 'canceled' %}border-amber-200 bg-amber-50/90{% elif turn.response_state == 'update' %}border-sky-200 bg-sky-50/90{% else %}border-emerald-200 bg-emerald-50/90{% endif %}">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">
+                      {% if turn.response_state == 'canceled' %}
+                        Turn Outcome
+                      {% elif turn.response_state == 'update' %}
+                        Latest Update
+                      {% else %}
+                        Final Response
+                      {% endif %}
+                    </p>
+                    {% if turn.response_timestamp %}
+                      <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] {% if turn.response_state == 'canceled' %}text-amber-700{% elif turn.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}" title="{{ turn.response_timestamp|full_timestamp }}">{{ turn.response_timestamp|humanize_timestamp }}</span>
+                    {% endif %}
+                  </div>
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    {% if turn.audit_summary.command_count %}
+                      <a href="#turn-{{ turn.number }}-commands" class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ turn.audit_summary.command_count }} commands</a>
+                    {% else %}
+                      <span class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">0 commands</span>
+                    {% endif %}
+                    {% if turn.audit_summary.patch_count %}
+                      <a href="#turn-{{ turn.number }}-patches" class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ turn.audit_summary.patch_count }} patches</a>
+                    {% else %}
+                      <span class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">0 patches</span>
+                    {% endif %}
+                    {% if turn.audit_summary.verification_count %}
+                      <a href="#turn-{{ turn.number }}-verification" class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ turn.audit_verification_verdict.label }}</a>
+                    {% else %}
+                      <span class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">No verification</span>
+                    {% endif %}
+                    {% if turn.audit_summary.files_touched_count %}
+                      <a href="#turn-{{ turn.number }}-files" class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ turn.audit_summary.files_touched_count }} files</a>
+                    {% endif %}
+                    {% if turn.audit_summary.warning_count %}
+                      <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-amber-800">{{ turn.audit_summary.warning_count }} warnings</span>
+                    {% endif %}
+                  </div>
+                  {% if turn.response_text %}
+                    {% if turn.response_state == 'canceled' %}
+                      <p class="mt-3 text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ turn.response_text }}</p>
+                    {% else %}
+                      <div class="rendered-markdown mt-3">{{ turn.response_text|render_markdown }}</div>
+                    {% endif %}
+                  {% else %}
+                    <p class="mt-3 text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">No assistant response captured.</p>
+                  {% endif %}
+                  {% if turn.audit_response_evidence.links or turn.audit_response_evidence.warnings %}
+                    <div class="mt-4 space-y-3 rounded-[1rem] border border-white/70 bg-white/70 p-4">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">Supporting evidence</span>
+                        {% for link in turn.audit_response_evidence.links %}
+                          <a href="{{ link.href }}" class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ link.label }}</a>
+                        {% endfor %}
+                      </div>
+                      {% if turn.audit_response_evidence.warnings %}
+                        <div class="rounded-[0.95rem] border border-amber-200 bg-amber-50/80 p-3">
+                          <p class="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Evidence gaps</p>
+                          <div class="mt-2 space-y-2">
+                            {% for warning in turn.audit_response_evidence.warnings %}
+                              <p class="text-sm leading-6 text-amber-900">{{ warning }}</p>
+                            {% endfor %}
+                          </div>
+                        </div>
+                      {% endif %}
+                    </div>
+                  {% endif %}
+                </section>
+              </div>
+              {% endif %}
 
               {% if turn.detail_entries %}
+                {% if session_view_mode == 'conversation' %}
                 <div class="space-y-3">
                   <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Work Log</p>
                   {% for entry in turn.detail_entries %}
@@ -286,6 +967,7 @@
                     {% endif %}
                   {% endfor %}
                 </div>
+                {% endif %}
               {% endif %}
 
               <div class="flex justify-end border-t border-stone-200/80 pt-3">
@@ -305,7 +987,35 @@
           </div>
         {% endfor %}
       </div>
+
+      {% if pagination.total_turns > turns|length %}
+        <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-stone-200/80 pt-4">
+          <div class="text-sm text-stone-600">
+            {% if pagination.oldest_turn and pagination.newest_turn %}
+              Turns {{ pagination.newest_turn }}-{{ pagination.oldest_turn }} of {{ pagination.total_turns }}
+            {% endif %}
+          </div>
+          <div class="flex flex-wrap gap-2">
+            {% if pagination.has_newer and pagination.newer_href %}
+              <a href="{{ pagination.newer_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                Newer turns
+              </a>
+            {% endif %}
+            {% if pagination.has_older and pagination.older_href %}
+              <a href="{{ pagination.older_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                Older turns
+              </a>
+            {% endif %}
+            {% if pagination.has_newer %}
+              <a href="{{ pagination.latest_href }}" data-session-window-link class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
+                Back to latest
+              </a>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
     </section>
+    </div>
   </div>
 {% endblock %}
 
@@ -314,9 +1024,42 @@
   <script>
     (() => {
       const sessionId = "{{ session.id }}";
-      const sessionViewKey = "codex-session-view:{{ session.id }}";
-      const turnCards = Array.from(document.querySelectorAll("[data-turn-card]"));
+      let currentMode = "{{ session_view_mode }}";
+      const sessionModePreferenceKey = "codex-session-mode-preference";
       let scrollTicking = false;
+
+      function sessionViewKey() {
+        return `codex-session-view:${sessionId}:${currentMode}`;
+      }
+
+      function normalizeSessionMode(mode) {
+        return mode === "audit" ? "audit" : "conversation";
+      }
+
+      function modeFromUrl(urlLike) {
+        const url = new URL(urlLike, window.location.origin);
+        return normalizeSessionMode(url.searchParams.get("view"));
+      }
+
+      function focusedAuditTurnFromUrl(urlLike = window.location.href) {
+        const url = new URL(urlLike, window.location.origin);
+        if (modeFromUrl(url) !== "audit" || url.searchParams.get("focus") !== "1") {
+          return "";
+        }
+        return url.searchParams.get("turn") || "";
+      }
+
+      function sessionViewToggleGroup() {
+        return document.querySelector("[data-session-view-toggle-group]");
+      }
+
+      function sessionWindowRegion() {
+        return document.querySelector("[data-session-window-region]");
+      }
+
+      function turnCards() {
+        return Array.from(document.querySelectorAll("[data-turn-card]"));
+      }
 
       function turnScrollOffset() {
         const nav = document.querySelector("nav.sticky");
@@ -413,7 +1156,7 @@
 
       function readSessionViewState() {
         try {
-          const raw = window.sessionStorage.getItem(sessionViewKey);
+          const raw = window.sessionStorage.getItem(sessionViewKey());
           if (!raw) {
             return null;
           }
@@ -453,7 +1196,7 @@
 
       function collectTurnOpenState() {
         const openTurns = {};
-        for (const turn of turnCards) {
+        for (const turn of turnCards()) {
           const turnNumber = turn.dataset.turnNumber;
           if (!turnNumber) {
             continue;
@@ -465,17 +1208,17 @@
 
       function closestVisibleTurn() {
         const offset = turnScrollOffset();
-        for (const turn of turnCards) {
+        for (const turn of turnCards()) {
           const rect = turn.getBoundingClientRect();
           if (rect.bottom > offset + 8) {
             return turn;
           }
         }
-        return turnCards[0] || null;
+        return turnCards()[0] || null;
       }
 
       function writeSessionViewState(preferredTurn) {
-        if (!turnCards.length) {
+        if (!turnCards().length) {
           return;
         }
         const activeTurn = preferredTurn || closestVisibleTurn();
@@ -484,10 +1227,49 @@
           openTurns: collectTurnOpenState()
         };
         try {
-          window.sessionStorage.setItem(sessionViewKey, JSON.stringify(payload));
+          window.sessionStorage.setItem(sessionViewKey(), JSON.stringify(payload));
         } catch (_error) {
           // Ignore storage failures and keep the page usable.
         }
+      }
+
+      function explicitViewParam() {
+        const params = new URLSearchParams(window.location.search);
+        const raw = params.get("view");
+        return raw === "audit" || raw === "conversation" ? raw : "";
+      }
+
+      function preferredSessionMode() {
+        try {
+          const stored = window.localStorage.getItem(sessionModePreferenceKey);
+          return stored === "audit" || stored === "conversation" ? stored : "";
+        } catch (_error) {
+          return "";
+        }
+      }
+
+      function persistSessionMode(mode) {
+        if (mode !== "audit" && mode !== "conversation") {
+          return;
+        }
+        try {
+          window.localStorage.setItem(sessionModePreferenceKey, mode);
+        } catch (_error) {
+          // Ignore storage failures and keep the page usable.
+        }
+      }
+
+      function buildSessionModeUrl(targetMode, preferredTurnNumber) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("view", normalizeSessionMode(targetMode));
+        url.searchParams.delete("before_turn");
+        url.searchParams.delete("focus");
+        if (preferredTurnNumber) {
+          url.searchParams.set("turn", String(preferredTurnNumber));
+        } else {
+          url.searchParams.delete("turn");
+        }
+        return url.toString();
       }
 
       function scrollTurnIntoPlace(turn, behavior) {
@@ -501,12 +1283,28 @@
         });
       }
 
+      function applyFocusedAuditState(focusedTurnNumber) {
+        if (!focusedTurnNumber) {
+          return null;
+        }
+        let targetTurn = null;
+        for (const turn of turnCards()) {
+          const isTarget = turn.dataset.turnNumber === String(focusedTurnNumber);
+          turn.open = isTarget;
+          if (isTarget) {
+            targetTurn = turn;
+          }
+        }
+        return targetTurn;
+      }
+
       function restoreSessionViewState() {
         const explicitTurn = new URLSearchParams(window.location.search).get("turn");
+        const focusedAuditTurn = focusedAuditTurnFromUrl();
         const shouldRestoreStoredView = ["reload", "back_forward"].includes(navigationType());
         const state = shouldRestoreStoredView ? readSessionViewState() : null;
-        if (state && state.openTurns) {
-          for (const turn of turnCards) {
+        if (!focusedAuditTurn && state && state.openTurns) {
+          for (const turn of turnCards()) {
             const turnNumber = turn.dataset.turnNumber;
             if (!turnNumber || !(turnNumber in state.openTurns)) {
               continue;
@@ -515,20 +1313,174 @@
           }
         }
         let targetTurnNumber = explicitTurn || (state && state.activeTurn) || "";
-        const activeTurn = turnCards.find((turn) => turn.dataset.turnNumber === String(targetTurnNumber));
+        let activeTurn = null;
+        if (focusedAuditTurn) {
+          activeTurn = applyFocusedAuditState(focusedAuditTurn);
+          targetTurnNumber = focusedAuditTurn;
+        } else {
+          activeTurn = turnCards().find((turn) => turn.dataset.turnNumber === String(targetTurnNumber));
+        }
         if (activeTurn) {
           activeTurn.open = true;
           requestAnimationFrame(() => {
             scrollTurnIntoPlace(activeTurn, "auto");
-            if (explicitTurn) {
+            if (explicitTurn || focusedAuditTurn) {
               flashCollapsedTurn(activeTurn);
             }
           });
-          if (explicitTurn) {
+          if (explicitTurn || focusedAuditTurn) {
             writeSessionViewState(activeTurn);
           }
         }
       }
+
+      function initializeTurnCards() {
+        for (const turn of turnCards()) {
+          if (turn.dataset.stateBound === "1") {
+            continue;
+          }
+          turn.dataset.stateBound = "1";
+          turn.addEventListener("toggle", () => {
+            writeSessionViewState(turn);
+          });
+        }
+      }
+
+      function initializePrevResponseHover() {
+        document.querySelectorAll("[data-prev-response-hover]").forEach((container) => {
+          if (container.dataset.hoverBound === "1") {
+            return;
+          }
+          const panel = container.querySelector("[data-prev-response-panel]");
+          if (!panel || !window.matchMedia("(hover: hover)").matches) {
+            return;
+          }
+          container.dataset.hoverBound = "1";
+          const show = () => {
+            panel.classList.remove("pointer-events-none", "invisible", "opacity-0");
+          };
+          const hide = () => {
+            panel.classList.add("pointer-events-none", "invisible", "opacity-0");
+          };
+          container.addEventListener("mouseenter", show);
+          container.addEventListener("mouseleave", hide);
+          container.addEventListener("focusin", show);
+          container.addEventListener("focusout", hide);
+        });
+      }
+
+      function initializeSessionViewToggles() {
+        document.querySelectorAll("[data-session-view-toggle]").forEach((link) => {
+          if (link.dataset.toggleBound === "1") {
+            return;
+          }
+          link.dataset.toggleBound = "1";
+          link.addEventListener("click", async (event) => {
+            const targetMode = normalizeSessionMode(link.dataset.targetView);
+            if (!targetMode || targetMode === currentMode) {
+              persistSessionMode(currentMode);
+              return;
+            }
+            event.preventDefault();
+            const activeTurn = closestVisibleTurn();
+            const activeTurnNumber = activeTurn ? activeTurn.dataset.turnNumber : "";
+            writeSessionViewState(activeTurn || undefined);
+            persistSessionMode(targetMode);
+            await fetchSessionWindow(buildSessionModeUrl(targetMode, activeTurnNumber), {
+              updateHistory: true,
+              scrollBehavior: "smooth"
+            });
+          });
+        });
+      }
+
+      function initializeSessionWindow() {
+        initializeSessionViewToggles();
+        initializeTurnCards();
+        initializePrevResponseHover();
+      }
+
+      async function fetchSessionWindow(url, { updateHistory = true, scrollBehavior = "auto" } = {}) {
+        const region = sessionWindowRegion();
+        if (!region) {
+          window.location.assign(url);
+          return;
+        }
+
+        writeSessionViewState();
+        region.classList.add("opacity-60");
+        try {
+          const response = await fetch(url, {
+            headers: {
+              "x-codex-viewer-fetch": "1"
+            }
+          });
+          if (!response.ok) {
+            throw new Error("Session window fetch failed");
+          }
+          const html = await response.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, "text/html");
+          const nextToggleGroup = doc.querySelector("[data-session-view-toggle-group]");
+          const nextRegion = doc.querySelector("[data-session-window-region]");
+          if (!nextRegion) {
+            throw new Error("Missing session window region");
+          }
+          const currentToggleGroup = sessionViewToggleGroup();
+          if (currentToggleGroup && nextToggleGroup) {
+            currentToggleGroup.replaceWith(nextToggleGroup);
+          }
+          region.replaceWith(nextRegion);
+          currentMode = modeFromUrl(url);
+          persistSessionMode(currentMode);
+          if (doc.title) {
+            document.title = doc.title;
+          }
+          initializeSessionWindow();
+          if (updateHistory) {
+            window.history.pushState({ sessionWindow: true }, "", url);
+          }
+
+          const focusedAuditTurn = focusedAuditTurnFromUrl(url);
+          const targetTurnNumber = focusedAuditTurn || new URL(url, window.location.origin).searchParams.get("turn");
+          let targetTurn = targetTurnNumber
+            ? turnCards().find((turn) => turn.dataset.turnNumber === String(targetTurnNumber))
+            : null;
+          if (focusedAuditTurn) {
+            targetTurn = applyFocusedAuditState(focusedAuditTurn) || targetTurn;
+          }
+          requestAnimationFrame(() => {
+            if (targetTurn) {
+              targetTurn.open = true;
+              scrollTurnIntoPlace(targetTurn, scrollBehavior);
+              flashCollapsedTurn(targetTurn);
+              writeSessionViewState(targetTurn);
+              return;
+            }
+            const nextRegionNode = sessionWindowRegion();
+            if (nextRegionNode) {
+              const top = window.scrollY + nextRegionNode.getBoundingClientRect().top - turnScrollOffset();
+              window.scrollTo({ top: Math.max(top, 0), behavior: scrollBehavior });
+            }
+            writeSessionViewState();
+          });
+        } catch (_error) {
+          window.location.assign(url);
+        } finally {
+          const currentRegion = sessionWindowRegion();
+          if (currentRegion) {
+            currentRegion.classList.remove("opacity-60");
+          }
+        }
+      }
+
+      const explicitMode = explicitViewParam();
+      const preferredMode = preferredSessionMode();
+      if (!explicitMode && preferredMode && preferredMode !== currentMode) {
+        window.location.replace(buildSessionModeUrl(preferredMode, new URLSearchParams(window.location.search).get("turn")));
+        return;
+      }
+      persistSessionMode(currentMode);
 
       window.collapseTurnCard = function collapseTurnCard(trigger) {
         const turn = trigger.closest("details");
@@ -542,12 +1494,6 @@
           flashCollapsedTurn(turn);
         });
       };
-
-      for (const turn of turnCards) {
-        turn.addEventListener("toggle", () => {
-          writeSessionViewState(turn);
-        });
-      }
 
       window.addEventListener("scroll", () => {
         if (scrollTicking) {
@@ -564,82 +1510,82 @@
         writeSessionViewState();
       });
 
-      document.querySelectorAll("[data-review-action-button]").forEach((button) => {
-        button.addEventListener("click", async (event) => {
+      document.addEventListener("click", async (event) => {
+        const windowLink = event.target.closest("[data-session-window-link]");
+        if (windowLink) {
           event.preventDefault();
-          event.stopPropagation();
-          const turn = button.closest("[data-turn-card]");
-          if (!turn) {
-            return;
-          }
-          const turnNumber = turn.dataset.turnNumber;
-          const currentStatus = button.dataset.reviewStatus || "";
-          const action = currentStatus === "open" ? "resolve" : currentStatus === "resolved" ? "reopen" : "save";
-          const optimisticStatus = action === "resolve" ? "resolved" : "open";
-          const previousOpenCount = currentOpenQueueCount();
-          const optimisticOpenCount =
-            action === "resolve"
-              ? Math.max(previousOpenCount - 1, 0)
-              : previousOpenCount + 1;
-
-          renderReviewState(turn, optimisticStatus);
-          updateQueueCountDisplays(optimisticOpenCount);
-          button.disabled = true;
-          button.classList.add("opacity-60");
-          try {
-            const response = await fetch("/queue/actions", {
-              method: "POST",
-              headers: {
-                "Accept": "application/json",
-                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                "x-codex-viewer-fetch": "1"
-              },
-              body: new URLSearchParams({
-                action,
-                session_id: sessionId,
-                turn_number: String(turnNumber || ""),
-                return_to: `${window.location.pathname}${window.location.search}`
-              })
-            });
-            if (!response.ok) {
-              throw new Error("Queue update failed");
-            }
-            const payload = await response.json();
-            renderReviewState(turn, payload.status || "");
-            updateQueueCountDisplays(Number(payload.open_count || 0));
-            showReviewToast(
-              payload.status === "open"
-                ? (action === "save" ? "Saved to review queue" : "Turn reopened")
-                : "Turn resolved"
-            );
-          } catch (_error) {
-            renderReviewState(turn, currentStatus);
-            updateQueueCountDisplays(previousOpenCount);
-            showReviewToast("Could not update review queue");
-          } finally {
-            button.disabled = false;
-            button.classList.remove("opacity-60");
-          }
-        });
-      });
-
-      document.querySelectorAll("[data-prev-response-hover]").forEach((container) => {
-        const panel = container.querySelector("[data-prev-response-panel]");
-        if (!panel || !window.matchMedia("(hover: hover)").matches) {
+          await fetchSessionWindow(windowLink.href, { updateHistory: true, scrollBehavior: "smooth" });
           return;
         }
-        const show = () => {
-          panel.classList.remove("pointer-events-none", "invisible", "opacity-0");
-        };
-        const hide = () => {
-          panel.classList.add("pointer-events-none", "invisible", "opacity-0");
-        };
-        container.addEventListener("mouseenter", show);
-        container.addEventListener("mouseleave", hide);
-        container.addEventListener("focusin", show);
-        container.addEventListener("focusout", hide);
+
+        const button = event.target.closest("[data-review-action-button]");
+        if (!button) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const turn = button.closest("[data-turn-card]");
+        if (!turn) {
+          return;
+        }
+        const turnNumber = turn.dataset.turnNumber;
+        const currentStatus = button.dataset.reviewStatus || "";
+        const action = currentStatus === "open" ? "resolve" : currentStatus === "resolved" ? "reopen" : "save";
+        const optimisticStatus = action === "resolve" ? "resolved" : "open";
+        const previousOpenCount = currentOpenQueueCount();
+        const optimisticOpenCount =
+          action === "resolve"
+            ? Math.max(previousOpenCount - 1, 0)
+            : previousOpenCount + 1;
+
+        renderReviewState(turn, optimisticStatus);
+        updateQueueCountDisplays(optimisticOpenCount);
+        button.disabled = true;
+        button.classList.add("opacity-60");
+        try {
+          const response = await fetch("/queue/actions", {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+              "x-codex-viewer-fetch": "1"
+            },
+            body: new URLSearchParams({
+              action,
+              session_id: sessionId,
+              turn_number: String(turnNumber || ""),
+              return_to: `${window.location.pathname}${window.location.search}`
+            })
+          });
+          if (!response.ok) {
+            throw new Error("Queue update failed");
+          }
+          const payload = await response.json();
+          renderReviewState(turn, payload.status || "");
+          updateQueueCountDisplays(Number(payload.open_count || 0));
+          showReviewToast(
+            payload.status === "open"
+              ? (action === "save" ? "Saved to review queue" : "Turn reopened")
+              : "Turn resolved"
+          );
+        } catch (_error) {
+          renderReviewState(turn, currentStatus);
+          updateQueueCountDisplays(previousOpenCount);
+          showReviewToast("Could not update review queue");
+        } finally {
+          button.disabled = false;
+          button.classList.remove("opacity-60");
+        }
       });
 
+      window.addEventListener("popstate", async () => {
+        if (window.location.pathname !== "{{ request.url.path }}") {
+          return;
+        }
+        await fetchSessionWindow(window.location.href, { updateHistory: false, scrollBehavior: "auto" });
+      });
+
+      initializeSessionWindow();
       restoreSessionViewState();
     })();
   </script>

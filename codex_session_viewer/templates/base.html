@@ -74,16 +74,6 @@
       </nav>
       {% block content %}{% endblock %}
     </main>
-    {% if current_path not in ('/login', '/setup') %}
-      <a
-        href="/queue"
-        data-review-queue-pill
-        class="fixed bottom-4 left-1/2 z-30 {% if not open_review_count %}hidden {% endif %}inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-stone-900/10 bg-stone-900 px-4 py-3 text-sm font-semibold text-white shadow-[0_18px_45px_-20px_rgba(41,37,36,0.55)] transition hover:bg-stone-800 lg:hidden"
-      >
-        Review Queue
-        <span data-review-queue-count class="rounded-full bg-white/15 px-2 py-0.5 text-[0.68rem] font-semibold">{{ open_review_count }}</span>
-      </a>
-    {% endif %}
     {% block scripts %}{% endblock %}
   </body>
 </html>
