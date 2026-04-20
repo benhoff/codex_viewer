@@ -48,6 +48,7 @@ from ...projects import (
     fetch_session_with_project,
     query_group_rows,
     row_is_visible_to_project_access,
+    search_turn_hits,
     summarize_attention_status,
 )
 from ...saved_turns import (
@@ -907,7 +908,11 @@ def global_stream() -> RedirectResponse:
 
 
 @router.get("/search", response_class=HTMLResponse)
-def search_results(request: Request, q: str | None = Query(default=None)) -> HTMLResponse:
+def search_results(
+    request: Request,
+    q: str | None = Query(default=None),
+    page: int | None = Query(default=None),
+) -> HTMLResponse:
     context = get_app_context(request)
     search_query = (q or "").strip()
     if not search_query:
@@ -919,11 +924,12 @@ def search_results(request: Request, q: str | None = Query(default=None)) -> HTM
             auth_user=getattr(request.state, "auth_user", None),
             auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
         )
-        all_rows = query_group_rows(connection, project_access=project_access)
-        rows = query_group_rows(connection, q=search_query, project_access=project_access)
-        groups = build_grouped_projects(
-            rows,
-            route_rows=all_rows,
+        search_data = search_turn_hits(
+            connection,
+            search_query,
+            page=page or 1,
+            page_size=context.settings.page_size,
+            project_access=project_access,
         )
 
     return context.templates.TemplateResponse(
@@ -931,10 +937,9 @@ def search_results(request: Request, q: str | None = Query(default=None)) -> HTM
         name="search.html",
         context={
             "request": request,
-            "groups": groups,
-            "group_total": len(groups),
+            "search_data": search_data,
             "q": search_query,
-            "return_to": request_return_to(request),
+            "search_q_param": quote(search_query, safe=""),
             "search_query": search_query,
         },
     )

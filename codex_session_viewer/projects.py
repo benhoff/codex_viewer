@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from html import escape
 import re
 import sqlite3
 from collections import Counter
@@ -16,6 +17,8 @@ from .text_utils import shorten, strip_codex_wrappers
 
 PROJECT_VISIBILITIES = {"authenticated", "private"}
 PROJECT_ACCESS_ROLES = {"viewer", "editor"}
+TURN_SEARCH_HIGHLIGHT_START = "[["
+TURN_SEARCH_HIGHLIGHT_END = "]]"
 
 
 OVERRIDE_SELECT = """
@@ -439,6 +442,77 @@ def filter_rows_for_project_access(
     if access is None or access.bypass:
         return rows
     return [row for row in rows if row_is_visible_to_project_access(row, access)]
+
+
+def project_access_condition_sql(
+    project_access: ProjectAccessContext | None,
+) -> tuple[str | None, list[str]]:
+    if project_access is None or project_access.bypass:
+        return None, []
+    allowed_project_ids = sorted(
+        project_id
+        for project_id in project_access.project_roles
+        if trimmed(project_id)
+    )
+    base_condition = "COALESCE(p.visibility, 'authenticated') != 'private'"
+    if not allowed_project_ids:
+        return base_condition, []
+    placeholders = ", ".join("?" for _ in allowed_project_ids)
+    return f"({base_condition} OR p.id IN ({placeholders}))", allowed_project_ids
+
+
+def build_turn_search_match_expression(query: str | None) -> str | None:
+    tokens = [
+        match.group(0).lower()
+        for match in re.finditer(r"[A-Za-z0-9_]+", str(query or ""))
+    ]
+    if not tokens:
+        return None
+    unique_tokens: list[str] = []
+    for token in tokens:
+        if token not in unique_tokens:
+            unique_tokens.append(token)
+        if len(unique_tokens) >= 12:
+            break
+    return " AND ".join(
+        f'"{token}"*' if len(token) >= 3 else f'"{token}"'
+        for token in unique_tokens
+    )
+
+
+def _search_snippet_has_hit(snippet: object) -> bool:
+    return (
+        isinstance(snippet, str)
+        and TURN_SEARCH_HIGHLIGHT_START in snippet
+        and TURN_SEARCH_HIGHLIGHT_END in snippet
+    )
+
+
+def render_search_snippet(snippet: object) -> str:
+    text = str(snippet or "").strip()
+    if not text:
+        return ""
+    escaped = escape(text)
+    escaped = escaped.replace(TURN_SEARCH_HIGHLIGHT_START, "<mark>")
+    escaped = escaped.replace(TURN_SEARCH_HIGHLIGHT_END, "</mark>")
+    return escaped
+
+
+def resolve_turn_hit_snippet(row: sqlite3.Row | dict[str, Any]) -> tuple[str, str]:
+    snippets = [
+        ("Prompt", row["prompt_snippet"]),
+        ("Response", row["response_snippet"]),
+        ("Activity", row["event_snippet"]),
+        ("Project", row["project_snippet"]),
+    ]
+    for label, snippet in snippets:
+        if _search_snippet_has_hit(snippet):
+            return label, render_search_snippet(snippet)
+    for label, snippet in snippets:
+        if trimmed(snippet):
+            return label, render_search_snippet(snippet)
+    fallback = trimmed(row["prompt_excerpt"]) or trimmed(row["response_excerpt"]) or "No matching snippet."
+    return "Prompt", render_search_snippet(fallback)
 
 
 def can_edit_project(
@@ -1160,6 +1234,172 @@ def query_group_rows_for_key(
         (key, key),
     ).fetchall()
     return filter_rows_for_project_access(rows, project_access)
+
+
+def search_turn_hits(
+    connection: sqlite3.Connection,
+    q: str,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    project_access: ProjectAccessContext | None = None,
+) -> dict[str, Any]:
+    match_expression = build_turn_search_match_expression(q)
+    if not match_expression:
+        return {
+            "items": [],
+            "page": 1,
+            "page_size": page_size,
+            "total_count": 0,
+            "has_prev": False,
+            "has_next": False,
+            "page_count": 1,
+            "showing_from": 0,
+            "showing_to": 0,
+        }
+
+    normalized_page = max(int(page or 1), 1)
+    normalized_page_size = max(10, min(int(page_size or 20), 100))
+    offset = (normalized_page - 1) * normalized_page_size
+
+    conditions = ["session_turn_search MATCH ?"]
+    params: list[Any] = [match_expression]
+    access_condition, access_params = project_access_condition_sql(project_access)
+    if access_condition:
+        conditions.append(access_condition)
+        params.extend(access_params)
+
+    where_clause = visible_session_where(conditions)
+    from_clause = f"""
+        FROM session_turn_search
+        JOIN session_turns AS st
+            ON st.session_id = session_turn_search.session_id
+           AND st.turn_number = session_turn_search.turn_number
+        JOIN sessions AS s
+            ON s.id = st.session_id
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
+        {where_clause}
+    """
+    order_clause = """
+        ORDER BY bm25(session_turn_search, 1.0, 5.0, 4.0, 2.0) ASC,
+        COALESCE(
+            st.latest_timestamp,
+            st.response_timestamp,
+            st.prompt_timestamp,
+            s.last_turn_timestamp,
+            s.session_timestamp,
+            s.started_at,
+            s.imported_at
+        ) DESC,
+        st.session_id DESC,
+        st.turn_number DESC
+    """
+
+    total_row = connection.execute(
+        f"SELECT COUNT(*) AS count {from_clause}",
+        params,
+    ).fetchone()
+    total_count = int(total_row["count"] or 0) if total_row is not None else 0
+    page_count = max((total_count + normalized_page_size - 1) // normalized_page_size, 1)
+    normalized_page = min(normalized_page, page_count)
+    offset = (normalized_page - 1) * normalized_page_size
+
+    rows = connection.execute(
+        f"""
+        SELECT
+            {TURN_STREAM_SELECT},
+            snippet(session_turn_search, 0, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 10) AS project_snippet,
+            snippet(session_turn_search, 1, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 18) AS prompt_snippet,
+            snippet(session_turn_search, 2, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 18) AS response_snippet,
+            snippet(session_turn_search, 3, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 18) AS event_snippet
+        {from_clause}
+        {order_clause}
+        LIMIT ? OFFSET ?
+        """,
+        [*params, normalized_page_size, offset],
+    ).fetchall()
+
+    href_by_group = resolve_project_detail_hrefs(
+        connection,
+        [effective_project_fields(row)["effective_group_key"] for row in rows],
+        project_access=project_access,
+    )
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        project = effective_project_fields(row)
+        effective_group_key = project["effective_group_key"]
+        detail_href = href_by_group.get(effective_group_key)
+        if not detail_href:
+            detail_href = f"/groups?key={quote(effective_group_key, safe='')}"
+
+        response_state = trimmed(row["response_state"]) or "missing"
+        timestamp = (
+            trimmed(row["latest_timestamp"])
+            or trimmed(row["response_timestamp"])
+            or trimmed(row["prompt_timestamp"])
+            or trimmed(row["session_timestamp"])
+            or trimmed(row["started_at"])
+            or trimmed(row["imported_at"])
+        )
+        snippet_label, snippet_html = resolve_turn_hit_snippet(row)
+        command_exit_count = int(row["failure_count"] or 0)
+        if response_state == "canceled":
+            status_tone = "amber"
+            status_label = "Canceled"
+        elif response_state == "update":
+            status_tone = "sky"
+            status_label = "Update"
+        elif response_state == "missing":
+            status_tone = "stone"
+            status_label = "Missing"
+        else:
+            status_tone = "emerald"
+            status_label = "Final"
+
+        session_id = quote(str(row["session_id"]), safe="")
+        turn_number = int(row["turn_number"] or 0)
+        items.append(
+            {
+                "session_id": str(row["session_id"]),
+                "turn_number": turn_number,
+                "timestamp": timestamp,
+                "prompt_excerpt": trimmed(row["prompt_excerpt"]) or "No prompt excerpt",
+                "response_excerpt": trimmed(row["response_excerpt"]) or "No assistant response captured.",
+                "response_state": response_state,
+                "status_tone": status_tone,
+                "status_label": status_label,
+                "command_count": int(row["command_count"] or 0),
+                "patch_count": int(row["patch_count"] or 0),
+                "failure_count": command_exit_count,
+                "files_touched_count": int(row["files_touched_count"] or 0),
+                "signal_badges": build_command_exit_badges(command_exits=command_exit_count),
+                "project_label": project["display_label"],
+                "project_detail_href": detail_href,
+                "host": project["source_host"],
+                "snippet_label": snippet_label,
+                "snippet_html": snippet_html,
+                "audit_href": f"/sessions/{session_id}?view=audit&turn={turn_number}&focus=1",
+                "conversation_href": f"/sessions/{session_id}?turn={turn_number}",
+            }
+        )
+
+    return {
+        "items": items,
+        "page": normalized_page,
+        "page_size": normalized_page_size,
+        "total_count": total_count,
+        "has_prev": normalized_page > 1,
+        "has_next": offset + len(items) < total_count,
+        "page_count": page_count,
+        "showing_from": offset + 1 if items else 0,
+        "showing_to": offset + len(items),
+    }
 
 
 def resolve_project_detail_hrefs(

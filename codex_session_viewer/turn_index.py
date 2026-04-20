@@ -20,6 +20,13 @@ from .text_utils import shorten, strip_codex_wrappers
 
 
 TURN_INDEX_VERSION = 2
+TURN_SEARCH_VERSION = 1
+
+MAX_PROMPT_SEARCH_CHARS = 8_000
+MAX_RESPONSE_SEARCH_CHARS = 12_000
+MAX_EVENT_SEARCH_CHARS = 24_000
+MAX_EVENT_FRAGMENT_CHARS = 4_000
+MAX_PROJECT_SEARCH_CHARS = 2_000
 
 
 def _event_value(event: sqlite3.Row | dict[str, Any] | object, key: str) -> Any:
@@ -44,6 +51,7 @@ def _compact_event(event: sqlite3.Row | dict[str, Any] | object) -> dict[str, An
         "display_text": _event_value(event, "display_text"),
         "detail_text": _event_value(event, "detail_text"),
         "tool_name": _event_value(event, "tool_name"),
+        "command_text": _event_value(event, "command_text"),
         "exit_code": _event_value(event, "exit_code"),
     }
 
@@ -91,6 +99,75 @@ def _parse_patch_change_count(detail_text: object) -> int:
     if isinstance(parsed, dict):
         return len(parsed)
     return 0
+
+
+def _trimmed(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _compact_search_text(value: object, limit: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = " ".join(value.replace("\x00", " ").split())
+    if not cleaned:
+        return ""
+    if len(cleaned) <= limit:
+        return cleaned
+    return shorten(cleaned, limit)
+
+
+def _combine_search_fragments(
+    fragments: Sequence[str],
+    *,
+    limit: int,
+) -> str:
+    combined: list[str] = []
+    remaining = limit
+    for fragment in fragments:
+        text = _compact_search_text(fragment, min(limit, MAX_EVENT_FRAGMENT_CHARS))
+        if not text or remaining <= 0:
+            continue
+        if len(text) > remaining:
+            text = shorten(text, remaining)
+        if not text:
+            continue
+        combined.append(text)
+        remaining -= len(text)
+        if remaining > 0:
+            remaining -= 1
+    return "\n".join(combined)
+
+
+def _event_search_text(event: dict[str, Any]) -> str:
+    fragments: list[str] = []
+    kind = str(event.get("kind") or "")
+    role = str(event.get("role") or "")
+    tool_name = _compact_search_text(event.get("tool_name"), 120)
+    command_text = _compact_search_text(event.get("command_text"), 320)
+    display_text = _compact_search_text(event.get("display_text"), MAX_EVENT_FRAGMENT_CHARS)
+    detail_text = _compact_search_text(event.get("detail_text"), MAX_EVENT_FRAGMENT_CHARS)
+
+    if kind == "message" and role == "user":
+        return ""
+    if kind == "tool_call" and tool_name:
+        fragments.append(tool_name)
+    if kind == "command":
+        if command_text:
+            fragments.append(command_text)
+        exit_code = event.get("exit_code")
+        if isinstance(exit_code, int):
+            fragments.append(f"exit code {exit_code}")
+    elif command_text:
+        fragments.append(command_text)
+
+    if display_text:
+        fragments.append(display_text)
+    if detail_text and detail_text != display_text:
+        fragments.append(detail_text)
+    return _combine_search_fragments(fragments, limit=MAX_EVENT_FRAGMENT_CHARS)
 
 
 def compute_session_turn_index(
@@ -149,7 +226,16 @@ def compute_session_turn_index(
             response_timestamp = update_event.get("timestamp")
             response_state = "update"
 
-        prompt_text = str(turn["prompt_text"] or "")
+        prompt_text = _compact_search_text(turn.get("prompt_text"), MAX_PROMPT_SEARCH_CHARS)
+        response_text = _compact_search_text(response_text, MAX_RESPONSE_SEARCH_CHARS)
+        event_text = _combine_search_fragments(
+            [
+                _event_search_text(event)
+                for event in all_events
+                if event is not final_response_event and event is not completion_event
+            ],
+            limit=MAX_EVENT_SEARCH_CHARS,
+        )
         command_count = sum(
             1
             for event in all_events
@@ -181,8 +267,10 @@ def compute_session_turn_index(
             "start_event_index": int(turn["start_event_index"]),
             "end_event_index": int(turn["end_event_index"]),
             "prompt_excerpt": shorten(prompt_text, 280),
+            "prompt_text": prompt_text,
             "prompt_timestamp": turn.get("prompt_timestamp"),
             "response_excerpt": shorten(response_text, 320) if response_text else "",
+            "response_text": response_text,
             "response_timestamp": response_timestamp,
             "response_state": response_state,
             "latest_timestamp": latest_timestamp,
@@ -190,6 +278,7 @@ def compute_session_turn_index(
             "patch_count": patch_count,
             "failure_count": failure_count,
             "files_touched_count": files_touched_count,
+            "event_text": event_text,
         }
 
     for event in compact_events:
@@ -314,6 +403,7 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
             display_text,
             detail_text,
             tool_name,
+            command_text,
             exit_code
         FROM events
         WHERE session_id IN ({placeholders})
@@ -380,6 +470,284 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
         "UPDATE sessions SET turn_index_version = ? WHERE id = ?",
         [(TURN_INDEX_VERSION, session_id) for session_id in session_ids],
     )
+    return len(session_ids)
+
+
+def _session_turn_search_project_text(session_row: sqlite3.Row | dict[str, Any] | None) -> str:
+    if session_row is None:
+        return ""
+    source_host = _trimmed(_event_value(session_row, "source_host")) or "unknown-host"
+    organization = (
+        _trimmed(_event_value(session_row, "override_organization"))
+        or _trimmed(_event_value(session_row, "github_org"))
+        or source_host
+    )
+    repository = (
+        _trimmed(_event_value(session_row, "override_repository"))
+        or _trimmed(_event_value(session_row, "github_repo"))
+        or _trimmed(_event_value(session_row, "cwd_name"))
+        or _trimmed(_event_value(session_row, "cwd"))
+        or "unassigned"
+    )
+    display_label = (
+        _trimmed(_event_value(session_row, "override_display_label"))
+        or (f"{organization}/{repository}" if organization and repository else repository)
+        or _trimmed(_event_value(session_row, "inferred_project_label"))
+        or _trimmed(_event_value(session_row, "inferred_project_key"))
+        or ""
+    )
+    fragments: list[str] = []
+    for candidate in (
+        display_label,
+        _trimmed(_event_value(session_row, "override_display_label")),
+        organization,
+        repository,
+        _trimmed(_event_value(session_row, "override_group_key")),
+        _trimmed(_event_value(session_row, "inferred_project_label")),
+        _trimmed(_event_value(session_row, "inferred_project_key")),
+        _trimmed(_event_value(session_row, "github_slug")),
+        _trimmed(_event_value(session_row, "github_org")),
+        _trimmed(_event_value(session_row, "github_repo")),
+        _trimmed(_event_value(session_row, "source_host")),
+        _trimmed(_event_value(session_row, "cwd")),
+        _trimmed(_event_value(session_row, "cwd_name")),
+        _trimmed(_event_value(session_row, "override_remote_url")),
+        _trimmed(_event_value(session_row, "github_remote_url")),
+        _trimmed(_event_value(session_row, "git_repository_url")),
+    ):
+        if candidate and candidate not in fragments:
+            fragments.append(candidate)
+    return _combine_search_fragments(fragments, limit=MAX_PROJECT_SEARCH_CHARS)
+
+
+def _fetch_session_turn_search_metadata(
+    connection: sqlite3.Connection,
+    session_ids: Sequence[str],
+) -> dict[str, sqlite3.Row]:
+    normalized_ids = [str(session_id) for session_id in session_ids if session_id]
+    if not normalized_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in normalized_ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            s.id,
+            s.cwd,
+            s.cwd_name,
+            s.source_host,
+            s.git_repository_url,
+            s.github_remote_url,
+            s.github_org,
+            s.github_repo,
+            s.github_slug,
+            s.inferred_project_key,
+            s.inferred_project_label,
+            o.override_group_key,
+            o.override_organization,
+            o.override_repository,
+            o.override_remote_url,
+            o.override_display_label
+        FROM sessions AS s
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        WHERE s.id IN ({placeholders})
+        """,
+        normalized_ids,
+    ).fetchall()
+    return {str(row["id"]): row for row in rows}
+
+
+def _fetch_turn_search_events(
+    connection: sqlite3.Connection,
+    session_ids: Sequence[str],
+) -> dict[str, list[sqlite3.Row]]:
+    normalized_ids = [str(session_id) for session_id in session_ids if session_id]
+    if not normalized_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in normalized_ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            session_id,
+            event_index,
+            timestamp,
+            record_type,
+            payload_type,
+            kind,
+            role,
+            display_text,
+            detail_text,
+            tool_name,
+            command_text,
+            exit_code
+        FROM events
+        WHERE session_id IN ({placeholders})
+        ORDER BY session_id ASC, event_index ASC
+        """,
+        normalized_ids,
+    ).fetchall()
+    rows_by_session: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        rows_by_session.setdefault(str(row["session_id"]), []).append(row)
+    return rows_by_session
+
+
+def _session_turn_search_inserts(
+    session_id: str,
+    project_text: str,
+    turns: Sequence[dict[str, Any]],
+) -> list[tuple[Any, ...]]:
+    return [
+        (
+            project_text,
+            str(row["prompt_text"] or ""),
+            str(row["response_text"] or ""),
+            str(row["event_text"] or ""),
+            session_id,
+            int(row["turn_number"]),
+        )
+        for row in turns
+    ]
+
+
+def replace_session_turn_search(
+    connection: sqlite3.Connection,
+    session_id: str,
+    events: Sequence[sqlite3.Row | dict[str, Any] | object] | None = None,
+) -> None:
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_session_id:
+        return
+    turns = compute_session_turn_index(
+        events if events is not None else _fetch_turn_search_events(connection, [normalized_session_id]).get(normalized_session_id, [])
+    )
+    project_text = _session_turn_search_project_text(
+        _fetch_session_turn_search_metadata(connection, [normalized_session_id]).get(normalized_session_id)
+    )
+    connection.execute(
+        "DELETE FROM session_turn_search WHERE session_id = ?",
+        (normalized_session_id,),
+    )
+    inserts = _session_turn_search_inserts(normalized_session_id, project_text, turns)
+    if inserts:
+        connection.executemany(
+            """
+            INSERT INTO session_turn_search (
+                project_text,
+                prompt_text,
+                response_text,
+                event_text,
+                session_id,
+                turn_number
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            inserts,
+        )
+    connection.execute(
+        "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
+        (TURN_SEARCH_VERSION, normalized_session_id),
+    )
+
+
+def backfill_session_turn_search(connection: sqlite3.Connection) -> int:
+    stale_rows = connection.execute(
+        """
+        SELECT id
+        FROM sessions
+        WHERE COALESCE(turn_search_version, 0) < ?
+        ORDER BY id ASC
+        """,
+        (TURN_SEARCH_VERSION,),
+    ).fetchall()
+    session_ids = [str(row["id"]) for row in stale_rows]
+    if not session_ids:
+        return 0
+
+    placeholders = ", ".join("?" for _ in session_ids)
+    rows_by_session = _fetch_turn_search_events(connection, session_ids)
+    metadata_by_session = _fetch_session_turn_search_metadata(connection, session_ids)
+    connection.execute(
+        f"DELETE FROM session_turn_search WHERE session_id IN ({placeholders})",
+        session_ids,
+    )
+
+    inserts: list[tuple[Any, ...]] = []
+    for session_id in session_ids:
+        project_text = _session_turn_search_project_text(metadata_by_session.get(session_id))
+        turns = compute_session_turn_index(rows_by_session.get(session_id, []))
+        inserts.extend(_session_turn_search_inserts(session_id, project_text, turns))
+
+    if inserts:
+        connection.executemany(
+            """
+            INSERT INTO session_turn_search (
+                project_text,
+                prompt_text,
+                response_text,
+                event_text,
+                session_id,
+                turn_number
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            inserts,
+        )
+
+    connection.executemany(
+        "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
+        [(TURN_SEARCH_VERSION, session_id) for session_id in session_ids],
+    )
+    return len(session_ids)
+
+
+def reindex_session_turn_search_for_project_keys(
+    connection: sqlite3.Connection,
+    project_keys: Sequence[str],
+) -> int:
+    keys = sorted({str(key).strip() for key in project_keys if str(key).strip()})
+    if not keys:
+        return 0
+    placeholders = ", ".join("?" for _ in keys)
+    rows = connection.execute(
+        f"""
+        SELECT id
+        FROM sessions
+        WHERE inferred_project_key IN ({placeholders})
+        ORDER BY id ASC
+        """,
+        keys,
+    ).fetchall()
+    session_ids = [str(row["id"]) for row in rows]
+    rows_by_session = _fetch_turn_search_events(connection, session_ids)
+    metadata_by_session = _fetch_session_turn_search_metadata(connection, session_ids)
+    for session_id in session_ids:
+        connection.execute(
+            "DELETE FROM session_turn_search WHERE session_id = ?",
+            (session_id,),
+        )
+        turns = compute_session_turn_index(rows_by_session.get(session_id, []))
+        inserts = _session_turn_search_inserts(
+            session_id,
+            _session_turn_search_project_text(metadata_by_session.get(session_id)),
+            turns,
+        )
+        if inserts:
+            connection.executemany(
+                """
+                INSERT INTO session_turn_search (
+                    project_text,
+                    prompt_text,
+                    response_text,
+                    event_text,
+                    session_id,
+                    turn_number
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                inserts,
+            )
+        connection.execute(
+            "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
+            (TURN_SEARCH_VERSION, session_id),
+        )
     return len(session_ids)
 
 

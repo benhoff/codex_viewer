@@ -29,6 +29,7 @@ from ...projects import (
     upsert_project_acl_member,
 )
 from ...saved_turns import count_saved_turns_by_status, owner_scope_from_request
+from ...turn_index import reindex_session_turn_search_for_project_keys
 from ..auth import require_admin_user
 from ..context import get_app_context, request_return_to
 from ..forms import parse_form_fields
@@ -378,6 +379,7 @@ async def save_override(request: Request) -> RedirectResponse:
                     override_display_label=fields.get("override_display_label"),
                 )
                 target_group_key = fields.get("override_group_key", "").strip() or group_key
+            reindex_session_turn_search_for_project_keys(connection, [match_project_key])
             sync_project_registry(connection)
             detail_href = resolve_project_detail_href(
                 connection,
@@ -426,6 +428,7 @@ async def save_project_github_url(request: Request) -> RedirectResponse:
                     override_remote_url=normalized["canonical_url"],
                     override_display_label=f"{normalized['org']}/{normalized['repo']}",
                 )
+            reindex_session_turn_search_for_project_keys(connection, project_keys)
             sync_project_registry(connection)
             detail_href = resolve_project_detail_href(
                 connection,

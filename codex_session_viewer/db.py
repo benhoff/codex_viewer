@@ -10,7 +10,7 @@ from .session_rollups import (
     backfill_session_turn_activity_daily,
 )
 from .onboarding import ensure_onboarding_state_row
-from .turn_index import backfill_session_turns
+from .turn_index import backfill_session_turn_search, backfill_session_turns
 
 
 SESSION_COLUMN_DEFS = {
@@ -49,6 +49,7 @@ SESSION_COLUMN_DEFS = {
     "rollup_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_activity_rollup_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_index_version": "INTEGER NOT NULL DEFAULT 0",
+    "turn_search_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_count": "INTEGER NOT NULL DEFAULT 0",
     "last_user_message": "TEXT NOT NULL DEFAULT ''",
     "last_turn_timestamp": "TEXT",
@@ -285,6 +286,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     rollup_version INTEGER NOT NULL DEFAULT 0,
     turn_activity_rollup_version INTEGER NOT NULL DEFAULT 0,
     turn_index_version INTEGER NOT NULL DEFAULT 0,
+    turn_search_version INTEGER NOT NULL DEFAULT 0,
     turn_count INTEGER NOT NULL DEFAULT 0,
     last_user_message TEXT NOT NULL DEFAULT '',
     last_turn_timestamp TEXT,
@@ -521,6 +523,21 @@ CREATE TABLE IF NOT EXISTS session_turns (
     files_touched_count INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (session_id, turn_number)
 );
+
+CREATE VIRTUAL TABLE IF NOT EXISTS session_turn_search USING fts5(
+    project_text,
+    prompt_text,
+    response_text,
+    event_text,
+    session_id UNINDEXED,
+    turn_number UNINDEXED
+);
+
+CREATE TRIGGER IF NOT EXISTS session_turn_search_delete_session
+AFTER DELETE ON sessions
+BEGIN
+    DELETE FROM session_turn_search WHERE session_id = OLD.id;
+END;
 """
 
 INDEX_SQL = """
@@ -760,6 +777,7 @@ def default_select(column_name: str) -> str:
         "rollup_version",
         "turn_activity_rollup_version",
         "turn_index_version",
+        "turn_search_version",
         "turn_count",
         "command_failure_count",
         "aborted_turn_count",
@@ -1016,6 +1034,7 @@ def init_db(database_path: Path) -> None:
             backfill_session_rollups(connection)
             backfill_session_turn_activity_daily(connection)
             backfill_session_turns(connection)
+            backfill_session_turn_search(connection)
             from .projects import sync_project_registry
 
             sync_project_registry(connection)

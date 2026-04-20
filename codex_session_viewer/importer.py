@@ -19,7 +19,7 @@ from .session_rollups import (
     replace_session_turn_activity_daily,
 )
 from .session_artifacts import read_session_source_text, store_session_artifact
-from .turn_index import replace_session_turns
+from .turn_index import replace_session_turn_search, replace_session_turns
 from .text_utils import shorten, strip_codex_wrappers
 
 logger = logging.getLogger("codex_session_viewer.importer")
@@ -1034,6 +1034,7 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
     )
     replace_session_turn_activity_daily(connection, parsed.session_id, parsed.events)
     replace_session_turns(connection, parsed.session_id, parsed.events)
+    replace_session_turn_search(connection, parsed.session_id, parsed.events)
 
 
 def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -> list[dict[str, object]]:
