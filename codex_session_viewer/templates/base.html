@@ -23,7 +23,7 @@
             {% if request.state.auth_enabled %}
               <span class="rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-600">
                 {% if current_path == '/setup' %}
-                  First Setup
+                  Setup Wizard
                 {% elif request.state.auth_mode == 'proxy' %}
                   SSO
                 {% elif request.state.auth_mode == 'password_or_proxy' %}

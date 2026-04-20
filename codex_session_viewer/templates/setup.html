@@ -1,56 +1,345 @@
 {% extends "base.html" %}
 
-{% block title %}First Setup | Codex Viewer{% endblock %}
+{% block title %}Setup Wizard | Codex Viewer{% endblock %}
 
 {% block content %}
-  <section class="mx-auto w-full max-w-xl rounded-[2rem] border border-stone-900/10 bg-white/80 p-6 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:p-8">
-    <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">First Setup</p>
-    <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl">Create the first admin account</h1>
-    <p class="mt-3 text-[0.98rem] leading-7 text-stone-600">
-      This server is protected, but no local admin exists yet. Create the first admin account now to finish setup and unlock the viewer.
-    </p>
-
-    {% if setup_error %}
-      <div class="mt-5 rounded-[1.2rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">
-        {{ setup_error }}
+  <div class="mx-auto w-full max-w-6xl space-y-6">
+    <section class="rounded-[1.9rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:p-6">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="min-w-0 flex-1">
+          <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Guided Setup</p>
+          <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl">Finish first-run onboarding</h1>
+          <p class="mt-3 max-w-3xl text-[0.98rem] leading-7 text-stone-600">
+            This wizard keeps auth, token creation, first machine contact, and sync verification in one place until the first healthy upload is confirmed.
+          </p>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="rounded-[1.15rem] bg-stone-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Server URL</p>
+            <p class="mt-2 break-all text-sm font-semibold text-stone-900">{{ setup_server_url }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-stone-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Sync Mode</p>
+            <p class="mt-2 text-sm font-semibold text-stone-900">{{ settings.sync_mode }}</p>
+          </div>
+        </div>
       </div>
-    {% endif %}
+      {% if '127.0.0.1' in setup_server_url or 'localhost' in setup_server_url %}
+        <div class="mt-5 rounded-[1.2rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+          The current server URL looks local to this machine. If your first machine runs somewhere else on the network, update `CODEX_VIEWER_SERVER_URL` in the snippet below to a reachable host name or IP.
+        </div>
+      {% endif %}
+    </section>
 
-    <form action="/setup" method="post" class="mt-6 space-y-4">
-      <label class="block">
-        <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Admin Username</span>
-        <input
-          type="text"
-          name="username"
-          value="{{ username }}"
-          autocomplete="username"
-          class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-        />
-      </label>
-      <label class="block">
-        <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Password</span>
-        <input
-          type="password"
-          name="password"
-          autocomplete="new-password"
-          class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-        />
-      </label>
-      <label class="block">
-        <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Confirm Password</span>
-        <input
-          type="password"
-          name="confirm_password"
-          autocomplete="new-password"
-          class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-        />
-      </label>
-      <button
-        type="submit"
-        class="w-full rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
-      >
-        Finish Setup
-      </button>
-    </form>
-  </section>
+    {% include "_setup_status.html" %}
+
+    <section class="grid gap-6 xl:grid-cols-[1.05fr,0.95fr]">
+      <div class="space-y-6">
+        <section class="rounded-[1.7rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
+          {% set can_manage_setup_tokens = (not request.state.auth_enabled) or (request.state.auth_user and request.state.auth_user.is_admin) %}
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Auth</p>
+              <h2 class="mt-2 font-display text-2xl text-stone-900">Browser Access</h2>
+              <p class="mt-2 text-sm leading-6 text-stone-600">
+                Confirm how the web UI is protected before connecting the first machine.
+              </p>
+            </div>
+            <span class="rounded-full bg-stone-900 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-50">{{ settings.auth_mode|replace('_', ' ') }}</span>
+          </div>
+          <div class="mt-5 grid gap-3 sm:grid-cols-3">
+            <div class="rounded-[1.15rem] bg-stone-50 p-4">
+              <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Auth mode</p>
+              <p class="mt-2 text-sm font-semibold text-stone-900">{{ settings.auth_mode|replace('_', ' ') }}</p>
+            </div>
+            <div class="rounded-[1.15rem] bg-stone-50 p-4">
+              <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Bootstrap</p>
+              <p class="mt-2 text-sm font-semibold text-stone-900">
+                {% if onboarding.bootstrap_required %}
+                  Waiting for admin creation
+                {% else %}
+                  Ready
+                {% endif %}
+              </p>
+            </div>
+            <div class="rounded-[1.15rem] bg-stone-50 p-4">
+              <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Current session</p>
+              <p class="mt-2 text-sm font-semibold text-stone-900">
+                {% if request.state.auth_user %}
+                  {{ request.state.auth_user.display_name }}
+                {% elif settings.auth_enabled() %}
+                  Not signed in
+                {% else %}
+                  Public access
+                {% endif %}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-[1.7rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Create Admin</p>
+              <h2 class="mt-2 font-display text-2xl text-stone-900">First Admin Account</h2>
+              <p class="mt-2 text-sm leading-6 text-stone-600">
+                Shared installs need one admin before tokens, machine controls, and server policy can be managed.
+              </p>
+            </div>
+            {% if onboarding.bootstrap_required %}
+              <span class="rounded-full bg-amber-100 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-amber-800">In progress</span>
+            {% else %}
+              <span class="rounded-full bg-emerald-100 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">Complete</span>
+            {% endif %}
+          </div>
+
+          {% if setup_error %}
+            <div class="mt-5 rounded-[1.2rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">
+              {{ setup_error }}
+            </div>
+          {% endif %}
+
+          {% if onboarding.bootstrap_required %}
+            <div class="mt-5 space-y-4">
+              {% if request.state.auth_user %}
+                <div class="rounded-[1.2rem] border border-sky-200 bg-sky-50/90 p-4">
+                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-sky-700">Claim this account</p>
+                  <p class="mt-2 text-sm leading-6 text-sky-900">
+                    <span class="font-semibold">{{ request.state.auth_user.display_name }}</span> is signed in{% if request.state.auth_user.auth_source == 'proxy' %} through SSO{% endif %}. You can promote this account to the first admin and continue setup.
+                  </p>
+                  <form action="/setup/claim-admin" method="post" class="mt-4">
+                    <button
+                      type="submit"
+                      class="rounded-2xl bg-sky-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-sky-600"
+                    >
+                      Claim Admin Access
+                    </button>
+                  </form>
+                </div>
+              {% elif not settings.auth_allows_password() %}
+                <div class="rounded-[1.2rem] border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
+                  Sign in through the trusted proxy first, then return here to claim the first admin account.
+                </div>
+              {% endif %}
+
+              {% if settings.auth_allows_password() %}
+                <form action="/setup" method="post" class="grid gap-4 md:grid-cols-3">
+                  <label class="block">
+                    <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Admin Username</span>
+                    <input
+                      type="text"
+                      name="username"
+                      value="{{ username }}"
+                      autocomplete="username"
+                      class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+                    />
+                  </label>
+                  <label class="block">
+                    <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Password</span>
+                    <input
+                      type="password"
+                      name="password"
+                      autocomplete="new-password"
+                      class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+                    />
+                  </label>
+                  <label class="block">
+                    <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Confirm Password</span>
+                    <input
+                      type="password"
+                      name="confirm_password"
+                      autocomplete="new-password"
+                      class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+                    />
+                  </label>
+                  <div class="md:col-span-3">
+                    <button
+                      type="submit"
+                      class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
+                    >
+                      Create Local Admin
+                    </button>
+                  </div>
+                </form>
+              {% endif %}
+            </div>
+          {% elif onboarding.auth_status.admin_user %}
+            <div class="mt-5 rounded-[1.2rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
+              Admin <span class="font-semibold">{{ onboarding.auth_status.admin_user.display_name }}</span> is ready.
+            </div>
+          {% endif %}
+        </section>
+      </div>
+
+      <div class="space-y-6">
+        <section class="rounded-[1.7rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Create Token</p>
+              <h2 class="mt-2 font-display text-2xl text-stone-900">Sync API Token</h2>
+              <p class="mt-2 text-sm leading-6 text-stone-600">
+                Label the token for the first machine. The raw token is only shown once.
+              </p>
+            </div>
+            <span class="rounded-full bg-stone-900 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-50">{{ onboarding.token_count }} active</span>
+          </div>
+
+          <form action="/setup/token" method="post" class="mt-5 grid gap-3 sm:grid-cols-[1fr,auto] sm:items-end">
+            <label class="block">
+              <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Token Label</span>
+              <input
+                type="text"
+                name="label"
+                value="First machine token"
+                class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+              />
+            </label>
+            <button
+              type="submit"
+              {% if onboarding.bootstrap_required or not can_manage_setup_tokens %}disabled{% endif %}
+              class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
+            >
+              Create Token
+            </button>
+          </form>
+
+          {% if onboarding.bootstrap_required or not can_manage_setup_tokens %}
+            <div class="mt-4 rounded-[1.2rem] border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
+              The first admin account must be ready before shared machine tokens can be created.
+            </div>
+          {% endif %}
+
+          {% if api_tokens and can_manage_setup_tokens %}
+            <div class="mt-5 flex flex-wrap gap-2">
+              {% for token in api_tokens if not token.revoked_at %}
+                <span class="rounded-full bg-stone-100 px-3 py-1.5 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">
+                  {{ token.label }} · {{ token.token_prefix }}…
+                </span>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          {% if created_token %}
+            <div class="mt-5 rounded-[1.2rem] border border-emerald-200 bg-emerald-50/90 p-4">
+              <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-emerald-700">Token created</p>
+              <p class="mt-2 text-sm leading-6 text-emerald-900">Copy the raw token and the full daemon snippet now. The raw token will not be shown again after this page changes.</p>
+              <pre id="created-token-value" class="mt-4 overflow-x-auto whitespace-pre-wrap break-all rounded-[1rem] bg-white/90 p-4 text-[0.95rem] leading-6 text-stone-900">{{ created_token.token }}</pre>
+              <div class="mt-3 flex flex-wrap items-center gap-3">
+                <button type="button" id="copy-created-token" class="rounded-2xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-stone-700">Copy Token</button>
+                <p id="copy-created-token-status" class="text-sm text-emerald-900"></p>
+              </div>
+            </div>
+          {% endif %}
+        </section>
+
+        <section class="rounded-[1.7rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Connect Agent</p>
+              <h2 class="mt-2 font-display text-2xl text-stone-900">Machine Configuration</h2>
+              <p class="mt-2 text-sm leading-6 text-stone-600">
+                Paste this into the first machine after creating a token, then start the daemon and leave this page open while it checks in.
+              </p>
+            </div>
+            <span class="rounded-full {% if onboarding.agent_seen %}bg-emerald-100 text-emerald-800{% elif onboarding.token_count %}bg-amber-100 text-amber-800{% else %}bg-stone-100 text-stone-700{% endif %} px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em]">
+              {% if onboarding.agent_seen %}Machine seen{% elif onboarding.token_count %}Waiting for heartbeat{% else %}Create token first{% endif %}
+            </span>
+          </div>
+
+          {% if agent_snippet %}
+            <pre id="agent-config-snippet" class="mt-5 overflow-x-auto whitespace-pre-wrap break-all rounded-[1.1rem] bg-stone-950 p-4 text-[0.92rem] leading-6 text-stone-50">{{ agent_snippet }}</pre>
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+              <button type="button" id="copy-agent-snippet" class="rounded-2xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-stone-700">Copy Snippet</button>
+              <p id="copy-agent-snippet-status" class="text-sm text-stone-600"></p>
+            </div>
+          {% elif onboarding.token_count and can_manage_setup_tokens %}
+            <div class="mt-5 rounded-[1.2rem] border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
+              A token already exists, but the raw value is not stored. Create a new token above if you want the full copyable daemon snippet again.
+            </div>
+          {% elif onboarding.token_count %}
+            <div class="mt-5 rounded-[1.2rem] border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
+              An admin has already created at least one machine token. Sign in as an admin if you need to generate a new copyable snippet.
+            </div>
+          {% else %}
+            <div class="mt-5 rounded-[1.2rem] border border-dashed border-stone-900/15 bg-stone-50/70 px-4 py-3 text-sm leading-6 text-stone-600">
+              Create the first token to reveal the exact machine configuration snippet.
+            </div>
+          {% endif %}
+        </section>
+      </div>
+    </section>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    (() => {
+      const copyText = async (text, statusEl, successText) => {
+        if (!text || !statusEl) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          statusEl.textContent = successText;
+        } catch (error) {
+          statusEl.textContent = "Copy failed. Select the text manually.";
+        }
+      };
+
+      const tokenButton = document.getElementById("copy-created-token");
+      const tokenStatus = document.getElementById("copy-created-token-status");
+      const tokenValue = document.getElementById("created-token-value");
+      if (tokenButton && tokenValue) {
+        tokenButton.addEventListener("click", () => {
+          copyText(tokenValue.textContent || "", tokenStatus, "Token copied.");
+        });
+      }
+
+      const snippetButton = document.getElementById("copy-agent-snippet");
+      const snippetStatus = document.getElementById("copy-agent-snippet-status");
+      const snippetValue = document.getElementById("agent-config-snippet");
+      if (snippetButton && snippetValue) {
+        snippetButton.addEventListener("click", () => {
+          copyText(snippetValue.textContent || "", snippetStatus, "Snippet copied.");
+        });
+      }
+
+      const statusEndpoint = "/setup/status";
+      let redirecting = false;
+      const pollStatus = async () => {
+        const currentRegion = document.querySelector("[data-onboarding-status-region]");
+        if (!currentRegion || redirecting) {
+          return;
+        }
+        try {
+          const response = await fetch(statusEndpoint, {
+            headers: {
+              "Accept": "text/html",
+              "X-Codex-Viewer-Fetch": "1",
+            },
+            credentials: "same-origin",
+          });
+          if (!response.ok) {
+            return;
+          }
+          const html = await response.text();
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = html.trim();
+          const nextRegion = wrapper.querySelector("[data-onboarding-status-region]");
+          if (!nextRegion) {
+            return;
+          }
+          currentRegion.replaceWith(nextRegion);
+          if (nextRegion.dataset.onboardingComplete === "1") {
+            redirecting = true;
+            window.setTimeout(() => {
+              window.location.assign("/");
+            }, 900);
+          }
+        } catch (error) {
+          // Polling is best-effort; the page already shows the last known state.
+        }
+      };
+
+      window.setInterval(pollStatus, 4000);
+    })();
+  </script>
 {% endblock %}

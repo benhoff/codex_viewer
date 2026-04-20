@@ -18,6 +18,11 @@ from ...importer import (
     parsed_session_from_payload,
     upsert_parsed_session,
 )
+from ...onboarding import (
+    reconcile_onboarding_state,
+    record_first_heartbeat,
+    record_first_session_ingested,
+)
 from ...projects import ignored_project_keys
 from ..auth import require_sync_api_auth
 from ..context import get_settings
@@ -98,6 +103,12 @@ async def sync_heartbeat(request: Request) -> JSONResponse:
                 last_raw_resend_at=str(payload.get("last_raw_resend_at") or "") or None,
             )
             reconcile_remote_alerts_for_host(connection, settings, source_host)
+            record_first_heartbeat(
+                connection,
+                source_host=source_host,
+                seen_at=str(payload.get("last_seen_at") or "") or None,
+            )
+            reconcile_onboarding_state(connection, settings)
     return JSONResponse({"status": "ok", "source_host": source_host})
 
 
@@ -128,6 +139,12 @@ async def sync_session(request: Request) -> JSONResponse:
                     }
                 )
             upsert_parsed_session(connection, parsed)
+            record_first_session_ingested(
+                connection,
+                source_host=parsed.source_host,
+                imported_at=parsed.imported_at,
+            )
+            reconcile_onboarding_state(connection, settings)
 
     return JSONResponse(
         {
@@ -190,6 +207,12 @@ async def sync_session_raw(request: Request) -> JSONResponse:
                     }
                 )
             upsert_parsed_session(connection, parsed)
+            record_first_session_ingested(
+                connection,
+                source_host=parsed.source_host,
+                imported_at=parsed.imported_at,
+            )
+            reconcile_onboarding_state(connection, settings)
 
     return JSONResponse(
         {

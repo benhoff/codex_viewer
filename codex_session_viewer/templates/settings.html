@@ -4,6 +4,22 @@
 
 {% block content %}
   <div class="mx-auto w-full max-w-5xl space-y-6">
+    {% if onboarding.onboarding_required %}
+      <section class="rounded-[1.4rem] border border-amber-200 bg-amber-50/90 p-5 shadow-[0_18px_45px_-30px_rgba(41,37,36,0.2)]">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-amber-700">Onboarding In Progress</p>
+            <p class="mt-2 text-sm leading-6 text-amber-900">
+              The guided setup is still waiting on the first healthy machine connection. You can keep working here, but the primary flow lives in the setup wizard.
+            </p>
+          </div>
+          <a href="/setup" class="inline-flex items-center rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 transition hover:bg-amber-100">
+            Return to setup
+          </a>
+        </div>
+      </section>
+    {% endif %}
+
     <section class="rounded-[1.9rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:p-6">
       <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Settings</p>
       <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl">{% if can_manage_admin %}Server Settings{% else %}Account Settings{% endif %}</h1>
@@ -179,10 +195,10 @@
       </div>
 
       <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div class="rounded-[1.15rem] bg-stone-50 p-4">
-          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Bootstrap</p>
-          <p class="mt-2 text-sm font-semibold text-stone-900">
-            {% if auth_status.bootstrap_required %}
+          <div class="rounded-[1.15rem] bg-stone-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Bootstrap</p>
+            <p class="mt-2 text-sm font-semibold text-stone-900">
+            {% if effective_bootstrap_required %}
               Setup required
             {% else %}
               Complete
@@ -190,8 +206,8 @@
           </p>
         </div>
         <div class="rounded-[1.15rem] bg-stone-50 p-4">
-          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Local Admin</p>
-          <p class="mt-2 text-sm font-semibold text-stone-900">{{ auth_status.local_admin.username if auth_status.local_admin else "Not created" }}</p>
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Admin</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900">{{ auth_status.admin_user.display_name if auth_status.admin_user else "Not created" }}</p>
         </div>
         <div class="rounded-[1.15rem] bg-stone-50 p-4">
           <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Setup Completed</p>

@@ -37,6 +37,7 @@ from ...local_auth import (
     verify_local_password_for_user,
     verify_local_password_login,
 )
+from ...onboarding import effective_bootstrap_required, reconcile_onboarding_state
 from ...projects import (
     build_grouped_projects,
     dashboard_stats,
@@ -54,6 +55,7 @@ from ...saved_turns import (
     owner_scope_from_request,
     set_saved_turn_status,
     upsert_saved_turn,
+    migrate_global_saved_turns_to_owner,
 )
 from ...server_settings import (
     apply_server_settings,
@@ -105,6 +107,8 @@ def render_settings_page(
         or (current_user and current_user.get("is_admin"))
     )
     with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            onboarding = reconcile_onboarding_state(connection, context.settings)
         server_settings = apply_server_settings(connection, context.settings)
         api_tokens = list_api_tokens(connection) if can_manage_admin else []
         auth_status = fetch_auth_status(connection)
@@ -124,6 +128,8 @@ def render_settings_page(
             "created_token": created_token,
             "search_query": "",
             "auth_status": auth_status,
+            "effective_bootstrap_required": effective_bootstrap_required(context.settings, auth_status),
+            "onboarding": onboarding,
             "password_error": password_error,
             "password_success": password_success,
             "server_settings": server_settings,
@@ -211,8 +217,27 @@ def render_setup_page(
     *,
     error: str | None = None,
     username: str = "admin",
+    created_token: dict[str, str] | None = None,
 ) -> HTMLResponse:
     context = get_app_context(request)
+    server_url = context.settings.server_base_url or str(request.base_url).rstrip("/")
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            onboarding = reconcile_onboarding_state(connection, context.settings)
+        api_tokens = list_api_tokens(connection)
+    snippet = None
+    if created_token is not None:
+        snippet = "\n".join(
+            [
+                f"CODEX_VIEWER_SERVER_URL={server_url}",
+                f"CODEX_VIEWER_SYNC_API_TOKEN={created_token['token']}",
+                "CODEX_VIEWER_SYNC_MODE=remote",
+                "CODEX_VIEWER_SOURCE_HOST=$(hostname)",
+                "CODEX_SESSION_ROOTS=$HOME/.codex/sessions",
+                "",
+                f"PYTHONPATH=.deps python3 -m codex_session_viewer daemon --interval {context.settings.sync_interval_seconds}",
+            ]
+        )
     return context.templates.TemplateResponse(
         request,
         name="setup.html",
@@ -222,6 +247,11 @@ def render_setup_page(
             "search_query": "",
             "setup_error": error,
             "username": username,
+            "created_token": created_token,
+            "api_tokens": api_tokens,
+            "onboarding": onboarding,
+            "setup_server_url": server_url,
+            "agent_snippet": snippet,
         },
     )
 
@@ -444,25 +474,52 @@ def build_error_sessions_panel(
     return []
 
 
+def render_onboarding_status_fragment(request: Request) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            onboarding = reconcile_onboarding_state(connection, context.settings)
+    return context.templates.TemplateResponse(
+        request,
+        name="_setup_status.html",
+        context={
+            "request": request,
+            "onboarding": onboarding,
+        },
+    )
+
+
 @router.get("/setup", response_class=HTMLResponse)
 def setup_page(request: Request) -> Response:
     context = get_app_context(request)
-    if not context.settings.auth_enabled():
-        return RedirectResponse(url="/", status_code=303)
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            onboarding = reconcile_onboarding_state(connection, context.settings)
     if not getattr(request.state, "bootstrap_required", False):
-        if getattr(request.state, "auth_user", None):
+        if not onboarding["onboarding_required"]:
+            if getattr(request.state, "auth_user", None):
+                return RedirectResponse(url="/", status_code=303)
+            if context.settings.auth_enabled():
+                return RedirectResponse(url="/login", status_code=303)
             return RedirectResponse(url="/", status_code=303)
-        return RedirectResponse(url="/login", status_code=303)
+        if getattr(request.state, "auth_user", None) is None and context.settings.auth_enabled():
+            return RedirectResponse(url="/login", status_code=303)
+    elif (
+        context.settings.auth_mode == "proxy"
+        and context.settings.auth_proxy_login_url
+        and getattr(request.state, "auth_user", None) is None
+    ):
+        return RedirectResponse(url=context.settings.auth_proxy_login_url, status_code=303)
     return render_setup_page(request)
 
 
 @router.post("/setup")
 async def setup_submit(request: Request) -> Response:
     context = get_app_context(request)
-    if not context.settings.auth_enabled():
-        return RedirectResponse(url="/", status_code=303)
+    if not context.settings.auth_allows_password():
+        return RedirectResponse(url="/setup", status_code=303)
     if not getattr(request.state, "bootstrap_required", False):
-        return RedirectResponse(url="/login", status_code=303)
+        return RedirectResponse(url="/setup", status_code=303)
 
     fields = await parse_form_fields(request)
     username = fields.get("username", "").strip() or "admin"
@@ -481,6 +538,10 @@ async def setup_submit(request: Request) -> Response:
                     username=username,
                     password=password,
                 )
+                migrate_global_saved_turns_to_owner(
+                    connection,
+                    owner_scope=str(user["id"]),
+                )
     except ValueError as exc:
         return render_setup_page(request, error=str(exc), username=username)
     except sqlite3.IntegrityError:
@@ -489,12 +550,80 @@ async def setup_submit(request: Request) -> Response:
     auth_user = build_auth_user(
         user_id=str(user["id"]),
         username=str(user["username"]),
-        display_name=str(user["username"]),
+        display_name=str(user["display_name"]),
         auth_source="password",
+        role=str(user["role"]),
         is_admin=bool(user["is_admin"]),
     )
     set_password_session(request, auth_user)
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/setup", status_code=303)
+
+
+@router.post("/setup/claim-admin")
+async def setup_claim_admin(request: Request) -> Response:
+    context = get_app_context(request)
+    if not getattr(request.state, "bootstrap_required", False):
+        return RedirectResponse(url="/setup", status_code=303)
+    current_user = getattr(request.state, "auth_user", None)
+    if not current_user or not current_user.get("user_id"):
+        return render_setup_page(
+            request,
+            error="Sign in through the trusted proxy before claiming the first admin account.",
+        )
+
+    try:
+        with connect(context.settings.database_path) as connection:
+            with write_transaction(connection):
+                user = claim_initial_admin(connection, str(current_user["user_id"]))
+                migrate_global_saved_turns_to_owner(
+                    connection,
+                    owner_scope=str(user["id"]),
+                )
+    except ValueError as exc:
+        return render_setup_page(request, error=str(exc))
+
+    if current_user.get("auth_source") == "password":
+        auth_user = build_auth_user(
+            user_id=str(user["id"]),
+            username=str(user["username"]),
+            display_name=str(user["display_name"]),
+            email=str(user.get("email") or ""),
+            auth_source="password",
+            role=str(user["role"]),
+            is_admin=bool(user["is_admin"]),
+        )
+        set_password_session(request, auth_user)
+    else:
+        request.state.auth_user = build_auth_user(
+            user_id=str(user["id"]),
+            username=str(user["username"]),
+            display_name=str(user["display_name"]),
+            email=str(user.get("email") or ""),
+            auth_source=str(current_user.get("auth_source") or "proxy"),
+            role=str(user["role"]),
+            is_admin=bool(user["is_admin"]),
+        )
+    return RedirectResponse(url="/setup", status_code=303)
+
+
+@router.get("/setup/status", response_class=HTMLResponse)
+def setup_status(request: Request) -> HTMLResponse:
+    return render_onboarding_status_fragment(request)
+
+
+@router.post("/setup/token")
+async def setup_create_token(request: Request) -> HTMLResponse:
+    require_admin_user(request)
+    context = get_app_context(request)
+    if getattr(request.state, "bootstrap_required", False):
+        return RedirectResponse(url="/setup", status_code=303)
+    fields = await parse_form_fields(request)
+    label = fields.get("label", "").strip() or "First machine token"
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            created_token = create_api_token(connection, label)
+            reconcile_onboarding_state(connection, context.settings)
+    return render_setup_page(request, created_token=created_token)
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -505,6 +634,11 @@ def login_page(request: Request) -> Response:
     if getattr(request.state, "bootstrap_required", False):
         return RedirectResponse(url="/setup", status_code=303)
     if getattr(request.state, "auth_user", None):
+        with connect(context.settings.database_path) as connection:
+            with write_transaction(connection):
+                onboarding = reconcile_onboarding_state(connection, context.settings)
+        if onboarding["onboarding_required"]:
+            return RedirectResponse(url="/setup", status_code=303)
         return RedirectResponse(url=safe_next_path(request.query_params.get("next")), status_code=303)
     if (
         context.settings.auth_mode == "proxy"
@@ -566,7 +700,10 @@ async def login_submit(request: Request) -> Response:
         is_admin=bool(user["is_admin"]),
     )
     set_password_session(request, auth_user)
-    return RedirectResponse(url=next_path, status_code=303)
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            onboarding = reconcile_onboarding_state(connection, context.settings)
+    return RedirectResponse(url="/setup" if onboarding["onboarding_required"] else next_path, status_code=303)
 
 
 @router.post("/logout")
@@ -654,6 +791,11 @@ def index(
     host: str | None = Query(default=None),
 ) -> HTMLResponse:
     context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            onboarding = reconcile_onboarding_state(connection, context.settings)
+    if onboarding["onboarding_required"]:
+        return RedirectResponse(url="/setup", status_code=303)
     now = datetime.now().astimezone()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     hot_window_start = (now - timedelta(days=7)).isoformat()
@@ -757,6 +899,8 @@ def search_results(request: Request, q: str | None = Query(default=None)) -> HTM
 def remotes_health(request: Request) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            onboarding = reconcile_onboarding_state(connection, context.settings)
         agents_dashboard = fetch_agents_dashboard(connection, context.settings)
     return context.templates.TemplateResponse(
         request,
@@ -765,6 +909,7 @@ def remotes_health(request: Request) -> HTMLResponse:
             "request": request,
             "settings": context.settings,
             "agents_dashboard": agents_dashboard,
+            "onboarding": onboarding,
             "return_to": request_return_to(request),
             "search_query": "",
         },

@@ -9,6 +9,7 @@ from .session_rollups import (
     backfill_session_rollups,
     backfill_session_turn_activity_daily,
 )
+from .onboarding import ensure_onboarding_state_row
 from .turn_index import backfill_session_turns
 
 
@@ -104,6 +105,18 @@ USER_COLUMN_DEFS = {
 AUTH_STATE_COLUMN_DEFS = {
     "singleton": "INTEGER PRIMARY KEY CHECK(singleton = 1)",
     "bootstrap_completed_at": "TEXT",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
+ONBOARDING_STATE_COLUMN_DEFS = {
+    "singleton": "INTEGER PRIMARY KEY CHECK(singleton = 1)",
+    "completed_at": "TEXT",
+    "first_heartbeat_at": "TEXT",
+    "first_heartbeat_source_host": "TEXT",
+    "first_session_ingested_at": "TEXT",
+    "first_session_source_host": "TEXT",
+    "last_failure_reason": "TEXT",
     "created_at": "TEXT NOT NULL",
     "updated_at": "TEXT NOT NULL",
 }
@@ -339,6 +352,18 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS auth_state (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
     bootstrap_completed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS onboarding_state (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    completed_at TEXT,
+    first_heartbeat_at TEXT,
+    first_heartbeat_source_host TEXT,
+    first_session_ingested_at TEXT,
+    first_session_source_host TEXT,
+    last_failure_reason TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -751,6 +776,17 @@ def ensure_auth_state_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_onboarding_state_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "onboarding_state"):
+        return
+    onboarding_state_columns = table_columns(connection, "onboarding_state")
+    for column_name, column_def in ONBOARDING_STATE_COLUMN_DEFS.items():
+        if column_name not in onboarding_state_columns and column_name != "singleton":
+            connection.execute(
+                f"ALTER TABLE onboarding_state ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def ensure_alert_incident_columns(connection: sqlite3.Connection) -> None:
     if not table_exists(connection, "alert_incidents"):
         return
@@ -820,6 +856,7 @@ def init_db(database_path: Path) -> None:
             ensure_user_columns(connection)
             backfill_user_access_columns(connection)
             ensure_auth_state_columns(connection)
+            ensure_onboarding_state_columns(connection)
             ensure_alert_incident_columns(connection)
             ensure_alert_delivery_columns(connection)
             ensure_saved_turn_columns(connection)
@@ -833,6 +870,7 @@ def init_db(database_path: Path) -> None:
             if rebuilt_sessions or events_need_rebuild(connection):
                 rebuild_events_table(connection)
             ensure_auth_state_row(connection)
+            ensure_onboarding_state_row(connection)
             connection.executescript(INDEX_SQL)
             backfill_session_rollups(connection)
             backfill_session_turn_activity_daily(connection)
