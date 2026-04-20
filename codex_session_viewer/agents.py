@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,6 +25,16 @@ def trimmed(value: object) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _issue_fingerprint(kind: str, values: dict[str, object]) -> str:
+    payload = json.dumps(
+        {"kind": kind, "values": values},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def upsert_remote_agent_status(
@@ -294,6 +306,25 @@ def fetch_remote_agent_health(
     return build_remote_agent_health(rows, settings)
 
 
+def fetch_remote_agent_status(
+    connection: sqlite3.Connection,
+    settings: Settings,
+    source_host: str,
+) -> dict[str, Any] | None:
+    row = connection.execute(
+        """
+        SELECT *
+        FROM remote_agents
+        WHERE source_host = ?
+        """,
+        (source_host,),
+    ).fetchone()
+    if row is None:
+        return None
+    health_rows = build_remote_agent_health([row], settings)
+    return health_rows[0] if health_rows else None
+
+
 def _session_timestamp(row: sqlite3.Row) -> str:
     return (
         trimmed(row["last_turn_timestamp"])
@@ -362,38 +393,9 @@ def _latest_session(current: dict[str, Any] | None, candidate: dict[str, Any]) -
     return current
 
 
-def _attention_badges(entry: dict[str, Any]) -> list[dict[str, str]]:
-    badges: list[dict[str, str]] = []
-    remote = entry.get("remote") or {}
-    if int(remote.get("last_fail_count") or 0) > 0 or remote.get("last_error"):
-        badges.append({"tone": "rose", "label": "Sync failure"})
-    return badges
-
-
-def _secondary_badges(entry: dict[str, Any]) -> list[dict[str, str]]:
-    badges: list[dict[str, str]] = []
-    remote = entry.get("remote") or {}
-    if remote.get("stale"):
-        badges.append({"tone": "stone", "label": "Offline"})
-    if remote.get("version_mismatch"):
-        badges.append({"tone": "amber", "label": "Version drift"})
-    if remote.get("api_mismatch"):
-        badges.append({"tone": "amber", "label": "API drift"})
-    update_state = str(remote.get("update_state") or "").strip()
-    if update_state and update_state not in {"", "current"}:
-        badges.append({"tone": "stone", "label": update_state.replace("_", " ")})
-    return badges
-
-
-def _recent_projects_list(entry: dict[str, Any]) -> list[dict[str, str]]:
-    values = list(entry["recent_projects"].values())
-    values.sort(key=lambda item: item["timestamp"], reverse=True)
-    return values[:4]
-
-
-def _agent_issue_details(entry: dict[str, Any]) -> list[dict[str, str]]:
-    remote = entry.get("remote") or {}
-    details: list[dict[str, str]] = []
+def remote_health_issues(remote: dict[str, Any] | None) -> list[dict[str, object]]:
+    remote = remote or {}
+    issues: list[dict[str, object]] = []
 
     last_fail_count = int(remote.get("last_fail_count") or 0)
     last_upload_count = int(remote.get("last_upload_count") or 0)
@@ -423,11 +425,25 @@ def _agent_issue_details(entry: dict[str, Any]) -> list[dict[str, str]]:
             detail += f" Path: {last_failed_source_path}."
         if last_failure_detail:
             detail += f" Exception: {last_failure_detail}"
-        details.append(
+        issues.append(
             {
+                "kind": "sync_failure",
+                "severity": "critical",
                 "tone": "rose",
                 "label": "Sync failure",
                 "detail": detail,
+                "attention": True,
+                "secondary": False,
+                "alertable": True,
+                "fingerprint": _issue_fingerprint(
+                    "sync_failure",
+                    {
+                        "last_fail_count": last_fail_count,
+                        "last_error": last_error,
+                        "last_failed_source_path": last_failed_source_path,
+                        "last_failure_detail": last_failure_detail,
+                    },
+                ),
             }
         )
 
@@ -435,72 +451,174 @@ def _agent_issue_details(entry: dict[str, Any]) -> list[dict[str, str]]:
         detail = "This host is currently stale or offline."
         if last_seen_at:
             detail += f" Last heartbeat was {last_seen_at}."
-        details.append(
+        issues.append(
             {
+                "kind": "offline",
+                "severity": "warning",
                 "tone": "stone",
                 "label": "Offline",
                 "detail": detail,
+                "attention": False,
+                "secondary": True,
+                "alertable": True,
+                "fingerprint": _issue_fingerprint("offline", {"state": "stale"}),
             }
         )
 
     if bool(remote.get("api_mismatch")):
-        details.append(
+        issues.append(
             {
+                "kind": "api_drift",
+                "severity": "critical",
                 "tone": "amber",
                 "label": "API drift",
                 "detail": (
                     f"Host reports sync API {sync_api_version}, but the server expects {server_api_version_seen}. "
                     "This can block or invalidate sync until the versions match."
                 ),
+                "attention": False,
+                "secondary": True,
+                "alertable": True,
+                "fingerprint": _issue_fingerprint(
+                    "api_drift",
+                    {
+                        "sync_api_version": sync_api_version,
+                        "server_api_version_seen": server_api_version_seen,
+                    },
+                ),
             }
         )
 
     if bool(remote.get("version_mismatch")):
-        details.append(
+        issues.append(
             {
+                "kind": "version_drift",
+                "severity": "warning",
                 "tone": "amber",
                 "label": "Version drift",
                 "detail": (
                     f"Host is running agent {agent_version}, but the server target is {server_version_seen}. "
                     f"{update_message or 'A manual update may be required.'}"
                 ),
+                "attention": False,
+                "secondary": True,
+                "alertable": True,
+                "fingerprint": _issue_fingerprint(
+                    "version_drift",
+                    {
+                        "agent_version": agent_version,
+                        "server_version_seen": server_version_seen,
+                    },
+                ),
             }
         )
 
     if update_state == "update_failed":
-        details.append(
+        issues.append(
             {
+                "kind": "update_failed",
+                "severity": "critical",
                 "tone": "rose",
                 "label": "Update failed",
                 "detail": update_message or "The host attempted to update itself, but the update failed.",
+                "attention": False,
+                "secondary": True,
+                "alertable": True,
+                "fingerprint": _issue_fingerprint(
+                    "update_failed",
+                    {"update_message": update_message or last_error},
+                ),
             }
         )
     elif update_state == "updated_restart_required":
-        details.append(
+        issues.append(
             {
+                "kind": "restart_required",
+                "severity": "warning",
                 "tone": "amber",
                 "label": "Restart required",
                 "detail": update_message or "The host updated successfully, but needs a restart before it is current.",
+                "attention": False,
+                "secondary": True,
+                "alertable": True,
+                "fingerprint": _issue_fingerprint(
+                    "restart_required",
+                    {"update_message": update_message},
+                ),
             }
         )
     elif update_state == "protocol_mismatch" and update_message:
-        details.append(
+        issues.append(
             {
+                "kind": "protocol_mismatch",
+                "severity": "critical",
                 "tone": "rose",
                 "label": "Protocol mismatch",
                 "detail": update_message,
+                "attention": False,
+                "secondary": True,
+                "alertable": False,
+                "fingerprint": _issue_fingerprint(
+                    "protocol_mismatch",
+                    {"update_message": update_message},
+                ),
             }
         )
     elif update_state == "manual_update_required" and update_message:
-        details.append(
+        issues.append(
             {
+                "kind": "manual_update_required",
+                "severity": "warning",
                 "tone": "amber",
                 "label": "Manual update required",
                 "detail": update_message,
+                "attention": False,
+                "secondary": True,
+                "alertable": False,
+                "fingerprint": _issue_fingerprint(
+                    "manual_update_required",
+                    {"update_message": update_message},
+                ),
             }
         )
 
-    return details
+    return issues
+
+
+def _attention_badges(entry: dict[str, Any]) -> list[dict[str, str]]:
+    remote = entry.get("remote") or {}
+    return [
+        {"tone": str(issue["tone"]), "label": str(issue["label"])}
+        for issue in remote_health_issues(remote)
+        if bool(issue.get("attention"))
+    ]
+
+
+def _secondary_badges(entry: dict[str, Any]) -> list[dict[str, str]]:
+    remote = entry.get("remote") or {}
+    return [
+        {"tone": str(issue["tone"]), "label": str(issue["label"])}
+        for issue in remote_health_issues(remote)
+        if bool(issue.get("secondary"))
+    ]
+
+
+def _recent_projects_list(entry: dict[str, Any]) -> list[dict[str, str]]:
+    values = list(entry["recent_projects"].values())
+    values.sort(key=lambda item: item["timestamp"], reverse=True)
+    return values[:4]
+
+
+def _agent_issue_details(entry: dict[str, Any]) -> list[dict[str, str]]:
+    remote = entry.get("remote") or {}
+    return [
+        {
+            "tone": str(issue["tone"]),
+            "label": str(issue["label"]),
+            "detail": str(issue["detail"]),
+        }
+        for issue in remote_health_issues(remote)
+    ]
 
 
 def fetch_agents_dashboard(
@@ -572,9 +690,25 @@ def fetch_agents_dashboard(
         latest_session = entry.get("latest_session")
         latest_failed_session = entry.get("latest_failed_session")
         recent_projects = _recent_projects_list(entry)
-        issue_badges = _attention_badges(entry)
-        secondary_badges = _secondary_badges(entry)
-        issue_details = _agent_issue_details(entry)
+        issues = remote_health_issues(remote)
+        issue_badges = [
+            {"tone": str(issue["tone"]), "label": str(issue["label"])}
+            for issue in issues
+            if bool(issue.get("attention"))
+        ]
+        secondary_badges = [
+            {"tone": str(issue["tone"]), "label": str(issue["label"])}
+            for issue in issues
+            if bool(issue.get("secondary"))
+        ]
+        issue_details = [
+            {
+                "tone": str(issue["tone"]),
+                "label": str(issue["label"]),
+                "detail": str(issue["detail"]),
+            }
+            for issue in issues
+        ]
         is_attention = bool(issue_badges)
         is_dormant = bool(remote.get("stale")) or (not is_attention and int(entry["recent_turn_count"] or 0) == 0)
         if is_attention:

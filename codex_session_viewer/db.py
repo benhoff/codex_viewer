@@ -101,6 +101,42 @@ AUTH_STATE_COLUMN_DEFS = {
     "updated_at": "TEXT NOT NULL",
 }
 
+ALERT_INCIDENT_COLUMN_DEFS = {
+    "alert_key": "TEXT PRIMARY KEY",
+    "source_host": "TEXT NOT NULL",
+    "issue_kind": "TEXT NOT NULL",
+    "status": "TEXT NOT NULL DEFAULT 'open'",
+    "severity": "TEXT NOT NULL DEFAULT 'warning'",
+    "title": "TEXT NOT NULL DEFAULT ''",
+    "detail": "TEXT NOT NULL DEFAULT ''",
+    "fingerprint": "TEXT NOT NULL DEFAULT ''",
+    "opened_at": "TEXT NOT NULL",
+    "last_seen_at": "TEXT NOT NULL",
+    "resolved_at": "TEXT",
+    "last_notified_at": "TEXT",
+    "last_notification_kind": "TEXT",
+    "last_notification_fingerprint": "TEXT",
+    "detail_json": "TEXT NOT NULL DEFAULT '{}'",
+    "updated_at": "TEXT NOT NULL",
+}
+
+ALERT_DELIVERY_COLUMN_DEFS = {
+    "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
+    "alert_key": "TEXT NOT NULL",
+    "source_host": "TEXT NOT NULL DEFAULT ''",
+    "issue_kind": "TEXT NOT NULL DEFAULT ''",
+    "notification_kind": "TEXT NOT NULL DEFAULT 'open'",
+    "provider": "TEXT NOT NULL DEFAULT 'webhook'",
+    "payload_json": "TEXT NOT NULL",
+    "status": "TEXT NOT NULL DEFAULT 'pending'",
+    "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+    "next_attempt_at": "TEXT NOT NULL",
+    "created_at": "TEXT NOT NULL",
+    "claimed_at": "TEXT",
+    "sent_at": "TEXT",
+    "last_error": "TEXT",
+}
+
 SAVED_TURN_COLUMN_DEFS = {
     "owner_scope": "TEXT NOT NULL",
     "session_id": "TEXT NOT NULL",
@@ -300,6 +336,42 @@ CREATE TABLE IF NOT EXISTS auth_state (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS alert_incidents (
+    alert_key TEXT PRIMARY KEY,
+    source_host TEXT NOT NULL,
+    issue_kind TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    severity TEXT NOT NULL DEFAULT 'warning',
+    title TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    fingerprint TEXT NOT NULL DEFAULT '',
+    opened_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    resolved_at TEXT,
+    last_notified_at TEXT,
+    last_notification_kind TEXT,
+    last_notification_fingerprint TEXT,
+    detail_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alert_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_key TEXT NOT NULL,
+    source_host TEXT NOT NULL DEFAULT '',
+    issue_kind TEXT NOT NULL DEFAULT '',
+    notification_kind TEXT NOT NULL DEFAULT 'open',
+    provider TEXT NOT NULL DEFAULT 'webhook',
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    claimed_at TEXT,
+    sent_at TEXT,
+    last_error TEXT
+);
+
 CREATE TABLE IF NOT EXISTS saved_turns (
     owner_scope TEXT NOT NULL,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -366,6 +438,18 @@ ON events(session_id, kind);
 
 CREATE INDEX IF NOT EXISTS idx_remote_agents_last_seen
 ON remote_agents(last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_alert_incidents_source_status
+ON alert_incidents(source_host, status, issue_kind);
+
+CREATE INDEX IF NOT EXISTS idx_alert_incidents_status_seen
+ON alert_incidents(status, last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_alert_deliveries_status_next_attempt
+ON alert_deliveries(status, next_attempt_at ASC, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_alert_deliveries_alert_key_status
+ON alert_deliveries(alert_key, status, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_created_at
 ON api_tokens(created_at DESC);
@@ -615,6 +699,28 @@ def ensure_auth_state_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_alert_incident_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "alert_incidents"):
+        return
+    alert_incident_columns = table_columns(connection, "alert_incidents")
+    for column_name, column_def in ALERT_INCIDENT_COLUMN_DEFS.items():
+        if column_name not in alert_incident_columns and column_name != "alert_key":
+            connection.execute(
+                f"ALTER TABLE alert_incidents ADD COLUMN {column_name} {column_def}"
+            )
+
+
+def ensure_alert_delivery_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "alert_deliveries"):
+        return
+    alert_delivery_columns = table_columns(connection, "alert_deliveries")
+    for column_name, column_def in ALERT_DELIVERY_COLUMN_DEFS.items():
+        if column_name not in alert_delivery_columns and column_name != "id":
+            connection.execute(
+                f"ALTER TABLE alert_deliveries ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def ensure_saved_turn_columns(connection: sqlite3.Connection) -> None:
     if not table_exists(connection, "saved_turns"):
         return
@@ -661,6 +767,8 @@ def init_db(database_path: Path) -> None:
             ensure_remote_agent_columns(connection)
             ensure_user_columns(connection)
             ensure_auth_state_columns(connection)
+            ensure_alert_incident_columns(connection)
+            ensure_alert_delivery_columns(connection)
             ensure_saved_turn_columns(connection)
             ensure_session_turn_columns(connection)
             recover_legacy_sessions(connection)

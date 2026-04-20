@@ -151,6 +151,11 @@ class Settings:
     daemon_rebuild_on_start: bool
     sync_on_start: bool
     page_size: int
+    alerts_enabled: bool
+    alerts_provider: str
+    alerts_webhook_url: str | None
+    alerts_realert_minutes: int
+    alerts_send_resolutions: bool
     server_host: str
     server_port: int
     server_base_url: str | None
@@ -185,6 +190,11 @@ class Settings:
         daemon_rebuild_on_start = _env_truthy(os.getenv("CODEX_VIEWER_DAEMON_REBUILD_ON_START"), False)
         page_size = 24
         sync_on_start = True
+        alerts_enabled = _env_truthy(os.getenv("CODEX_VIEWER_ALERTS_ENABLED"), False)
+        alerts_provider = (os.getenv("CODEX_VIEWER_ALERTS_PROVIDER") or "webhook").strip().lower() or "webhook"
+        alerts_webhook_url = _clean_url(os.getenv("CODEX_VIEWER_ALERTS_WEBHOOK_URL"))
+        alerts_realert_minutes = int(os.getenv("CODEX_VIEWER_ALERTS_REALERT_MINUTES", "60"))
+        alerts_send_resolutions = _env_truthy(os.getenv("CODEX_VIEWER_ALERTS_SEND_RESOLUTIONS"), True)
         session_roots = _split_roots(os.getenv("CODEX_SESSION_ROOTS"))
         server_host = os.getenv("CODEX_VIEWER_HOST", "127.0.0.1")
         server_port = int(os.getenv("CODEX_VIEWER_PORT", "8000"))
@@ -216,6 +226,11 @@ class Settings:
             daemon_rebuild_on_start=daemon_rebuild_on_start,
             sync_on_start=sync_on_start,
             page_size=page_size,
+            alerts_enabled=alerts_enabled,
+            alerts_provider=alerts_provider,
+            alerts_webhook_url=alerts_webhook_url,
+            alerts_realert_minutes=alerts_realert_minutes,
+            alerts_send_resolutions=alerts_send_resolutions,
             server_host=server_host,
             server_port=server_port,
             server_base_url=server_base_url,

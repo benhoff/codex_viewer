@@ -5,6 +5,7 @@ import json
 import logging
 from pathlib import Path
 
+from .alerts import DEFAULT_ALERT_WORKER_INTERVAL, run_alert_worker
 from .config import Settings
 from .db import connect, init_db
 from .importer import sync_sessions
@@ -31,6 +32,10 @@ def parse_args() -> argparse.Namespace:
     daemon = subparsers.add_parser("daemon", help="Run the background sync daemon")
     daemon.add_argument("--interval", type=int)
     daemon.add_argument("--rebuild-on-start", action="store_true")
+
+    alerts = subparsers.add_parser("alerts", help="Run the alert reconciliation and delivery worker")
+    alerts.add_argument("--interval", type=int)
+    alerts.add_argument("--once", action="store_true")
 
     export = subparsers.add_parser("export", help="Export one imported session")
     export.add_argument("session_id")
@@ -80,6 +85,16 @@ def cli() -> int:
             settings,
             interval_seconds=interval_seconds,
             rebuild_on_start=getattr(args, "rebuild_on_start", False) or settings.daemon_rebuild_on_start,
+        )
+
+    if args.command == "alerts":
+        settings.ensure_directories()
+        init_db(settings.database_path)
+        interval_seconds = getattr(args, "interval", None) or DEFAULT_ALERT_WORKER_INTERVAL
+        return run_alert_worker(
+            settings,
+            interval_seconds=interval_seconds,
+            once=bool(getattr(args, "once", False)),
         )
 
     if args.command == "export":
