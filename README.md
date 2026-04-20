@@ -102,6 +102,24 @@ Export one session:
 PYTHONPATH=.deps python3 -m codex_session_viewer export SESSION_ID --format markdown
 ```
 
+Create a whole-instance backup archive:
+
+```bash
+PYTHONPATH=.deps python3 -m codex_session_viewer backup create --output ./codex-viewer-backup.zip
+```
+
+Verify a backup archive:
+
+```bash
+PYTHONPATH=.deps python3 -m codex_session_viewer backup verify ./codex-viewer-backup.zip
+```
+
+Restore a backup archive into a fresh data directory:
+
+```bash
+PYTHONPATH=.deps python3 -m codex_session_viewer backup restore ./codex-viewer-backup.zip --data-dir ./restore-data
+```
+
 ## Configuration
 
 You usually only need to care about these variables:
@@ -213,3 +231,30 @@ npm run test:e2e
 ```
 
 The E2E harness starts the real FastAPI app against a temporary SQLite data directory for each test, then drives onboarding, login, dashboard, project, session, queue, and machines flows through Playwright.
+
+## Backup And Restore
+
+The supported lightweight backup boundary is:
+
+- `CODEX_VIEWER_DATA_DIR`
+- the SQLite database file
+- raw session artifacts stored under `data/session_artifacts`
+- the generated browser session secret in `data/.session-secret`
+
+What this does not try to do yet:
+
+- project-level export/import
+- selective restore
+- archive retention policies
+- in-app project archive lifecycle
+
+Recommended workflow:
+
+1. Create a backup archive with `backup create`.
+2. Verify it with `backup verify`.
+3. Restore it into a fresh directory with `backup restore --data-dir ...`.
+4. Start the viewer against the restored directory.
+
+`backup restore` is intentionally offline and conservative. It restores into a new or empty target directory only; it does not merge into an existing install.
+
+If you use the default layout, the restored instance can usually be started by pointing `CODEX_VIEWER_DATA_DIR` at the restored directory. If you run SQLite outside the data directory with `CODEX_VIEWER_DB`, restore it with `--database-path` and reuse that setting when you start the restored server.

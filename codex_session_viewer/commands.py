@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import json
 import logging
 from pathlib import Path
 
 from .alerts import DEFAULT_ALERT_WORKER_INTERVAL, run_alert_worker
+from .backup_restore import create_instance_backup, restore_instance_backup, verify_backup_archive
 from .config import Settings
 from .db import connect, init_db
 from .importer import sync_sessions
@@ -43,6 +45,23 @@ def parse_args() -> argparse.Namespace:
     export.add_argument("session_id")
     export.add_argument("--format", choices=["json", "markdown", "raw", "bundle"], default="json")
     export.add_argument("--output")
+
+    backup = subparsers.add_parser("backup", help="Create, verify, or restore whole-instance backups")
+    backup_subparsers = backup.add_subparsers(dest="backup_command", required=True)
+
+    backup_create = backup_subparsers.add_parser("create", help="Create a zip archive from the current instance")
+    backup_create.add_argument("--output")
+
+    backup_verify = backup_subparsers.add_parser("verify", help="Verify a backup archive")
+    backup_verify.add_argument("archive")
+
+    backup_restore = backup_subparsers.add_parser(
+        "restore",
+        help="Restore a backup archive into a fresh target directory",
+    )
+    backup_restore.add_argument("archive")
+    backup_restore.add_argument("--data-dir", required=True)
+    backup_restore.add_argument("--database-path")
 
     return parser.parse_args()
 
@@ -145,5 +164,28 @@ def cli() -> int:
         if args.format != "bundle" and args.output:
             print(str(Path(args.output)))
         return 0
+
+    if args.command == "backup":
+        if args.backup_command == "create":
+            timestamp = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
+            default_output = settings.project_root / f"codex-viewer-backup-{timestamp}.zip"
+            output_path = Path(args.output).expanduser() if args.output else default_output
+            result = create_instance_backup(settings, output_path=output_path)
+            print(json.dumps(result, indent=2))
+            return 0
+
+        if args.backup_command == "verify":
+            result = verify_backup_archive(Path(args.archive).expanduser())
+            print(json.dumps(result, indent=2))
+            return 0
+
+        if args.backup_command == "restore":
+            result = restore_instance_backup(
+                Path(args.archive).expanduser(),
+                target_data_dir=Path(args.data_dir).expanduser(),
+                target_database_path=Path(args.database_path).expanduser() if args.database_path else None,
+            )
+            print(json.dumps(result, indent=2))
+            return 0
 
     raise SystemExit(f"Unsupported command: {args.command}")
