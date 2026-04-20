@@ -14,6 +14,9 @@
           <span class="ml-2 rounded-full bg-white/80 px-2 py-0.5 text-[0.68rem] font-semibold text-amber-800">{{ queue_counts.open }}</span>
         {% endif %}
       </a>
+      <a href="{{ group.detail_href }}/stream" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
+        Activity stream
+      </a>
       <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
         Edit
       </a>

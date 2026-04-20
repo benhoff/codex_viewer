@@ -61,6 +61,37 @@ GROUP_KEY_MATCH_SQL = """
 )
 """
 
+TURN_STREAM_SELECT = f"""
+    st.session_id,
+    st.turn_number,
+    st.prompt_excerpt,
+    st.prompt_timestamp,
+    st.response_excerpt,
+    st.response_timestamp,
+    st.response_state,
+    st.latest_timestamp,
+    st.command_count,
+    st.patch_count,
+    st.failure_count,
+    st.files_touched_count,
+    s.session_timestamp,
+    s.started_at,
+    s.imported_at,
+    s.source_host,
+    s.cwd,
+    s.cwd_name,
+    s.git_repository_url,
+    s.github_remote_url,
+    s.github_org,
+    s.github_repo,
+    s.github_slug,
+    s.inferred_project_kind,
+    s.inferred_project_key,
+    s.inferred_project_label,
+    s.import_warning,
+    {OVERRIDE_SELECT}
+"""
+
 
 def utc_now_iso() -> str:
     return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
@@ -652,6 +683,150 @@ def query_group_rows_for_key(
         ),
         (key, key),
     ).fetchall()
+
+
+def resolve_project_detail_hrefs(
+    connection: sqlite3.Connection,
+    group_keys: list[str],
+) -> dict[str, str]:
+    keys = {trimmed(key) for key in group_keys if trimmed(key)}
+    if not keys:
+        return {}
+    groups = build_grouped_projects(query_group_rows(connection))
+    return {
+        group.key: group.detail_href
+        for group in groups
+        if group.key in keys
+    }
+
+
+def fetch_turn_stream(
+    connection: sqlite3.Connection,
+    *,
+    page: int = 1,
+    page_size: int = 40,
+    group_key: str | None = None,
+    detail_href_override: str | None = None,
+) -> dict[str, Any]:
+    normalized_page = max(int(page or 1), 1)
+    normalized_page_size = max(10, min(int(page_size or 40), 100))
+    offset = (normalized_page - 1) * normalized_page_size
+
+    params: list[Any] = []
+    extra_conditions: list[str] = []
+    normalized_group_key = trimmed(group_key)
+    if normalized_group_key:
+        extra_conditions.append(GROUP_KEY_MATCH_SQL)
+        params.extend([normalized_group_key, normalized_group_key])
+
+    where_clause = visible_session_where(extra_conditions)
+    from_clause = f"""
+        FROM session_turns AS st
+        JOIN sessions AS s
+            ON s.id = st.session_id
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        {where_clause}
+    """
+    order_clause = """
+        ORDER BY COALESCE(
+            st.latest_timestamp,
+            st.response_timestamp,
+            st.prompt_timestamp,
+            s.last_turn_timestamp,
+            s.session_timestamp,
+            s.started_at,
+            s.imported_at
+        ) DESC,
+        st.session_id DESC,
+        st.turn_number DESC
+    """
+
+    total_row = connection.execute(
+        f"SELECT COUNT(*) AS count {from_clause}",
+        params,
+    ).fetchone()
+    total_count = int(total_row["count"] or 0) if total_row is not None else 0
+
+    rows = connection.execute(
+        f"""
+        SELECT
+            {TURN_STREAM_SELECT}
+        {from_clause}
+        {order_clause}
+        LIMIT ? OFFSET ?
+        """,
+        [*params, normalized_page_size, offset],
+    ).fetchall()
+
+    href_by_group = (
+        {normalized_group_key: detail_href_override}
+        if normalized_group_key and detail_href_override
+        else resolve_project_detail_hrefs(
+            connection,
+            [effective_project_fields(row)["effective_group_key"] for row in rows],
+        )
+    )
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        project = effective_project_fields(row)
+        effective_group_key = project["effective_group_key"]
+        detail_href = href_by_group.get(effective_group_key)
+        if not detail_href:
+            detail_href = f"/groups?key={quote(effective_group_key, safe='')}"
+
+        response_state = trimmed(row["response_state"]) or "missing"
+        viewer_warning = trimmed(row["import_warning"]) or ""
+        canceled_turns = 1 if response_state == "canceled" else 0
+        signal_badges = build_signal_badges(
+            command_failures=int(row["failure_count"] or 0),
+            aborted_turns=canceled_turns,
+            viewer_warnings=1 if viewer_warning else 0,
+        )
+        timestamp = (
+            trimmed(row["latest_timestamp"])
+            or trimmed(row["response_timestamp"])
+            or trimmed(row["prompt_timestamp"])
+            or trimmed(row["session_timestamp"])
+            or trimmed(row["started_at"])
+            or trimmed(row["imported_at"])
+        )
+        items.append(
+            {
+                "session_id": str(row["session_id"]),
+                "turn_number": int(row["turn_number"] or 0),
+                "timestamp": timestamp,
+                "prompt_excerpt": trimmed(row["prompt_excerpt"]) or "No prompt excerpt",
+                "response_excerpt": trimmed(row["response_excerpt"]) or "No assistant response captured.",
+                "response_state": response_state,
+                "status_tone": "amber" if response_state == "canceled" else ("sky" if response_state == "update" else "emerald"),
+                "status_label": "Canceled" if response_state == "canceled" else ("Update" if response_state == "update" else "Final"),
+                "command_count": int(row["command_count"] or 0),
+                "patch_count": int(row["patch_count"] or 0),
+                "failure_count": int(row["failure_count"] or 0),
+                "files_touched_count": int(row["files_touched_count"] or 0),
+                "viewer_warning": viewer_warning,
+                "signal_badges": signal_badges,
+                "project_label": project["display_label"],
+                "project_detail_href": detail_href,
+                "host": project["source_host"],
+                "session_href": f"/sessions/{quote(str(row['session_id']), safe='')}?turn={int(row['turn_number'] or 0)}",
+                "audit_href": f"/sessions/{quote(str(row['session_id']), safe='')}?view=audit&turn={int(row['turn_number'] or 0)}",
+            }
+        )
+
+    return {
+        "items": items,
+        "page": normalized_page,
+        "page_size": normalized_page_size,
+        "total_count": total_count,
+        "has_prev": normalized_page > 1,
+        "has_next": offset + len(items) < total_count,
+        "page_count": max((total_count + normalized_page_size - 1) // normalized_page_size, 1),
+        "showing_from": offset + 1 if items else 0,
+        "showing_to": offset + len(items),
+    }
 
 
 @dataclass(slots=True)

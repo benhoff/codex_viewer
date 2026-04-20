@@ -755,6 +755,11 @@ def index(
     )
 
 
+@router.get("/stream", response_class=HTMLResponse)
+def global_stream() -> RedirectResponse:
+    return RedirectResponse(url="/", status_code=308)
+
+
 @router.get("/search", response_class=HTMLResponse)
 def search_results(request: Request, q: str | None = Query(default=None)) -> HTMLResponse:
     context = get_app_context(request)

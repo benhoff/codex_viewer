@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block title %}{{ stream_project.display_label }} Stream | Codex Viewer{% endblock %}
+
+{% block content %}
+  <div class="mx-auto w-full max-w-6xl">
+    <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap gap-2 sm:gap-3">
+        <a href="/" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Back to projects
+        </a>
+        <a href="{{ stream_project.detail_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Back to repo
+        </a>
+      </div>
+    </div>
+
+    <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:mb-8 sm:p-6 lg:p-7">
+      <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div class="min-w-0 flex-1">
+          <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Cross-session turn stream</p>
+          <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">{{ stream_project.display_label }}</h1>
+          <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
+            All turns across every session in this repo, newest first.
+          </p>
+        </div>
+
+        <div class="grid w-full grid-cols-2 gap-3 lg:w-[20rem]">
+          <div class="rounded-[1.15rem] bg-stone-900 p-4 text-stone-50">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-300">Turns</p>
+            <p class="mt-2 text-2xl font-semibold">{{ stream_data.total_count }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-sky-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-sky-600">Showing</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ stream_data.showing_to - stream_data.showing_from + 1 if stream_data.showing_from else 0 }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-amber-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-amber-600">Page</p>
+            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ stream_data.page }}</p>
+          </div>
+          <div class="rounded-[1.15rem] bg-emerald-50 p-4">
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-emerald-600">Range</p>
+            <p class="mt-2 text-sm font-semibold text-stone-900">
+              {% if stream_data.showing_from %}
+                {{ stream_data.showing_from }}-{{ stream_data.showing_to }}
+              {% else %}
+                0
+              {% endif %}
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+      <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Turn Stream</h2>
+          <p class="mt-1 text-sm text-stone-600">Cross-session activity for this repo.</p>
+        </div>
+        <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">
+          {% if stream_data.showing_from %}
+            showing {{ stream_data.showing_from }}-{{ stream_data.showing_to }} of {{ stream_data.total_count }}
+          {% else %}
+            no turns found
+          {% endif %}
+        </p>
+      </div>
+
+      <div class="space-y-4">
+        {% for item in stream_data["items"] %}
+          <article class="rounded-[1.35rem] border border-stone-200 bg-stone-50/70 p-4 sm:p-5">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">
+                    {{ item.host }}
+                  </span>
+                  <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">
+                    Turn {{ item.turn_number }}
+                  </span>
+                  <span class="rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% elif item.status_tone == 'sky' %}bg-sky-100 text-sky-800{% else %}bg-emerald-100 text-emerald-800{% endif %}">
+                    {{ item.status_label }}
+                  </span>
+                  {% for badge in item.signal_badges %}
+                    <span class="rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                      {{ badge.label }}
+                    </span>
+                  {% endfor %}
+                </div>
+                <p class="mt-3 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" {% if item.timestamp %}title="{{ item.timestamp|full_timestamp }}"{% endif %}>
+                  {{ item.timestamp|humanize_timestamp }}
+                </p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                  Open turn
+                </a>
+                <a href="{{ item.audit_href }}" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
+                  Audit
+                </a>
+              </div>
+            </div>
+
+            <div class="mt-4 grid gap-4 lg:grid-cols-2">
+              <section class="rounded-[1.1rem] border border-rose-200 bg-rose-50/85 p-4">
+                <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-rose-700">Prompt</p>
+                <p class="mt-3 whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ item.prompt_excerpt }}</p>
+              </section>
+
+              <section class="rounded-[1.1rem] border p-4 {% if item.response_state == 'canceled' %}border-amber-200 bg-amber-50/85{% elif item.response_state == 'update' %}border-sky-200 bg-sky-50/85{% else %}border-emerald-200 bg-emerald-50/85{% endif %}">
+                <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] {% if item.response_state == 'canceled' %}text-amber-700{% elif item.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">Response</p>
+                <p class="mt-3 whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ item.response_excerpt }}</p>
+              </section>
+            </div>
+
+            <div class="mt-4 flex flex-wrap gap-2">
+              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.command_count }} commands</span>
+              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.patch_count }} patches</span>
+              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.files_touched_count }} files</span>
+            </div>
+          </article>
+        {% else %}
+          <div class="rounded-[1.5rem] border border-dashed border-stone-900/15 bg-stone-50/60 p-6 text-sm text-stone-600">
+            No turn activity was found for this scope.
+          </div>
+        {% endfor %}
+      </div>
+
+      {% set prev_page = stream_data.page - 1 %}
+      {% set next_page = stream_data.page + 1 %}
+      {% set page_base = stream_project.detail_href ~ '/stream' %}
+      <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-stone-200/80 pt-4">
+        <div class="text-sm text-stone-600">
+          Page {{ stream_data.page }} of {{ stream_data.page_count }}
+        </div>
+        <div class="flex flex-wrap gap-2">
+          {% if stream_data.has_prev %}
+            <a href="{{ page_base }}?page={{ prev_page }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+              Newer turns
+            </a>
+          {% endif %}
+          {% if stream_data.has_next %}
+            <a href="{{ page_base }}?page={{ next_page }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+              Older turns
+            </a>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+  </div>
+{% endblock %}

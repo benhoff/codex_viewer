@@ -9,6 +9,7 @@ from ...db import connect, write_transaction
 from ...git_utils import normalize_github_remote
 from ...projects import (
     delete_sessions_for_project_keys,
+    fetch_turn_stream,
     fetch_group_detail,
     fetch_group_source_project_keys,
     ignore_project_keys,
@@ -138,6 +139,35 @@ def group_queue(request: Request, owner_slug: str, project_slug: str) -> Redirec
     if group_key is None:
         raise HTTPException(status_code=404, detail="Project group not found")
     return RedirectResponse(url=f"/queue?project={quote(group_key, safe='')}", status_code=308)
+
+
+@router.get("/projects/{owner_slug}/{project_slug}/stream", response_class=HTMLResponse)
+def group_stream(request: Request, owner_slug: str, project_slug: str, page: int = Query(default=1)) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        group_key = resolve_group_key_from_detail_path(connection, owner_slug, project_slug)
+        if group_key is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        detail = fetch_group_detail(connection, group_key)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        stream_data = fetch_turn_stream(
+            connection,
+            page=page,
+            group_key=group_key,
+            detail_href_override=str(request.url.path).rsplit("/stream", 1)[0],
+        )
+    return context.templates.TemplateResponse(
+        request,
+        name="stream.html",
+        context={
+            "request": request,
+            "stream_data": stream_data,
+            "stream_project": detail["group"],
+            "stream_project_key": group_key,
+            "search_query": "",
+        },
+    )
 
 
 @router.post("/overrides")

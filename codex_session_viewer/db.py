@@ -9,6 +9,7 @@ from .session_rollups import (
     backfill_session_rollups,
     backfill_session_turn_activity_daily,
 )
+from .turn_index import backfill_session_turns
 
 
 SESSION_COLUMN_DEFS = {
@@ -45,6 +46,7 @@ SESSION_COLUMN_DEFS = {
     "tool_call_count": "INTEGER NOT NULL DEFAULT 0",
     "rollup_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_activity_rollup_version": "INTEGER NOT NULL DEFAULT 0",
+    "turn_index_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_count": "INTEGER NOT NULL DEFAULT 0",
     "last_user_message": "TEXT NOT NULL DEFAULT ''",
     "last_turn_timestamp": "TEXT",
@@ -111,6 +113,23 @@ SAVED_TURN_COLUMN_DEFS = {
     "updated_at": "TEXT NOT NULL",
 }
 
+SESSION_TURN_COLUMN_DEFS = {
+    "session_id": "TEXT NOT NULL",
+    "turn_number": "INTEGER NOT NULL",
+    "start_event_index": "INTEGER NOT NULL DEFAULT 0",
+    "end_event_index": "INTEGER NOT NULL DEFAULT 0",
+    "prompt_excerpt": "TEXT NOT NULL DEFAULT ''",
+    "prompt_timestamp": "TEXT",
+    "response_excerpt": "TEXT NOT NULL DEFAULT ''",
+    "response_timestamp": "TEXT",
+    "response_state": "TEXT NOT NULL DEFAULT 'missing'",
+    "latest_timestamp": "TEXT",
+    "command_count": "INTEGER NOT NULL DEFAULT 0",
+    "patch_count": "INTEGER NOT NULL DEFAULT 0",
+    "failure_count": "INTEGER NOT NULL DEFAULT 0",
+    "files_touched_count": "INTEGER NOT NULL DEFAULT 0",
+}
+
 SESSION_COLUMNS = list(SESSION_COLUMN_DEFS.keys())
 EVENT_COLUMNS = [
     "id",
@@ -168,6 +187,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     tool_call_count INTEGER NOT NULL DEFAULT 0,
     rollup_version INTEGER NOT NULL DEFAULT 0,
     turn_activity_rollup_version INTEGER NOT NULL DEFAULT 0,
+    turn_index_version INTEGER NOT NULL DEFAULT 0,
     turn_count INTEGER NOT NULL DEFAULT 0,
     last_user_message TEXT NOT NULL DEFAULT '',
     last_turn_timestamp TEXT,
@@ -298,6 +318,24 @@ CREATE TABLE IF NOT EXISTS session_turn_activity_daily (
     latest_timestamp TEXT,
     PRIMARY KEY (session_id, activity_date)
 );
+
+CREATE TABLE IF NOT EXISTS session_turns (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_number INTEGER NOT NULL,
+    start_event_index INTEGER NOT NULL DEFAULT 0,
+    end_event_index INTEGER NOT NULL DEFAULT 0,
+    prompt_excerpt TEXT NOT NULL DEFAULT '',
+    prompt_timestamp TEXT,
+    response_excerpt TEXT NOT NULL DEFAULT '',
+    response_timestamp TEXT,
+    response_state TEXT NOT NULL DEFAULT 'missing',
+    latest_timestamp TEXT,
+    command_count INTEGER NOT NULL DEFAULT 0,
+    patch_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    files_touched_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_id, turn_number)
+);
 """
 
 INDEX_SQL = """
@@ -313,6 +351,9 @@ ON sessions(source_host, source_path);
 
 CREATE INDEX IF NOT EXISTS idx_session_turn_activity_date
 ON session_turn_activity_daily(activity_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_session_turns_latest
+ON session_turns(latest_timestamp DESC, session_id DESC, turn_number DESC);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_session_index
 ON events(session_id, event_index);
@@ -501,6 +542,7 @@ def default_select(column_name: str) -> str:
         "tool_call_count",
         "rollup_version",
         "turn_activity_rollup_version",
+        "turn_index_version",
         "turn_count",
         "command_failure_count",
         "aborted_turn_count",
@@ -580,6 +622,17 @@ def ensure_saved_turn_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_session_turn_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "session_turns"):
+        return
+    session_turn_columns = table_columns(connection, "session_turns")
+    for column_name, column_def in SESSION_TURN_COLUMN_DEFS.items():
+        if column_name not in session_turn_columns:
+            connection.execute(
+                f"ALTER TABLE session_turns ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def ensure_auth_state_row(connection: sqlite3.Connection) -> None:
     row = connection.execute(
         "SELECT 1 FROM auth_state WHERE singleton = 1"
@@ -605,6 +658,7 @@ def init_db(database_path: Path) -> None:
             ensure_user_columns(connection)
             ensure_auth_state_columns(connection)
             ensure_saved_turn_columns(connection)
+            ensure_session_turn_columns(connection)
             recover_legacy_sessions(connection)
             recover_legacy_events(connection)
             rebuilt_sessions = False
@@ -617,4 +671,5 @@ def init_db(database_path: Path) -> None:
             connection.executescript(INDEX_SQL)
             backfill_session_rollups(connection)
             backfill_session_turn_activity_daily(connection)
+            backfill_session_turns(connection)
         connection.execute("PRAGMA foreign_keys = ON")
