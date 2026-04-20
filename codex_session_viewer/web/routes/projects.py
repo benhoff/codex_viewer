@@ -30,23 +30,47 @@ router = APIRouter()
 def render_group_detail(request: Request, key: str) -> HTMLResponse:
     context = get_app_context(request)
     owner_scope = owner_scope_from_request(request)
+    detail_path = str(request.url.path).rstrip("/")
     with connect(context.settings.database_path) as connection:
         detail = fetch_group_detail(connection, key)
         if detail is None:
             raise HTTPException(status_code=404, detail="Project group not found")
         queue_counts = count_saved_turns_by_status(connection, owner_scope, project_key=key)
+        stream_preview = fetch_turn_stream(
+            connection,
+            page=1,
+            page_size=6,
+            group_key=key,
+            detail_href_override=detail_path,
+        )
+        project_environment = fetch_project_environment_audit(connection, key)
+
+    if project_environment is not None:
+        fit_by_host = {
+            item["source_host"]: item
+            for item in project_environment["host_fit"]
+        }
+        for host_summary in detail["host_summaries"]:
+            host_summary["fit"] = fit_by_host.get(host_summary["source_host"])
+
     return context.templates.TemplateResponse(
         request,
         name="group.html",
         context={
             "request": request,
             "group": detail["group"],
-            "source_groups": detail["source_groups"],
             "signal_summary": detail["signal_summary"],
             "attention_sessions": detail["attention_sessions"],
+            "recent_sessions": detail["recent_sessions"],
+            "all_sessions": detail["all_sessions"],
+            "host_summaries": detail["host_summaries"],
+            "status_strip": detail["status_strip"],
             "edit_href": project_edit_href(str(request.url.path)),
             "queue_counts": queue_counts,
-            "queue_href": f"{str(request.url.path).rstrip('/')}/queue",
+            "queue_href": f"{detail_path}/queue",
+            "stream_href": f"{detail_path}/stream",
+            "stream_preview": stream_preview,
+            "project_environment": project_environment,
         },
     )
 

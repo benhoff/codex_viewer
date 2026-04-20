@@ -358,8 +358,6 @@ def _latest_session(current: dict[str, Any] | None, candidate: dict[str, Any]) -
 def _attention_badges(entry: dict[str, Any]) -> list[dict[str, str]]:
     badges: list[dict[str, str]] = []
     remote = entry.get("remote") or {}
-    if remote.get("pending_raw_resend"):
-        badges.append({"tone": "amber", "label": "Raw resend pending"})
     if int(remote.get("last_fail_count") or 0) > 0 or remote.get("last_error"):
         badges.append({"tone": "rose", "label": "Sync failure"})
     if int(entry.get("recent_command_failures") or 0) > 1:

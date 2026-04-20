@@ -4,7 +4,7 @@ import hashlib
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -1011,8 +1011,16 @@ def fetch_group_detail(
     if group is None:
         return None
 
+    now = datetime.now().astimezone()
+    recent_turn_activity = fetch_recent_session_turn_activity_windows(
+        connection,
+        [str(row["id"]) for row in matching_rows],
+        (now - timedelta(days=7)).isoformat(),
+    )
+
     source_groups: list[dict[str, Any]] = []
     by_source: dict[str, dict[str, Any]] = {}
+    host_summaries: dict[str, dict[str, Any]] = {}
     signal_summary = {
         "failed_commands": 0,
         "canceled_turns": 0,
@@ -1020,15 +1028,18 @@ def fetch_group_detail(
         "attention_sessions": 0,
     }
     attention_sessions: list[dict[str, Any]] = []
+    all_sessions: list[dict[str, Any]] = []
     for row in matching_rows:
         project = effective_project_fields(row)
         command_failures = int(row["command_failure_count"] or 0)
         aborted_turns = int(row["aborted_turn_count"] or 0)
         viewer_warning = trimmed(row["import_warning"]) or ""
+        recent_turns = int(recent_turn_activity.get(str(row["id"]), {}).get("turn_count", 0) or 0)
         session_status = summarize_attention_status(
             command_failures=command_failures,
             aborted_turns=aborted_turns,
             viewer_warnings=1 if viewer_warning else 0,
+            recent_turn_count=recent_turns,
         )
         source_group = by_source.setdefault(
             project["inferred_project_key"],
@@ -1058,6 +1069,7 @@ def fetch_group_detail(
         session_when = trimmed(row["last_turn_timestamp"]) or session_timestamp or ""
         session_item = {
             "id": row["id"],
+            "href": f"/sessions/{quote(str(row['id']), safe='')}",
             "summary": trimmed(row["latest_turn_summary"]) or row["summary"],
             "last_user_message": trimmed(row["last_user_message"]) or "",
             "last_turn_timestamp": trimmed(row["last_turn_timestamp"]) or "",
@@ -1070,6 +1082,7 @@ def fetch_group_detail(
             "aborted_turn_count": aborted_turns,
             "viewer_warning": viewer_warning,
             "has_viewer_warning": bool(viewer_warning),
+            "recent_turn_count": recent_turns,
             "signal_badges": build_signal_badges(
                 command_failures=command_failures,
                 aborted_turns=aborted_turns,
@@ -1079,8 +1092,47 @@ def fetch_group_detail(
             "status_tone": str(session_status["status_tone"]),
             "status_label": str(session_status["status_label"]),
             "status_title": str(session_status["status_title"]),
+            "project_label": project["display_label"],
         }
         source_group["sessions"].append(session_item)
+        all_sessions.append(session_item)
+
+        host_summary = host_summaries.setdefault(
+            project["source_host"],
+            {
+                "source_host": project["source_host"],
+                "last_seen_at": session_when,
+                "session_count": 0,
+                "turn_count": 0,
+                "recent_turn_count": 0,
+                "command_failure_count": 0,
+                "aborted_turn_count": 0,
+                "latest_session": None,
+                "latest_failed_session": None,
+            },
+        )
+        host_summary["session_count"] += 1
+        host_summary["turn_count"] += int(row["turn_count"] or 0)
+        host_summary["recent_turn_count"] += recent_turns
+        host_summary["command_failure_count"] += command_failures
+        host_summary["aborted_turn_count"] += aborted_turns
+        if session_when and session_when > str(host_summary["last_seen_at"] or ""):
+            host_summary["last_seen_at"] = session_when
+        if host_summary["latest_session"] is None or session_when > str(host_summary["latest_session"]["timestamp"] or ""):
+            host_summary["latest_session"] = {
+                "href": session_item["href"],
+                "title": session_title or "Session",
+                "timestamp": session_when,
+            }
+        if session_item["needs_attention"] and (
+            host_summary["latest_failed_session"] is None
+            or session_when > str(host_summary["latest_failed_session"]["timestamp"] or "")
+        ):
+            host_summary["latest_failed_session"] = {
+                "href": session_item["href"],
+                "title": session_title or "Session needing attention",
+                "timestamp": session_when,
+            }
 
         signal_summary["failed_commands"] += command_failures
         signal_summary["canceled_turns"] += aborted_turns
@@ -1135,12 +1187,45 @@ def fetch_group_detail(
         ),
         reverse=True,
     )
+    all_sessions.sort(
+        key=lambda item: item["last_turn_timestamp"] or item["session_timestamp"] or "",
+        reverse=True,
+    )
+
+    recent_sessions = all_sessions[:8]
+    health_summary = summarize_attention_status(
+        command_failures=signal_summary["failed_commands"],
+        aborted_turns=signal_summary["canceled_turns"],
+        viewer_warnings=signal_summary["viewer_warnings"],
+        recent_turn_count=sum(int(item.get("turn_count", 0) or 0) for item in recent_turn_activity.values()),
+    )
+    latest_session = all_sessions[0] if all_sessions else None
+    host_rows = sorted(
+        host_summaries.values(),
+        key=lambda item: (
+            int(item["recent_turn_count"]),
+            int(item["turn_count"]),
+            str(item["last_seen_at"] or ""),
+        ),
+        reverse=True,
+    )
 
     return {
         "group": group,
         "source_groups": source_groups,
         "signal_summary": signal_summary,
         "attention_sessions": attention_sessions,
+        "recent_sessions": recent_sessions,
+        "all_sessions": all_sessions,
+        "host_summaries": host_rows,
+        "status_strip": {
+            "last_activity_at": group.latest_timestamp,
+            "last_host": latest_session["host"] if latest_session else "",
+            "recent_turn_count": sum(int(item.get("turn_count", 0) or 0) for item in recent_turn_activity.values()),
+            "health_tone": str(health_summary["status_tone"]),
+            "health_label": str(health_summary["status_label"]),
+            "health_title": str(health_summary["status_title"]),
+        },
     }
 
 

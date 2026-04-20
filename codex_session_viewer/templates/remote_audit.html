@@ -80,8 +80,8 @@
       {% endif %}
     </section>
 
-    <section class="mb-8 grid gap-6 xl:grid-cols-[1.2fr,0.8fr]">
-      <article class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+    <section class="mb-8 grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+      <article class="min-w-0 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Core Tools</h2>
@@ -112,7 +112,7 @@
                       <span class="text-xs text-stone-500">via {{ item.wrapper_label }}</span>
                     {% endif %}
                   </div>
-                  <p class="mt-2 overflow-x-auto whitespace-nowrap text-xs text-stone-500">{{ item.display_command }}</p>
+                  <p class="mt-2 break-all text-xs text-stone-500 sm:overflow-x-auto sm:whitespace-nowrap sm:break-normal">{{ item.display_command }}</p>
                 </div>
                 <div class="flex flex-wrap gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">
                   <span>{{ item.success_count }} ok</span>
@@ -136,7 +136,7 @@
         </div>
       </article>
 
-      <article class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+      <article class="min-w-0 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Task Profiles</h2>
@@ -165,8 +165,8 @@
       </article>
     </section>
 
-    <section class="mb-8 grid gap-6 xl:grid-cols-[1fr,1fr]">
-      <article class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+    <section class="mb-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <article class="min-w-0 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Observed Failures</h2>
@@ -195,7 +195,7 @@
                   {% for example in item.examples %}
                     <a href="{{ example.session_href }}" class="block rounded-[1rem] border border-stone-200 bg-white/90 p-3 transition hover:bg-white">
                       <p class="truncate text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">{{ example.project_label }}</p>
-                      <p class="mt-1 overflow-x-auto whitespace-nowrap text-sm text-stone-800">{{ example.command }}</p>
+                      <p class="mt-1 break-all text-sm text-stone-800 sm:overflow-x-auto sm:whitespace-nowrap sm:break-normal">{{ example.command }}</p>
                     </a>
                   {% endfor %}
                 </div>
@@ -209,7 +209,7 @@
         </div>
       </article>
 
-      <article class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+      <article class="min-w-0 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Install Guidance</h2>
@@ -247,7 +247,7 @@
       </article>
     </section>
 
-    <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+    <section class="min-w-0 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
       <div class="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Recent Evidence</h2>
@@ -262,7 +262,7 @@
                 {% if item.project_label %}
                   <p class="truncate text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ item.project_label }}</p>
                 {% endif %}
-                <p class="mt-2 overflow-x-auto whitespace-nowrap text-sm font-semibold text-stone-900">{{ item.command }}</p>
+                <p class="mt-2 break-all text-sm font-semibold text-stone-900 sm:overflow-x-auto sm:whitespace-nowrap sm:break-normal">{{ item.command }}</p>
                 <p class="mt-2 text-xs text-stone-500">{{ item.title }}</p>
               </div>
               <div class="flex flex-col items-end gap-2">

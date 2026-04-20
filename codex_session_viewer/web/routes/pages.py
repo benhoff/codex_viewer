@@ -390,9 +390,20 @@ def build_active_repos_panel(
             viewer_warnings=viewer_warnings,
             recent_turn_count=recent_turn_count,
         )
+        owner_name = str(group.organization or "").strip()
+        repo_name = str(group.repository or "").strip()
+        plain_path_label = f"{owner_name}/{repo_name}" if owner_name and repo_name else repo_name
+        if repo_name and owner_name and str(group.display_label) == plain_path_label:
+            primary_label = repo_name
+            secondary_label = owner_name
+        else:
+            primary_label = str(group.display_label)
+            secondary_label = owner_name if owner_name and owner_name not in primary_label else ""
         items.append(
             {
                 "display_label": group.display_label,
+                "primary_label": primary_label,
+                "secondary_label": secondary_label,
                 "detail_href": group.detail_href,
                 "latest_timestamp": latest_timestamp,
                 "recent_turn_count": recent_turn_count,
