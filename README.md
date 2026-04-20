@@ -286,3 +286,8 @@ Changes to systemd unit files still require a normal `systemctl restart`.
 ## Product Notes
 
 There is now a short product-direction doc for the self-hosted audience in [docs/selfhosted-launch-priorities.md](/home/wulfuser/codex_viewer/docs/selfhosted-launch-priorities.md).
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 only
+(`AGPL-3.0-only`). See [LICENSE](/home/wulfuser/codex_viewer/LICENSE).
