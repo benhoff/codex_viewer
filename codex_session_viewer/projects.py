@@ -28,6 +28,7 @@ GROUP_ROW_SELECT = f"""
     s.session_timestamp,
     s.started_at,
     s.imported_at,
+    s.updated_at,
     s.summary,
     s.import_warning,
     s.event_count,
@@ -781,6 +782,31 @@ def fetch_turn_stream(
     }
 
 
+def paginate_items(
+    items: list[Any],
+    *,
+    page: int = 1,
+    page_size: int = 24,
+) -> dict[str, Any]:
+    normalized_page_size = max(int(page_size or 24), 1)
+    total_count = len(items)
+    page_count = max((total_count + normalized_page_size - 1) // normalized_page_size, 1)
+    normalized_page = min(max(int(page or 1), 1), page_count)
+    offset = (normalized_page - 1) * normalized_page_size
+    page_items = items[offset : offset + normalized_page_size]
+    return {
+        "items": page_items,
+        "page": normalized_page,
+        "page_size": normalized_page_size,
+        "total_count": total_count,
+        "has_prev": normalized_page > 1,
+        "has_next": offset + len(page_items) < total_count,
+        "page_count": page_count,
+        "showing_from": offset + 1 if page_items else 0,
+        "showing_to": offset + len(page_items),
+    }
+
+
 @dataclass(slots=True)
 class GroupedProject:
     key: str
@@ -953,6 +979,9 @@ def fetch_session_with_project(
 def fetch_group_detail(
     connection: sqlite3.Connection,
     group_key: str,
+    *,
+    sessions_page: int = 1,
+    sessions_page_size: int = 24,
 ) -> dict[str, Any] | None:
     matching_rows = query_group_rows_for_key(connection, group_key)
     if not matching_rows:
@@ -1130,6 +1159,11 @@ def fetch_group_detail(
     )
 
     recent_sessions = all_sessions[:8]
+    all_sessions_page = paginate_items(
+        all_sessions,
+        page=sessions_page,
+        page_size=sessions_page_size,
+    )
     health_summary = summarize_attention_status(
         recent_turn_count=sum(int(item.get("turn_count", 0) or 0) for item in recent_turn_activity.values()),
     )
@@ -1150,7 +1184,7 @@ def fetch_group_detail(
         "signal_summary": signal_summary,
         "attention_sessions": attention_sessions,
         "recent_sessions": recent_sessions,
-        "all_sessions": all_sessions,
+        "all_sessions_page": all_sessions_page,
         "host_summaries": host_rows,
         "status_strip": {
             "last_activity_at": group.latest_timestamp,

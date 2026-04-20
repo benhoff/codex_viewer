@@ -27,12 +27,17 @@ from ..forms import parse_form_fields
 router = APIRouter()
 
 
-def render_group_detail(request: Request, key: str) -> HTMLResponse:
+def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -> HTMLResponse:
     context = get_app_context(request)
     owner_scope = owner_scope_from_request(request)
     detail_path = str(request.url.path).rstrip("/")
     with connect(context.settings.database_path) as connection:
-        detail = fetch_group_detail(connection, key)
+        detail = fetch_group_detail(
+            connection,
+            key,
+            sessions_page=sessions_page,
+            sessions_page_size=context.settings.page_size,
+        )
         if detail is None:
             raise HTTPException(status_code=404, detail="Project group not found")
         queue_counts = count_saved_turns_by_status(connection, owner_scope, project_key=key)
@@ -43,15 +48,6 @@ def render_group_detail(request: Request, key: str) -> HTMLResponse:
             group_key=key,
             detail_href_override=detail_path,
         )
-        project_environment = fetch_project_environment_audit(connection, key)
-
-    if project_environment is not None:
-        fit_by_host = {
-            item["source_host"]: item
-            for item in project_environment["host_fit"]
-        }
-        for host_summary in detail["host_summaries"]:
-            host_summary["fit"] = fit_by_host.get(host_summary["source_host"])
 
     return context.templates.TemplateResponse(
         request,
@@ -62,7 +58,7 @@ def render_group_detail(request: Request, key: str) -> HTMLResponse:
             "signal_summary": detail["signal_summary"],
             "attention_sessions": detail["attention_sessions"],
             "recent_sessions": detail["recent_sessions"],
-            "all_sessions": detail["all_sessions"],
+            "all_sessions_page": detail["all_sessions_page"],
             "host_summaries": detail["host_summaries"],
             "status_strip": detail["status_strip"],
             "edit_href": project_edit_href(str(request.url.path)),
@@ -70,7 +66,7 @@ def render_group_detail(request: Request, key: str) -> HTMLResponse:
             "queue_href": f"{detail_path}/queue",
             "stream_href": f"{detail_path}/stream",
             "stream_preview": stream_preview,
-            "project_environment": project_environment,
+            "environment_href": f"{detail_path}/environment",
         },
     )
 
@@ -147,13 +143,18 @@ def group_edit(request: Request, owner_slug: str, project_slug: str) -> HTMLResp
 
 
 @router.get("/projects/{owner_slug}/{project_slug}", response_class=HTMLResponse)
-def group_detail(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
+def group_detail(
+    request: Request,
+    owner_slug: str,
+    project_slug: str,
+    sessions_page: int = Query(default=1),
+) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
         group_key = resolve_group_key_from_detail_path(connection, owner_slug, project_slug)
     if group_key is None:
         raise HTTPException(status_code=404, detail="Project group not found")
-    return render_group_detail(request, group_key)
+    return render_group_detail(request, group_key, sessions_page=sessions_page)
 
 
 @router.get("/projects/{owner_slug}/{project_slug}/queue", response_class=HTMLResponse)
@@ -176,6 +177,7 @@ def group_environment(request: Request, owner_slug: str, project_slug: str) -> H
         audit = fetch_project_environment_audit(connection, group_key)
         if audit is None:
             raise HTTPException(status_code=404, detail="Project group not found")
+    audit["group"].detail_href = str(request.url.path).rsplit("/environment", 1)[0]
     return context.templates.TemplateResponse(
         request,
         name="project_environment.html",

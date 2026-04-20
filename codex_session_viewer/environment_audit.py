@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import re
 import shlex
 import sqlite3
-from collections import Counter
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -12,7 +14,6 @@ from .agents import fetch_remote_agent_health
 from .projects import (
     build_grouped_projects,
     effective_project_fields,
-    fetch_group_source_project_keys,
     project_detail_href_for_route,
     project_route_segments,
     query_group_rows,
@@ -110,6 +111,12 @@ FAILURE_CLASS_META = {
     "repo_state_missing": {"label": "Repo setup", "tone": "stone", "guidance": "Repo setup"},
     "unknown": {"label": "Other failure", "tone": "stone", "guidance": "Inspect"},
 }
+
+PROJECT_ENVIRONMENT_AUDIT_CACHE_MAXSIZE = 32
+PROJECT_ENVIRONMENT_AUDIT_CACHE: OrderedDict[
+    tuple[str, str],
+    tuple[str, dict[str, Any]],
+] = OrderedDict()
 
 
 @dataclass(slots=True)
@@ -312,6 +319,111 @@ def _visible_session_rows_for_host(connection: sqlite3.Connection, source_host: 
 
 def _visible_session_rows_for_project(connection: sqlite3.Connection, group_key: str) -> list[sqlite3.Row]:
     return query_group_rows_for_key(connection, group_key)
+
+
+def _database_cache_key(connection: sqlite3.Connection) -> str:
+    rows = connection.execute("PRAGMA database_list").fetchall()
+    for row in rows:
+        name = str(row["name"] if "name" in row.keys() else row[1])
+        if name == "main":
+            return str(row["file"] if "file" in row.keys() else row[2] or ":memory:")
+    if rows:
+        row = rows[0]
+        return str(row["file"] if "file" in row.keys() else row[2] or ":memory:")
+    return ":memory:"
+
+
+def _host_cache_fingerprints(connection: sqlite3.Connection, hosts: list[str]) -> list[str]:
+    normalized_hosts = sorted({trimmed(host) for host in hosts if trimmed(host)})
+    if not normalized_hosts:
+        return []
+    placeholders = ", ".join("?" for _ in normalized_hosts)
+    rows = connection.execute(
+        f"""
+        SELECT
+            s.source_host,
+            COUNT(*) AS session_count,
+            MAX(s.updated_at) AS latest_updated_at
+        FROM sessions AS s
+        WHERE s.source_host IN ({placeholders})
+          AND NOT EXISTS (
+            SELECT 1
+            FROM ignored_project_sources AS i
+            WHERE i.match_project_key = s.inferred_project_key
+          )
+        GROUP BY s.source_host
+        ORDER BY s.source_host ASC
+        """,
+        normalized_hosts,
+    ).fetchall()
+    return [
+        "|".join(
+            (
+                str(row["source_host"] or ""),
+                str(row["session_count"] or 0),
+                str(row["latest_updated_at"] or ""),
+            )
+        )
+        for row in rows
+    ]
+
+
+def _project_audit_fingerprint(
+    connection: sqlite3.Connection,
+    group_key: str,
+    session_rows: list[sqlite3.Row],
+) -> str:
+    hasher = hashlib.sha1()
+    hasher.update(group_key.encode("utf-8"))
+    for row in session_rows:
+        hasher.update(
+            "|".join(
+                (
+                    str(row["id"] or ""),
+                    str(row["updated_at"] or ""),
+                    str(row["source_host"] or ""),
+                    str(row["inferred_project_key"] or ""),
+                    str(row["override_updated_at"] or ""),
+                    str(row["override_group_key"] or ""),
+                    str(row["override_organization"] or ""),
+                    str(row["override_repository"] or ""),
+                    str(row["override_remote_url"] or ""),
+                    str(row["override_display_label"] or ""),
+                )
+            ).encode("utf-8")
+        )
+    hosts = [str(row["source_host"] or "") for row in session_rows]
+    for host_fingerprint in _host_cache_fingerprints(connection, hosts):
+        hasher.update(host_fingerprint.encode("utf-8"))
+    return hasher.hexdigest()
+
+
+def _get_cached_project_environment_audit(
+    connection: sqlite3.Connection,
+    group_key: str,
+    fingerprint: str,
+) -> dict[str, Any] | None:
+    cache_key = (_database_cache_key(connection), group_key)
+    cached = PROJECT_ENVIRONMENT_AUDIT_CACHE.get(cache_key)
+    if cached is None or cached[0] != fingerprint:
+        return None
+    PROJECT_ENVIRONMENT_AUDIT_CACHE.move_to_end(cache_key)
+    return copy.deepcopy(cached[1])
+
+
+def _store_cached_project_environment_audit(
+    connection: sqlite3.Connection,
+    group_key: str,
+    fingerprint: str,
+    audit: dict[str, Any],
+) -> dict[str, Any]:
+    cache_key = (_database_cache_key(connection), group_key)
+    cached_audit = copy.deepcopy(audit)
+    PROJECT_ENVIRONMENT_AUDIT_CACHE[cache_key] = (fingerprint, cached_audit)
+    PROJECT_ENVIRONMENT_AUDIT_CACHE.move_to_end(cache_key)
+    while len(PROJECT_ENVIRONMENT_AUDIT_CACHE) > PROJECT_ENVIRONMENT_AUDIT_CACHE_MAXSIZE:
+        PROJECT_ENVIRONMENT_AUDIT_CACHE.popitem(last=False)
+    return copy.deepcopy(cached_audit)
 
 
 def _command_rows_for_sessions(
@@ -908,12 +1020,22 @@ def fetch_project_environment_audit(
     session_rows = _visible_session_rows_for_project(connection, group_key)
     if not session_rows:
         return None
+    fingerprint = _project_audit_fingerprint(connection, group_key, session_rows)
+    cached = _get_cached_project_environment_audit(connection, group_key, fingerprint)
+    if cached is not None:
+        return cached
     grouped = build_grouped_projects(session_rows)
     group = next((item for item in grouped if item.key == group_key), None)
     if group is None:
         return None
     group.detail_href = project_detail_href_for_route(*project_route_segments(group))
-    source_project_keys = fetch_group_source_project_keys(connection, group_key)
+    source_project_keys = sorted(
+        {
+            str(effective_project_fields(row)["inferred_project_key"])
+            for row in session_rows
+            if trimmed(effective_project_fields(row)["inferred_project_key"])
+        }
+    )
     project_labels_by_key = {
         effective_project_fields(row)["inferred_project_key"]: effective_project_fields(row)["display_label"]
         for row in session_rows
@@ -942,7 +1064,7 @@ def fetch_project_environment_audit(
                     "impacted_hosts": impacted_hosts[:4],
                 }
             )
-    return {
+    audit = {
         "group": group,
         "summary": _project_summary(session_rows, failure_groups, profiles),
         "tool_surface": _tool_surface_summary(tool_rows),
@@ -953,3 +1075,4 @@ def fetch_project_environment_audit(
         "setup_guidance": guidance[:10],
         "recent_evidence": recent_evidence[:10],
     }
+    return _store_cached_project_environment_audit(connection, group_key, fingerprint, audit)
