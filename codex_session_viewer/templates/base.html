@@ -39,7 +39,7 @@
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex shrink-0 items-center gap-3">
               <a href="/" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path == '/' or current_path.startswith('/projects') or current_path.startswith('/groups') or current_path.startswith('/sessions') or current_path == '/search' %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">Projects</a>
-              <a href="/remotes" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/remotes') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">Agents</a>
+              <a href="/remotes" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/remotes') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">Machines</a>
               <a href="/queue" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/queue') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">
                 Queue
                 <span data-review-queue-count class="ml-2 {% if not open_review_count %}hidden {% endif %}rounded-full {% if current_path.startswith('/queue') %}bg-white/20 text-white{% else %}bg-amber-100 text-amber-800{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ open_review_count }}</span>

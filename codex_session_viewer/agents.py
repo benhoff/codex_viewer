@@ -42,6 +42,8 @@ def upsert_remote_agent_status(
     last_skip_count: int = 0,
     last_fail_count: int = 0,
     last_error: str | None = None,
+    last_failed_source_path: str | None = None,
+    last_failure_detail: str | None = None,
     acknowledged_raw_resend_token: str | None = None,
     last_raw_resend_at: str | None = None,
 ) -> None:
@@ -73,6 +75,8 @@ def upsert_remote_agent_status(
         last_skip_count,
         last_fail_count,
         trimmed(last_error),
+        trimmed(last_failed_source_path),
+        trimmed(last_failure_detail),
         ack_token,
         trimmed(last_raw_resend_at),
     )
@@ -94,9 +98,11 @@ def upsert_remote_agent_status(
                 last_skip_count,
                 last_fail_count,
                 last_error,
+                last_failed_source_path,
+                last_failure_detail,
                 acknowledged_raw_resend_token,
                 last_raw_resend_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (source_host, *values),
         )
@@ -119,6 +125,8 @@ def upsert_remote_agent_status(
             last_skip_count = ?,
             last_fail_count = ?,
             last_error = ?,
+            last_failed_source_path = ?,
+            last_failure_detail = ?,
             acknowledged_raw_resend_token = ?,
             last_raw_resend_at = ?
         WHERE source_host = ?
@@ -257,6 +265,8 @@ def build_remote_agent_health(rows: list[sqlite3.Row], settings: Settings) -> li
                 "last_skip_count": int(row["last_skip_count"] or 0),
                 "last_fail_count": int(row["last_fail_count"] or 0),
                 "last_error": trimmed(row["last_error"]),
+                "last_failed_source_path": trimmed(row["last_failed_source_path"]),
+                "last_failure_detail": trimmed(row["last_failure_detail"]),
                 "pending_raw_resend": pending_raw_resend,
                 "requested_raw_resend_at": trimmed(row["requested_raw_resend_at"]),
                 "requested_raw_resend_note": trimmed(row["requested_raw_resend_note"]),
@@ -381,6 +391,118 @@ def _recent_projects_list(entry: dict[str, Any]) -> list[dict[str, str]]:
     return values[:4]
 
 
+def _agent_issue_details(entry: dict[str, Any]) -> list[dict[str, str]]:
+    remote = entry.get("remote") or {}
+    details: list[dict[str, str]] = []
+
+    last_fail_count = int(remote.get("last_fail_count") or 0)
+    last_upload_count = int(remote.get("last_upload_count") or 0)
+    last_skip_count = int(remote.get("last_skip_count") or 0)
+    last_error = trimmed(remote.get("last_error")) or ""
+    last_failed_source_path = trimmed(remote.get("last_failed_source_path")) or ""
+    last_failure_detail = trimmed(remote.get("last_failure_detail")) or ""
+    update_state = str(remote.get("update_state") or "").strip()
+    update_message = trimmed(remote.get("update_message")) or ""
+    agent_version = trimmed(remote.get("agent_version")) or "unknown"
+    sync_api_version = trimmed(remote.get("sync_api_version")) or "unknown"
+    server_version_seen = trimmed(remote.get("server_version_seen")) or "unknown"
+    server_api_version_seen = trimmed(remote.get("server_api_version_seen")) or "unknown"
+    last_seen_at = trimmed(remote.get("last_seen_at")) or ""
+
+    if last_fail_count > 0 or last_error:
+        detail = (
+            f"Last sync pass reported {last_fail_count} failed upload"
+            f"{'s' if last_fail_count != 1 else ''} "
+            f"({last_upload_count} up / {last_skip_count} skip / {last_fail_count} fail)."
+        )
+        if last_error and last_error != "Upload failures occurred":
+            detail += f" {last_error}"
+        elif last_error == "Upload failures occurred":
+            detail += " The daemon recorded the latest failing path and exception below."
+        if last_failed_source_path:
+            detail += f" Path: {last_failed_source_path}."
+        if last_failure_detail:
+            detail += f" Exception: {last_failure_detail}"
+        details.append(
+            {
+                "tone": "rose",
+                "label": "Sync failure",
+                "detail": detail,
+            }
+        )
+
+    if bool(remote.get("stale")):
+        detail = "This host is currently stale or offline."
+        if last_seen_at:
+            detail += f" Last heartbeat was {last_seen_at}."
+        details.append(
+            {
+                "tone": "stone",
+                "label": "Offline",
+                "detail": detail,
+            }
+        )
+
+    if bool(remote.get("api_mismatch")):
+        details.append(
+            {
+                "tone": "amber",
+                "label": "API drift",
+                "detail": (
+                    f"Host reports sync API {sync_api_version}, but the server expects {server_api_version_seen}. "
+                    "This can block or invalidate sync until the versions match."
+                ),
+            }
+        )
+
+    if bool(remote.get("version_mismatch")):
+        details.append(
+            {
+                "tone": "amber",
+                "label": "Version drift",
+                "detail": (
+                    f"Host is running agent {agent_version}, but the server target is {server_version_seen}. "
+                    f"{update_message or 'A manual update may be required.'}"
+                ),
+            }
+        )
+
+    if update_state == "update_failed":
+        details.append(
+            {
+                "tone": "rose",
+                "label": "Update failed",
+                "detail": update_message or "The host attempted to update itself, but the update failed.",
+            }
+        )
+    elif update_state == "updated_restart_required":
+        details.append(
+            {
+                "tone": "amber",
+                "label": "Restart required",
+                "detail": update_message or "The host updated successfully, but needs a restart before it is current.",
+            }
+        )
+    elif update_state == "protocol_mismatch" and update_message:
+        details.append(
+            {
+                "tone": "rose",
+                "label": "Protocol mismatch",
+                "detail": update_message,
+            }
+        )
+    elif update_state == "manual_update_required" and update_message:
+        details.append(
+            {
+                "tone": "amber",
+                "label": "Manual update required",
+                "detail": update_message,
+            }
+        )
+
+    return details
+
+
 def fetch_agents_dashboard(
     connection: sqlite3.Connection,
     settings: Settings,
@@ -452,15 +574,12 @@ def fetch_agents_dashboard(
         recent_projects = _recent_projects_list(entry)
         issue_badges = _attention_badges(entry)
         secondary_badges = _secondary_badges(entry)
+        issue_details = _agent_issue_details(entry)
         is_attention = bool(issue_badges)
         is_dormant = bool(remote.get("stale")) or (not is_attention and int(entry["recent_turn_count"] or 0) == 0)
         if is_attention:
             section = "attention"
-            summary = (
-                latest_failed_session["title"]
-                if latest_failed_session
-                else str(remote.get("last_error") or "Needs attention")
-            )
+            summary = issue_details[0]["detail"] if issue_details else str(remote.get("last_error") or "Needs attention")
             primary = latest_failed_session or latest_session
             primary_label = "Open latest attention session" if latest_failed_session else "Open latest session"
         elif is_dormant:
@@ -501,6 +620,7 @@ def fetch_agents_dashboard(
             "recent_projects": recent_projects,
             "recent_sessions": entry["recent_sessions"],
             "issue_badges": issue_badges,
+            "issue_details": issue_details,
             "secondary_badges": secondary_badges,
             "pending_raw_resend": bool(remote.get("pending_raw_resend")),
             "requested_raw_resend_at": trimmed(remote.get("requested_raw_resend_at")),
@@ -515,6 +635,8 @@ def fetch_agents_dashboard(
             "update_state": trimmed(remote.get("update_state")) or "",
             "update_message": trimmed(remote.get("update_message")) or "",
             "last_error": trimmed(remote.get("last_error")) or "",
+            "last_failed_source_path": trimmed(remote.get("last_failed_source_path")) or "",
+            "last_failure_detail": trimmed(remote.get("last_failure_detail")) or "",
             "primary_href": primary["href"] if primary else "",
             "primary_label": primary_label,
             "audit_href": f"/remotes/{quote(source_host, safe='')}/audit",

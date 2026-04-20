@@ -33,6 +33,14 @@ def utc_now_iso() -> str:
     return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
 
 
+def exception_summary(exc: BaseException, *, max_length: int = 500) -> str:
+    raw = " ".join(part for part in [exc.__class__.__name__, str(exc).strip()] if part).strip()
+    summary = " ".join(raw.split())
+    if len(summary) > max_length:
+        return summary[: max_length - 1].rstrip() + "…"
+    return summary
+
+
 def build_headers(settings: Settings) -> dict[str, str]:
     headers = {
         "Accept": "application/json",
@@ -155,6 +163,8 @@ def send_remote_heartbeat(
     server_meta: dict[str, Any],
     stats: dict[str, int] | None = None,
     last_error: str | None = None,
+    last_failed_source_path: str | None = None,
+    last_failure_detail: str | None = None,
     last_sync_at: str | None = None,
     acknowledged_raw_resend_token: str | None = None,
     last_raw_resend_at: str | None = None,
@@ -173,6 +183,8 @@ def send_remote_heartbeat(
         "last_skip_count": int((stats or {}).get("skipped", 0)),
         "last_fail_count": int((stats or {}).get("failed", 0)),
         "last_error": last_error,
+        "last_failed_source_path": last_failed_source_path,
+        "last_failure_detail": last_failure_detail,
         "acknowledged_raw_resend_token": acknowledged_raw_resend_token,
         "last_raw_resend_at": last_raw_resend_at,
     }
@@ -261,6 +273,8 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
     uploaded = 0
     skipped = 0
     failed = 0
+    last_failed_source_path: str | None = None
+    last_failure_detail: str | None = None
     compatibility = evaluate_server_compatibility(settings, server_meta)
     resend_raw_action = actions.get("resend_raw") if isinstance(actions.get("resend_raw"), dict) else None
     raw_resend_token = (
@@ -360,8 +374,10 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
             skipped += 1
             remember_invalid_session(path, stat.st_size, stat.st_mtime_ns, str(exc))
             logger.warning("Skipping malformed session file %s", exc)
-        except Exception:
+        except Exception as exc:
             failed += 1
+            last_failed_source_path = str(path)
+            last_failure_detail = exception_summary(exc)
             logger.exception("Failed to upload session from %s", path)
 
     stats = {"uploaded": uploaded, "skipped": skipped, "failed": failed}
@@ -373,6 +389,8 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
         server_meta=server_meta,
         stats=stats,
         last_error="Upload failures occurred" if failed else None,
+        last_failed_source_path=last_failed_source_path if failed else None,
+        last_failure_detail=last_failure_detail if failed else None,
         last_sync_at=sync_completed_at,
         acknowledged_raw_resend_token=raw_resend_token if raw_resend_token and failed == 0 else None,
         last_raw_resend_at=sync_completed_at if raw_resend_token and failed == 0 else None,

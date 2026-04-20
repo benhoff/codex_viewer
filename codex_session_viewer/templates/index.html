@@ -39,11 +39,11 @@
           <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-sky-700">Active Hosts</p>
           <div class="mt-2 flex items-end justify-between gap-3">
             <p class="text-3xl font-semibold text-sky-950">{{ stats.active_hosts }}</p>
-            <p class="text-xs text-sky-800">{{ "agent heartbeat" if active_hosts_from_agents else "recent session activity" }}</p>
+            <p class="text-xs text-sky-800">{{ "machine heartbeat" if active_hosts_from_agents else "recent session activity" }}</p>
           </div>
         </div>
         <div class="rounded-[1.15rem] border border-rose-200 bg-rose-50/90 px-4 py-3">
-          <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-rose-700">Failed Agents</p>
+          <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-rose-700">Machines Needing Attention</p>
           <div class="mt-2 flex items-end justify-between gap-3">
             <p class="text-3xl font-semibold text-rose-950">{{ stats.failed_agents }}</p>
             <p class="text-xs text-rose-800">needs operator attention</p>
@@ -64,14 +64,14 @@
             <h2 class="text-lg font-semibold text-stone-900">Needs Attention</h2>
             <p class="text-sm text-stone-600">Start here when something is broken, stale, or noisy.</p>
           </div>
-          <a href="/remotes" class="text-sm font-semibold text-stone-600 transition hover:text-stone-900">View remotes</a>
+          <a href="/remotes" class="text-sm font-semibold text-stone-600 transition hover:text-stone-900">View machines</a>
         </div>
 
         {% if failed_agents or error_sessions %}
           <div class="mt-4 grid gap-4 {% if failed_agents and error_sessions %}xl:grid-cols-2{% endif %}">
             <section class="rounded-[1.15rem] border border-rose-200 bg-rose-50/60">
               <div class="flex items-center justify-between gap-3 border-b border-rose-200/80 px-4 py-3">
-                <h3 class="text-sm font-semibold text-rose-950">Failed Agents</h3>
+                <h3 class="text-sm font-semibold text-rose-950">Machines Needing Attention</h3>
                 <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
                   {{ failed_agents|length }}
                 </span>
@@ -93,7 +93,7 @@
                     </p>
                   </a>
                 {% else %}
-                  <div class="px-4 py-5 text-sm text-emerald-900">No failing agents are currently reported.</div>
+                  <div class="px-4 py-5 text-sm text-emerald-900">No machines needing attention are currently reported.</div>
                 {% endfor %}
               </div>
             </section>
@@ -134,7 +134,7 @@
           </div>
         {% else %}
           <div class="mt-4 rounded-[1.15rem] border border-emerald-200 bg-emerald-50/80 px-4 py-4 text-sm text-emerald-900">
-            All clear right now. No failing agents are currently surfaced.
+            All clear right now. No machines needing attention are currently surfaced.
           </div>
         {% endif %}
       </section>

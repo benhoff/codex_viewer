@@ -123,6 +123,26 @@
         </div>
 
         <div class="space-y-4">
+          {% if agent.issue_details %}
+            <div class="rounded-[1.1rem] border border-stone-200 bg-stone-50/80 p-4">
+              <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">What Needs Attention</p>
+              <div class="mt-3 space-y-3">
+                {% for issue in agent.issue_details %}
+                  <div class="rounded-[0.95rem] border p-3 {% if issue.tone == 'rose' %}border-rose-200 bg-rose-50/80{% elif issue.tone == 'amber' %}border-amber-200 bg-amber-50/80{% else %}border-stone-200 bg-white/90{% endif %}">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="rounded-full px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.16em] {% if issue.tone == 'rose' %}bg-rose-100 text-rose-800{% elif issue.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                        {{ issue.label }}
+                      </span>
+                    </div>
+                    <p class="mt-2 text-sm leading-6 {% if issue.tone == 'rose' %}text-rose-900{% elif issue.tone == 'amber' %}text-amber-900{% else %}text-stone-700{% endif %}">
+                      {{ issue.detail }}
+                    </p>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+
           <div class="rounded-[1.1rem] border border-stone-200 bg-stone-50/80 p-4">
             <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Host Health</p>
             <div class="mt-3 grid gap-3">
@@ -137,6 +157,18 @@
                 {% if agent.last_error %}
                   <div><span class="font-semibold text-stone-800">Sync error:</span> {{ agent.last_error }}</div>
                 {% endif %}
+                {% if agent.last_failed_source_path %}
+                  <div>
+                    <span class="font-semibold text-stone-800">Failing session path:</span>
+                    <span class="break-all font-mono text-[0.84rem] text-stone-700">{{ agent.last_failed_source_path }}</span>
+                  </div>
+                {% endif %}
+                {% if agent.last_failure_detail %}
+                  <div>
+                    <span class="font-semibold text-stone-800">Exception:</span>
+                    <span class="break-words font-mono text-[0.84rem] text-stone-700">{{ agent.last_failure_detail }}</span>
+                  </div>
+                {% endif %}
                 {% if agent.update_message %}
                   <div><span class="font-semibold text-stone-800">Update:</span> {{ agent.update_message }}</div>
                 {% endif %}
@@ -146,7 +178,7 @@
             {% if 'Version drift' in (agent.secondary_badges|map(attribute='label')|list) or 'API drift' in (agent.secondary_badges|map(attribute='label')|list) or agent.update_state and agent.update_state != 'current' %}
               <div class="mt-4 flex flex-wrap gap-2">
                 {% if agent.agent_version %}
-                  <span class="rounded-full bg-white px-3 py-1.5 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">Agent {{ agent.agent_version }}</span>
+                  <span class="rounded-full bg-white px-3 py-1.5 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">Version {{ agent.agent_version }}</span>
                 {% endif %}
                 {% if agent.sync_api_version %}
                   <span class="rounded-full bg-white px-3 py-1.5 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">API {{ agent.sync_api_version }}</span>
@@ -169,7 +201,7 @@
   </article>
 {% endmacro %}
 
-{% block title %}Agents | Codex Viewer{% endblock %}
+{% block title %}Machines | Codex Viewer{% endblock %}
 
 {% block content %}
   <div class="mx-auto w-full max-w-6xl">
@@ -177,9 +209,9 @@
       <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div class="min-w-0 flex-1">
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Fleet Overview</p>
-          <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">Agents</h1>
+          <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">Machines</h1>
           <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
-            Host activity, stale agents, sync trouble, and the fastest route back to the affected repo or session.
+            Host activity, stale machines, sync trouble, and the fastest route back to the affected repo or session.
           </p>
         </div>
 
@@ -199,7 +231,7 @@
         </div>
       </div>
 
-      <div class="mt-5 flex flex-wrap items-center gap-2 rounded-full border border-stone-900/10 bg-white/80 p-1" role="tablist" aria-label="Agent filters">
+      <div class="mt-5 flex flex-wrap items-center gap-2 rounded-full border border-stone-900/10 bg-white/80 p-1" role="tablist" aria-label="Machine filters">
         <button type="button" data-agents-filter="all" class="rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white">All</button>
         <button type="button" data-agents-filter="attention" class="rounded-full px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-100">Attention</button>
         <button type="button" data-agents-filter="active" class="rounded-full px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-100">Active</button>
@@ -219,7 +251,7 @@
           {{ agent_row(agent, return_to) }}
         {% else %}
           <div class="rounded-[1.4rem] border border-emerald-200 bg-emerald-50/85 p-5 text-sm text-emerald-900">
-            No agents currently need attention.
+            No machines currently need attention.
           </div>
         {% endfor %}
       </div>

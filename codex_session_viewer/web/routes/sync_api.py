@@ -91,6 +91,8 @@ async def sync_heartbeat(request: Request) -> JSONResponse:
                 last_skip_count=int(payload.get("last_skip_count") or 0),
                 last_fail_count=int(payload.get("last_fail_count") or 0),
                 last_error=str(payload.get("last_error") or "") or None,
+                last_failed_source_path=str(payload.get("last_failed_source_path") or "") or None,
+                last_failure_detail=str(payload.get("last_failure_detail") or "") or None,
                 acknowledged_raw_resend_token=str(payload.get("acknowledged_raw_resend_token") or "") or None,
                 last_raw_resend_at=str(payload.get("last_raw_resend_at") or "") or None,
             )
