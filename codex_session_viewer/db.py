@@ -9,6 +9,7 @@ from .session_rollups import (
     backfill_session_rollups,
     backfill_session_turn_activity_daily,
 )
+from .session_insights import extract_agent_metadata, parse_raw_meta_json
 from .onboarding import ensure_onboarding_state_row
 from .turn_index import backfill_session_turn_search, backfill_session_turns
 
@@ -38,6 +39,11 @@ SESSION_COLUMN_DEFS = {
     "github_org": "TEXT",
     "github_repo": "TEXT",
     "github_slug": "TEXT",
+    "forked_from_id": "TEXT",
+    "agent_nickname": "TEXT",
+    "agent_role": "TEXT",
+    "agent_path": "TEXT",
+    "memory_mode": "TEXT",
     "inferred_project_kind": "TEXT NOT NULL DEFAULT 'directory'",
     "inferred_project_key": "TEXT NOT NULL DEFAULT ''",
     "inferred_project_label": "TEXT NOT NULL DEFAULT ''",
@@ -56,6 +62,20 @@ SESSION_COLUMN_DEFS = {
     "latest_turn_summary": "TEXT",
     "command_failure_count": "INTEGER NOT NULL DEFAULT 0",
     "aborted_turn_count": "INTEGER NOT NULL DEFAULT 0",
+    "latest_usage_timestamp": "TEXT",
+    "latest_input_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_cached_input_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_output_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_reasoning_output_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_total_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_context_window": "INTEGER",
+    "latest_context_remaining_percent": "INTEGER",
+    "latest_primary_limit_used_percent": "REAL",
+    "latest_primary_limit_resets_at": "TEXT",
+    "latest_secondary_limit_used_percent": "REAL",
+    "latest_secondary_limit_resets_at": "TEXT",
+    "latest_rate_limit_name": "TEXT",
+    "latest_rate_limit_reached_type": "TEXT",
     "import_warning": "TEXT",
     "search_text": "TEXT NOT NULL DEFAULT ''",
     "raw_meta_json": "TEXT NOT NULL",
@@ -275,6 +295,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     github_org TEXT,
     github_repo TEXT,
     github_slug TEXT,
+    forked_from_id TEXT,
+    agent_nickname TEXT,
+    agent_role TEXT,
+    agent_path TEXT,
+    memory_mode TEXT,
     inferred_project_kind TEXT NOT NULL DEFAULT 'directory',
     inferred_project_key TEXT NOT NULL DEFAULT '',
     inferred_project_label TEXT NOT NULL DEFAULT '',
@@ -293,6 +318,20 @@ CREATE TABLE IF NOT EXISTS sessions (
     latest_turn_summary TEXT,
     command_failure_count INTEGER NOT NULL DEFAULT 0,
     aborted_turn_count INTEGER NOT NULL DEFAULT 0,
+    latest_usage_timestamp TEXT,
+    latest_input_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_output_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_total_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_context_window INTEGER,
+    latest_context_remaining_percent INTEGER,
+    latest_primary_limit_used_percent REAL,
+    latest_primary_limit_resets_at TEXT,
+    latest_secondary_limit_used_percent REAL,
+    latest_secondary_limit_resets_at TEXT,
+    latest_rate_limit_name TEXT,
+    latest_rate_limit_reached_type TEXT,
     import_warning TEXT,
     search_text TEXT NOT NULL DEFAULT '',
     raw_meta_json TEXT NOT NULL,
@@ -549,6 +588,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_github_slug ON sessions(github_slug);
 CREATE INDEX IF NOT EXISTS idx_sessions_project_key ON sessions(inferred_project_key);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_turn_timestamp ON sessions(last_turn_timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_raw_artifact_sha256 ON sessions(raw_artifact_sha256);
+CREATE INDEX IF NOT EXISTS idx_sessions_forked_from_id ON sessions(forked_from_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_host_path_unique
 ON sessions(source_host, source_path);
 
@@ -781,11 +821,73 @@ def default_select(column_name: str) -> str:
         "turn_count",
         "command_failure_count",
         "aborted_turn_count",
+        "latest_input_tokens",
+        "latest_cached_input_tokens",
+        "latest_output_tokens",
+        "latest_reasoning_output_tokens",
+        "latest_total_tokens",
     }:
         return "0"
     if column_name == "last_user_message":
         return "''"
     return "NULL"
+
+
+def backfill_session_agent_metadata(connection: sqlite3.Connection) -> int:
+    rows = connection.execute(
+        """
+        SELECT id, raw_meta_json, forked_from_id, agent_nickname, agent_role, agent_path, memory_mode
+        FROM sessions
+        WHERE COALESCE(TRIM(raw_meta_json), '') <> ''
+          AND (
+                COALESCE(TRIM(forked_from_id), '') = ''
+             OR COALESCE(TRIM(agent_nickname), '') = ''
+             OR COALESCE(TRIM(agent_role), '') = ''
+             OR COALESCE(TRIM(agent_path), '') = ''
+             OR COALESCE(TRIM(memory_mode), '') = ''
+          )
+        """
+    ).fetchall()
+    updates: list[tuple[object, ...]] = []
+    for row in rows:
+        metadata = extract_agent_metadata(parse_raw_meta_json(row["raw_meta_json"]))
+        values = {
+            "forked_from_id": str(row["forked_from_id"] or "").strip() or metadata["forked_from_id"],
+            "agent_nickname": str(row["agent_nickname"] or "").strip() or metadata["agent_nickname"],
+            "agent_role": str(row["agent_role"] or "").strip() or metadata["agent_role"],
+            "agent_path": str(row["agent_path"] or "").strip() or metadata["agent_path"],
+            "memory_mode": str(row["memory_mode"] or "").strip() or metadata["memory_mode"],
+        }
+        if not any(values.values()):
+            continue
+        updates.append(
+            (
+                values["forked_from_id"],
+                values["agent_nickname"],
+                values["agent_role"],
+                values["agent_path"],
+                values["memory_mode"],
+                str(row["id"]),
+            )
+        )
+
+    if not updates:
+        return 0
+
+    connection.executemany(
+        """
+        UPDATE sessions
+        SET
+            forked_from_id = ?,
+            agent_nickname = ?,
+            agent_role = ?,
+            agent_path = ?,
+            memory_mode = ?
+        WHERE id = ?
+        """,
+        updates,
+    )
+    return len(updates)
 
 
 def default_event_select(column_name: str) -> str:
@@ -1031,6 +1133,7 @@ def init_db(database_path: Path) -> None:
             ensure_auth_state_row(connection)
             ensure_onboarding_state_row(connection)
             connection.executescript(INDEX_SQL)
+            backfill_session_agent_metadata(connection)
             backfill_session_rollups(connection)
             backfill_session_turn_activity_daily(connection)
             backfill_session_turns(connection)

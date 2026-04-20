@@ -18,6 +18,7 @@ from ...runtime import export_markdown, get_events
 from ...saved_turns import fetch_session_saved_turn_states, owner_scope_from_request
 from ...session_artifacts import resolve_session_raw_text
 from ...session_exports import build_session_bundle, export_json_payload
+from ...session_insights import session_agent_snapshot, usage_pressure_snapshot
 from ...session_status import terminal_turn_summary
 from ...session_view import build_session_audit_summary, build_turns
 from ...turn_index import fetch_session_turn_window, turn_window_size
@@ -131,6 +132,20 @@ def session_detail(
             raise HTTPException(status_code=404, detail="Session not found")
         if not row_is_visible_to_project_access(session, project_access):
             raise HTTPException(status_code=404, detail="Session not found")
+        agent_snapshot = session_agent_snapshot(session)
+        usage_pressure = usage_pressure_snapshot(session)
+        parent_session_href = None
+        parent_session_title = None
+        if agent_snapshot["forked_from_id"]:
+            parent_session = fetch_session_with_project(connection, str(agent_snapshot["forked_from_id"]))
+            if parent_session is not None and row_is_visible_to_project_access(parent_session, project_access):
+                parent_session_href = f"/sessions/{quote(str(parent_session['id']), safe='')}"
+                parent_session_title = str(
+                    parent_session["last_user_message"]
+                    or parent_session["latest_turn_summary"]
+                    or parent_session["summary"]
+                    or parent_session["id"]
+                )
         window = fetch_session_turn_window(
             connection,
             session_id,
@@ -257,6 +272,10 @@ def session_detail(
             "audit_summary": audit_summary,
             "audit_focus": audit_focus,
             "audit_focus_turn": audit_focus_turn,
+            "agent_snapshot": agent_snapshot,
+            "usage_pressure": usage_pressure,
+            "parent_session_href": parent_session_href,
+            "parent_session_title": parent_session_title,
             "turns": turns,
             "pagination": pagination,
             "saved_turn_states": saved_turn_states,

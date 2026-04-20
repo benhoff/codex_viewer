@@ -40,6 +40,7 @@ from ...local_auth import (
 from ...onboarding import effective_bootstrap_required, reconcile_onboarding_state
 from ...projects import (
     build_project_access_context,
+    build_session_signal_badges,
     build_grouped_projects,
     dashboard_stats,
     effective_project_fields,
@@ -51,6 +52,7 @@ from ...projects import (
     search_turn_hits,
     summarize_attention_status,
 )
+from ...session_insights import session_agent_snapshot, usage_pressure_snapshot
 from ...saved_turns import (
     count_saved_turns_by_status,
     fetch_turn_snapshot,
@@ -406,21 +408,89 @@ def build_group_signal_map(
             {
                 "recent_turn_count": 0,
                 "latest_recent_timestamp": "",
+                "status_tone": "stone",
+                "status_label": "Idle",
+                "status_title": "No recent turn activity",
+                "has_attention": False,
+                "attention_count": 0,
+                "attention_score": 0,
+                "signal_badges": [],
+                "spawned_agent_count": 0,
+                "worker_count": 0,
+                "explorer_count": 0,
+                "_status_timestamp": "",
+                "_pressure_score": 0,
+                "_pressure_badges": [],
             },
         )
 
         recent = recent_turn_activity.get(str(row["id"]))
+        recent_turn_count = int(recent.get("turn_count", 0) or 0) if recent else 0
         if recent:
-            signal["recent_turn_count"] = int(signal["recent_turn_count"]) + int(recent.get("turn_count", 0) or 0)
+            signal["recent_turn_count"] = int(signal["recent_turn_count"]) + recent_turn_count
             latest_recent_timestamp = str(recent.get("latest_timestamp") or "")
             if latest_recent_timestamp and latest_recent_timestamp > str(signal["latest_recent_timestamp"] or ""):
                 signal["latest_recent_timestamp"] = latest_recent_timestamp
+        usage = usage_pressure_snapshot(row)
+        if bool(usage["has_pressure"]) and int(usage["score"] or 0) >= int(signal["_pressure_score"] or 0):
+            signal["_pressure_score"] = int(usage["score"] or 0)
+            signal["_pressure_badges"] = list(usage["badges"])[:2]
+
+        agent = session_agent_snapshot(row)
+        role = str(agent["agent_role"] or "").strip().lower()
+        if agent["forked_from_id"]:
+            signal["spawned_agent_count"] = int(signal["spawned_agent_count"]) + 1
+        if role == "worker":
+            signal["worker_count"] = int(signal["worker_count"]) + 1
+        elif role == "explorer":
+            signal["explorer_count"] = int(signal["explorer_count"]) + 1
+
+        status = summarize_attention_status(
+            recent_turn_count=recent_turn_count,
+            usage=usage,
+            command_failure_count=int(row["command_failure_count"] or 0),
+            aborted_turn_count=int(row["aborted_turn_count"] or 0),
+            viewer_warning=str(row["import_warning"] or ""),
+        )
+        status_timestamp = (
+            str(row["last_turn_timestamp"] or "")
+            or str(row["session_timestamp"] or "")
+            or str(row["started_at"] or "")
+            or str(row["imported_at"] or "")
+        )
+        if bool(status["has_attention"]) and (
+            int(status["attention_score"] or 0) > int(signal["attention_score"] or 0)
+            or (
+                int(status["attention_score"] or 0) == int(signal["attention_score"] or 0)
+                and status_timestamp > str(signal["_status_timestamp"] or "")
+            )
+        ):
+            signal.update(status)
+            signal["_status_timestamp"] = status_timestamp
 
     for signal in signals.values():
-        status = summarize_attention_status(
-            recent_turn_count=int(signal["recent_turn_count"]),
-        )
-        signal.update(status)
+        if not bool(signal["has_attention"]):
+            signal.update(
+                summarize_attention_status(
+                    recent_turn_count=int(signal["recent_turn_count"]),
+                )
+            )
+        badges: list[dict[str, str]] = list(signal["_pressure_badges"])
+        if int(signal["worker_count"] or 0) > 0:
+            badges.append({"tone": "sky", "label": f"{int(signal['worker_count'])} workers" if int(signal["worker_count"]) != 1 else "1 worker"})
+        if int(signal["explorer_count"] or 0) > 0:
+            badges.append({"tone": "sky", "label": f"{int(signal['explorer_count'])} explorers" if int(signal["explorer_count"]) != 1 else "1 explorer"})
+        if (
+            int(signal["spawned_agent_count"] or 0) > 0
+            and int(signal["worker_count"] or 0) == 0
+            and int(signal["explorer_count"] or 0) == 0
+        ):
+            count = int(signal["spawned_agent_count"])
+            badges.append({"tone": "stone", "label": f"{count} spawned agents" if count != 1 else "Spawned agent"})
+        signal["signal_badges"] = badges[:3]
+        signal.pop("_status_timestamp", None)
+        signal.pop("_pressure_score", None)
+        signal.pop("_pressure_badges", None)
     return signals
 
 
@@ -456,9 +526,6 @@ def build_active_repos_panel(
         recent_turn_count = int(signal.get("recent_turn_count", 0) or 0)
         latest_recent_timestamp = str(signal.get("latest_recent_timestamp") or "")
         latest_timestamp = latest_recent_timestamp or str(group.latest_timestamp or "")
-        status = summarize_attention_status(
-            recent_turn_count=recent_turn_count,
-        )
         owner_name = str(group.organization or "").strip()
         repo_name = str(group.repository or "").strip()
         plain_path_label = f"{owner_name}/{repo_name}" if owner_name and repo_name else repo_name
@@ -480,18 +547,20 @@ def build_active_repos_panel(
                 "host_label": f"{group.host_count} host" + ("" if group.host_count == 1 else "s"),
                 "session_count": group.session_count,
                 "summary": group.latest_summary or "",
-                "signal_badges": [],
-                "status_tone": str(status["status_tone"]),
-                "status_label": str(status["status_label"]),
-                "status_title": str(status["status_title"]),
-                "has_attention": bool(status["has_attention"]),
-                "attention_count": int(status["attention_count"]),
+                "signal_badges": list(signal.get("signal_badges") or []),
+                "status_tone": str(signal.get("status_tone") or "stone"),
+                "status_label": str(signal.get("status_label") or "Idle"),
+                "status_title": str(signal.get("status_title") or "No recent turn activity"),
+                "has_attention": bool(signal.get("has_attention")),
+                "attention_count": int(signal.get("attention_count") or 0),
+                "attention_score": int(signal.get("attention_score") or 0),
             }
         )
 
     items.sort(
         key=lambda item: (
             1 if item["has_attention"] else 0,
+            int(item["attention_score"]),
             int(item["recent_turn_count"]),
             str(item["latest_timestamp"] or ""),
             int(item["attention_count"]),
@@ -507,7 +576,56 @@ def build_error_sessions_panel(
     *,
     limit: int = 6,
 ) -> list[dict[str, object]]:
-    return []
+    group_href_by_key = {group.key: group.detail_href for group in repo_groups}
+    items: list[dict[str, object]] = []
+    for row in rows:
+        project = effective_project_fields(row)
+        usage = usage_pressure_snapshot(row)
+        status = summarize_attention_status(
+            recent_turn_count=0,
+            usage=usage,
+            command_failure_count=int(row["command_failure_count"] or 0),
+            aborted_turn_count=int(row["aborted_turn_count"] or 0),
+            viewer_warning=str(row["import_warning"] or ""),
+        )
+        if not bool(status["has_attention"]):
+            continue
+        timestamp = (
+            str(row["last_turn_timestamp"] or "")
+            or str(row["session_timestamp"] or "")
+            or str(row["started_at"] or "")
+            or str(row["imported_at"] or "")
+        )
+        session_id = quote(str(row["id"]), safe="")
+        items.append(
+            {
+                "session_href": f"/sessions/{session_id}",
+                "project_href": group_href_by_key.get(str(project["effective_group_key"]), "/"),
+                "project_label": project["display_label"],
+                "title": str(row["last_user_message"] or row["latest_turn_summary"] or row["summary"] or "Session"),
+                "host": project["source_host"],
+                "timestamp": timestamp,
+                "status_tone": str(status["status_tone"]),
+                "status_label": str(status["status_label"]),
+                "status_title": str(status["status_title"]),
+                "attention_score": int(status["attention_score"] or 0),
+                "signal_badges": build_session_signal_badges(
+                    row,
+                    command_exits=int(row["command_failure_count"] or 0),
+                    aborted_turns=int(row["aborted_turn_count"] or 0),
+                    viewer_warning=str(row["import_warning"] or ""),
+                ),
+            }
+        )
+
+    items.sort(
+        key=lambda item: (
+            int(item["attention_score"]),
+            str(item["timestamp"] or ""),
+        ),
+        reverse=True,
+    )
+    return items[:limit]
 
 
 def render_onboarding_status_fragment(request: Request) -> HTMLResponse:

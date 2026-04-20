@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shlex
+import socket
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -12,13 +14,14 @@ from pathlib import Path
 
 from .config import Settings
 from .db import connect, write_transaction
-from .git_utils import infer_project_identity, resolve_git_info
+from .git_utils import infer_project_identity, resolve_git_info, resolve_project_root
 from .projects import project_is_ignored
 from .session_rollups import (
     compute_session_rollups,
     replace_session_turn_activity_daily,
 )
-from .session_artifacts import read_session_source_text, store_session_artifact
+from .session_insights import extract_agent_metadata, parse_raw_meta_json
+from .session_artifacts import load_session_artifact_text, read_session_source_text, store_session_artifact
 from .turn_index import replace_session_turn_search, replace_session_turns
 from .text_utils import shorten, strip_codex_wrappers
 
@@ -27,6 +30,17 @@ logger = logging.getLogger("codex_session_viewer.importer")
 
 def utc_now_iso() -> str:
     return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
+
+
+def current_source_host() -> str:
+    return (os.getenv("CODEX_VIEWER_SOURCE_HOST", socket.gethostname()) or "").strip().lower()
+
+
+def can_probe_git_for_source(source_host: str | None) -> bool:
+    candidate = str(source_host or "").strip().lower()
+    if not candidate:
+        return True
+    return candidate == current_source_host()
 
 
 def first_text_from_content(content: object) -> str:
@@ -84,6 +98,8 @@ def friendly_tool_title(tool_name: str | None) -> str:
         "write_stdin": "Command Session",
         "apply_patch": "Patch",
         "update_plan": "Plan Update",
+        "tool_search": "Tool Search",
+        "image_generation": "Image Generation",
         "view_image": "View Image",
     }
     return mapping.get((tool_name or "").strip(), tool_name or "Tool Call")
@@ -178,6 +194,34 @@ def summarize_token_count(payload: dict[str, object]) -> str:
     return "Token usage: " + ", ".join(parts) if parts else "Token usage updated"
 
 
+def summarize_web_search_action(action: object, query: object = None) -> str:
+    if isinstance(action, dict):
+        action_type = str(action.get("type") or "").strip()
+        if action_type == "search":
+            primary_query = str(action.get("query") or query or "").strip()
+            if primary_query:
+                return primary_query
+            queries = action.get("queries")
+            if isinstance(queries, list):
+                joined = ", ".join(str(item).strip() for item in queries if str(item).strip())
+                if joined:
+                    return joined
+        elif action_type == "open_page":
+            url = str(action.get("url") or query or "").strip()
+            if url:
+                return f"Open {url}"
+        elif action_type == "find_in_page":
+            pattern = str(action.get("pattern") or "").strip()
+            url = str(action.get("url") or "").strip()
+            if pattern and url:
+                return f"Find {pattern} in {url}"
+            if pattern:
+                return f"Find {pattern}"
+            if url:
+                return f"Find in {url}"
+    return str(query or "").strip() or "Web search"
+
+
 @dataclass(slots=True)
 class NormalizedEvent:
     event_index: int
@@ -221,6 +265,11 @@ class ParsedSession:
     github_org: str | None
     github_repo: str | None
     github_slug: str | None
+    forked_from_id: str | None
+    agent_nickname: str | None
+    agent_role: str | None
+    agent_path: str | None
+    memory_mode: str | None
     inferred_project_kind: str
     inferred_project_key: str
     inferred_project_label: str
@@ -236,6 +285,20 @@ class ParsedSession:
     latest_turn_summary: str | None
     command_failure_count: int
     aborted_turn_count: int
+    latest_usage_timestamp: str | None
+    latest_input_tokens: int
+    latest_cached_input_tokens: int
+    latest_output_tokens: int
+    latest_reasoning_output_tokens: int
+    latest_total_tokens: int
+    latest_context_window: int | None
+    latest_context_remaining_percent: int | None
+    latest_primary_limit_used_percent: float | None
+    latest_primary_limit_resets_at: str | None
+    latest_secondary_limit_used_percent: float | None
+    latest_secondary_limit_resets_at: str | None
+    latest_rate_limit_name: str | None
+    latest_rate_limit_reached_type: str | None
     import_warning: str | None
     search_text: str
     raw_meta_json: str
@@ -280,9 +343,15 @@ def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEv
 
     if record_type == "response_item" and payload_type == "message":
         role = payload.get("role") if isinstance(payload.get("role"), str) else None
+        phase = payload.get("phase") if isinstance(payload.get("phase"), str) else None
         kind = "message" if role in {"user", "assistant"} else "system"
         if role == "assistant":
-            title = "Assistant Message"
+            if phase == "commentary":
+                title = "Assistant Update"
+            elif phase == "final_answer":
+                title = "Final Answer"
+            else:
+                title = "Assistant Message"
         elif role == "user":
             title = "User Message"
         elif role:
@@ -300,6 +369,28 @@ def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEv
         kind = "message"
         title = "Assistant Update"
         display_text = str(payload.get("message") or "")
+    elif record_type == "response_item" and payload_type == "local_shell_call":
+        kind = "tool_call"
+        tool_name = "exec_command"
+        call_id = (
+            payload.get("call_id")
+            if isinstance(payload.get("call_id"), str)
+            else (payload.get("id") if isinstance(payload.get("id"), str) else None)
+        )
+        title = friendly_tool_title(tool_name)
+        action = payload.get("action") if isinstance(payload.get("action"), dict) else {}
+        detail_payload = action if action else payload
+        detail_text = safe_json(detail_payload)
+        if action.get("type") == "exec":
+            raw_input = {
+                "cmd": action.get("command"),
+                "workdir": action.get("working_directory"),
+            }
+            display_text, command_text = summarize_tool_call_input(tool_name, raw_input)
+            command_text = command_text or format_command(action.get("command"))
+        else:
+            display_text = "Shell command"
+            command_text = None
     elif record_type == "response_item" and payload_type in {"function_call", "custom_tool_call"}:
         kind = "tool_call"
         tool_name = payload.get("name") if isinstance(payload.get("name"), str) else None
@@ -318,6 +409,47 @@ def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEv
         title = "Tool Result"
         output = payload.get("output")
         display_text = output if isinstance(output, str) else safe_json(output)
+    elif record_type == "response_item" and payload_type == "tool_search_call":
+        kind = "tool_call"
+        tool_name = "tool_search"
+        call_id = payload.get("call_id") if isinstance(payload.get("call_id"), str) else None
+        title = friendly_tool_title(tool_name)
+        execution = payload.get("execution")
+        arguments = payload.get("arguments")
+        detail_text = safe_json(
+            {
+                "execution": execution,
+                "arguments": arguments,
+            }
+        )
+        display_text = str(execution or "Tool search")
+    elif record_type == "response_item" and payload_type == "tool_search_output":
+        kind = "tool_result"
+        call_id = payload.get("call_id") if isinstance(payload.get("call_id"), str) else None
+        title = "Tool Search Result"
+        tools = payload.get("tools") if isinstance(payload.get("tools"), list) else []
+        status = payload.get("status")
+        execution = payload.get("execution")
+        summary_bits = [str(execution or "").strip(), str(status or "").strip()]
+        summary = " | ".join(bit for bit in summary_bits if bit)
+        display_text = summary or f"{len(tools)} tool result{'s' if len(tools) != 1 else ''}"
+        detail_text = safe_json(payload)
+    elif record_type == "response_item" and payload_type == "image_generation_call":
+        kind = "tool_result"
+        call_id = payload.get("id") if isinstance(payload.get("id"), str) else None
+        title = "Image Generation"
+        status = str(payload.get("status") or "").strip()
+        revised_prompt = str(payload.get("revised_prompt") or "").strip()
+        saved_path = str(payload.get("saved_path") or "").strip()
+        display_text = revised_prompt or status or "Image generation completed"
+        detail_lines = []
+        if status:
+            detail_lines.append(f"Status: {status}")
+        if revised_prompt:
+            detail_lines.append(revised_prompt)
+        if saved_path:
+            detail_lines.append(f"Saved: {saved_path}")
+        detail_text = "\n".join(detail_lines)
     elif record_type == "event_msg" and payload_type == "exec_command_end":
         kind = "command"
         title = "Command Result"
@@ -337,6 +469,22 @@ def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEv
         if isinstance(success, bool):
             display_text += " (success)" if success else " (failed)"
         detail_text = safe_json(payload.get("changes"))
+    elif record_type == "event_msg" and payload_type == "image_generation_end":
+        kind = "tool_result"
+        title = "Image Generation"
+        call_id = payload.get("call_id") if isinstance(payload.get("call_id"), str) else None
+        status = str(payload.get("status") or "").strip()
+        revised_prompt = str(payload.get("revised_prompt") or "").strip()
+        saved_path = str(payload.get("saved_path") or "").strip()
+        display_text = revised_prompt or status or "Image generation completed"
+        detail_lines = []
+        if status:
+            detail_lines.append(f"Status: {status}")
+        if revised_prompt:
+            detail_lines.append(revised_prompt)
+        if saved_path:
+            detail_lines.append(f"Saved: {saved_path}")
+        detail_text = "\n".join(detail_lines)
     elif record_type == "response_item" and payload_type == "reasoning":
         kind = "reasoning"
         title = "Reasoning"
@@ -363,25 +511,54 @@ def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEv
             parts.append(cwd)
         display_text = " | ".join(parts) if parts else "Turn context updated"
         detail_text = safe_json(payload)
-    elif record_type == "event_msg" and payload_type == "task_started":
+    elif record_type == "event_msg" and payload_type in {"task_started", "turn_started"}:
         kind = "system"
         title = "Task Started"
         display_text = str(payload.get("started_at") or "Task started")
-    elif record_type == "event_msg" and payload_type == "task_complete":
+    elif record_type == "event_msg" and payload_type in {"task_complete", "turn_complete"}:
         kind = "system"
         title = "Task Complete"
         display_text = shorten(str(payload.get("last_agent_message") or "Task completed"), 320)
+    elif record_type == "event_msg" and payload_type == "context_compacted":
+        kind = "system"
+        title = "Context Compacted"
+        display_text = "Conversation history compacted"
+    elif record_type == "event_msg" and payload_type == "thread_rolled_back":
+        kind = "system"
+        title = "Thread Rolled Back"
+        count = payload.get("num_turns")
+        if isinstance(count, int):
+            display_text = f"Rolled back {count} turn{'s' if count != 1 else ''}"
+        else:
+            display_text = "Conversation history rolled back"
+    elif record_type == "event_msg" and payload_type == "item_completed":
+        kind = "system"
+        item = payload.get("item") if isinstance(payload.get("item"), dict) else {}
+        item_type = item.get("type") if isinstance(item.get("type"), str) else None
+        item_text = item.get("text") if isinstance(item.get("text"), str) else None
+        title = "Plan Completed" if item_type == "Plan" else "Item Completed"
+        display_text = shorten(item_text or item_type or "Item completed", 320)
+        detail_text = item_text or safe_json(item)
     elif record_type == "event_msg" and payload_type == "web_search_end":
         kind = "tool_result"
         title = "Web Search"
+        tool_name = "web_search"
         call_id = payload.get("call_id") if isinstance(payload.get("call_id"), str) else None
         query = payload.get("query")
         action = payload.get("action")
-        display_text = str(query or action or "Web search completed")
+        display_text = summarize_web_search_action(action, query)
+        detail_text = safe_json(payload)
     elif record_type == "response_item" and payload_type == "web_search_call":
         kind = "tool_call"
+        tool_name = "web_search"
         title = "Web Search"
-        display_text = safe_json(payload)
+        action = payload.get("action")
+        display_text = summarize_web_search_action(action)
+        detail_text = safe_json(payload)
+    elif record_type == "response_item" and payload_type == "compaction":
+        kind = "system"
+        title = "Context Compacted"
+        display_text = "Conversation history compacted"
     elif record_type == "compacted":
         kind = "system"
         title = "Context Compacted"
@@ -498,6 +675,11 @@ def _parse_session_lines(
     git_info = resolve_git_info(
         cwd,
         raw_meta.get("git") if isinstance(raw_meta.get("git"), dict) else None,
+        allow_probe=can_probe_git_for_source(source_host),
+    )
+    project_root = resolve_project_root(
+        cwd,
+        allow_probe=can_probe_git_for_source(source_host),
     )
     project_identity = infer_project_identity(
         source_host=source_host,
@@ -505,6 +687,8 @@ def _parse_session_lines(
         github_org=git_info["github_org"],
         github_repo=git_info["github_repo"],
         github_slug=git_info["github_slug"],
+        git_repository_url=git_info["repository_url"],
+        project_root=project_root,
     )
 
     summary = shorten(user_messages[0], 120) if user_messages else f"Session {session_id}"
@@ -518,16 +702,19 @@ def _parse_session_lines(
         source_host,
         cli_version or "",
         model_provider or "",
+        project_root or "",
         git_info["github_org"] or "",
         git_info["github_repo"] or "",
         git_info["github_slug"] or "",
         git_info["github_remote_url"] or "",
+        git_info["repository_url"] or "",
     ]
     search_text = "\n".join(part for part in [*search_head, *search_parts] if part)
     if len(search_text) > 200_000:
         warning = "Search text truncated during import"
         search_text = search_text[:200_000]
     rollups = compute_session_rollups(events)
+    agent_metadata = extract_agent_metadata(raw_meta)
 
     return ParsedSession(
         session_id=session_id,
@@ -553,6 +740,11 @@ def _parse_session_lines(
         github_org=git_info["github_org"],
         github_repo=git_info["github_repo"],
         github_slug=git_info["github_slug"],
+        forked_from_id=agent_metadata["forked_from_id"],
+        agent_nickname=agent_metadata["agent_nickname"],
+        agent_role=agent_metadata["agent_role"],
+        agent_path=agent_metadata["agent_path"],
+        memory_mode=agent_metadata["memory_mode"],
         inferred_project_kind=project_identity["kind"],
         inferred_project_key=project_identity["key"],
         inferred_project_label=project_identity["label"],
@@ -568,6 +760,36 @@ def _parse_session_lines(
         latest_turn_summary=rollups["latest_turn_summary"],
         command_failure_count=int(rollups["command_failure_count"]),
         aborted_turn_count=int(rollups["aborted_turn_count"]),
+        latest_usage_timestamp=rollups["latest_usage_timestamp"],
+        latest_input_tokens=int(rollups["latest_input_tokens"] or 0),
+        latest_cached_input_tokens=int(rollups["latest_cached_input_tokens"] or 0),
+        latest_output_tokens=int(rollups["latest_output_tokens"] or 0),
+        latest_reasoning_output_tokens=int(rollups["latest_reasoning_output_tokens"] or 0),
+        latest_total_tokens=int(rollups["latest_total_tokens"] or 0),
+        latest_context_window=(
+            int(rollups["latest_context_window"])
+            if rollups["latest_context_window"] is not None
+            else None
+        ),
+        latest_context_remaining_percent=(
+            int(rollups["latest_context_remaining_percent"])
+            if rollups["latest_context_remaining_percent"] is not None
+            else None
+        ),
+        latest_primary_limit_used_percent=(
+            float(rollups["latest_primary_limit_used_percent"])
+            if rollups["latest_primary_limit_used_percent"] is not None
+            else None
+        ),
+        latest_primary_limit_resets_at=rollups["latest_primary_limit_resets_at"],
+        latest_secondary_limit_used_percent=(
+            float(rollups["latest_secondary_limit_used_percent"])
+            if rollups["latest_secondary_limit_used_percent"] is not None
+            else None
+        ),
+        latest_secondary_limit_resets_at=rollups["latest_secondary_limit_resets_at"],
+        latest_rate_limit_name=rollups["latest_rate_limit_name"],
+        latest_rate_limit_reached_type=rollups["latest_rate_limit_reached_type"],
         import_warning=warning,
         search_text=search_text,
         raw_meta_json=safe_json(raw_meta),
@@ -665,6 +887,11 @@ def parsed_session_to_payload(parsed: ParsedSession) -> dict[str, object]:
             "github_org": parsed.github_org,
             "github_repo": parsed.github_repo,
             "github_slug": parsed.github_slug,
+            "forked_from_id": parsed.forked_from_id,
+            "agent_nickname": parsed.agent_nickname,
+            "agent_role": parsed.agent_role,
+            "agent_path": parsed.agent_path,
+            "memory_mode": parsed.memory_mode,
             "inferred_project_kind": parsed.inferred_project_kind,
             "inferred_project_key": parsed.inferred_project_key,
             "inferred_project_label": parsed.inferred_project_label,
@@ -680,6 +907,20 @@ def parsed_session_to_payload(parsed: ParsedSession) -> dict[str, object]:
             "latest_turn_summary": parsed.latest_turn_summary,
             "command_failure_count": parsed.command_failure_count,
             "aborted_turn_count": parsed.aborted_turn_count,
+            "latest_usage_timestamp": parsed.latest_usage_timestamp,
+            "latest_input_tokens": parsed.latest_input_tokens,
+            "latest_cached_input_tokens": parsed.latest_cached_input_tokens,
+            "latest_output_tokens": parsed.latest_output_tokens,
+            "latest_reasoning_output_tokens": parsed.latest_reasoning_output_tokens,
+            "latest_total_tokens": parsed.latest_total_tokens,
+            "latest_context_window": parsed.latest_context_window,
+            "latest_context_remaining_percent": parsed.latest_context_remaining_percent,
+            "latest_primary_limit_used_percent": parsed.latest_primary_limit_used_percent,
+            "latest_primary_limit_resets_at": parsed.latest_primary_limit_resets_at,
+            "latest_secondary_limit_used_percent": parsed.latest_secondary_limit_used_percent,
+            "latest_secondary_limit_resets_at": parsed.latest_secondary_limit_resets_at,
+            "latest_rate_limit_name": parsed.latest_rate_limit_name,
+            "latest_rate_limit_reached_type": parsed.latest_rate_limit_reached_type,
             "import_warning": parsed.import_warning,
             "search_text": parsed.search_text,
             "raw_meta_json": parsed.raw_meta_json,
@@ -695,7 +936,15 @@ def _payload_str(value: object) -> str | None:
 
 
 def _payload_int(value: object) -> int | None:
-    return value if isinstance(value, int) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _payload_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
@@ -791,24 +1040,113 @@ def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
     if len(normalized_events) != event_count:
         raise ValueError("Session event count does not match uploaded event payload")
 
-    if None in {
-        rollup_version,
-        turn_count,
-        last_user_message,
-        command_failure_count,
-        aborted_turn_count,
-    }:
-        rollups = compute_session_rollups(normalized_events)
-        rollup_version = int(rollups["rollup_version"])
-        turn_count = int(rollups["turn_count"])
-        last_user_message = str(rollups["last_user_message"] or "")
-        command_failure_count = int(rollups["command_failure_count"])
-        aborted_turn_count = int(rollups["aborted_turn_count"])
-        last_turn_timestamp = _payload_str(session.get("last_turn_timestamp")) or rollups["last_turn_timestamp"]
-        latest_turn_summary = _payload_str(session.get("latest_turn_summary")) or rollups["latest_turn_summary"]
+    derived_rollups = compute_session_rollups(normalized_events)
+    derived_agent_metadata = extract_agent_metadata(parse_raw_meta_json(raw_meta_json))
+
+    rollup_keys = {
+        "turn_count",
+        "last_user_message",
+        "last_turn_timestamp",
+        "latest_turn_summary",
+        "command_failure_count",
+        "aborted_turn_count",
+        "latest_usage_timestamp",
+        "latest_input_tokens",
+        "latest_cached_input_tokens",
+        "latest_output_tokens",
+        "latest_reasoning_output_tokens",
+        "latest_total_tokens",
+        "latest_context_window",
+        "latest_context_remaining_percent",
+        "latest_primary_limit_used_percent",
+        "latest_primary_limit_resets_at",
+        "latest_secondary_limit_used_percent",
+        "latest_secondary_limit_resets_at",
+        "latest_rate_limit_name",
+        "latest_rate_limit_reached_type",
+    }
+    use_derived_rollups = (
+        rollup_version is None
+        or rollup_version < int(derived_rollups["rollup_version"])
+        or any(key not in session for key in rollup_keys)
+        or None in {
+            turn_count,
+            last_user_message,
+            command_failure_count,
+            aborted_turn_count,
+        }
+    )
+    if use_derived_rollups:
+        rollup_version = int(derived_rollups["rollup_version"])
+        turn_count = int(derived_rollups["turn_count"])
+        last_user_message = str(derived_rollups["last_user_message"] or "")
+        last_turn_timestamp = _payload_str(session.get("last_turn_timestamp")) or derived_rollups["last_turn_timestamp"]
+        latest_turn_summary = _payload_str(session.get("latest_turn_summary")) or derived_rollups["latest_turn_summary"]
+        command_failure_count = int(derived_rollups["command_failure_count"])
+        aborted_turn_count = int(derived_rollups["aborted_turn_count"])
+        latest_usage_timestamp = derived_rollups["latest_usage_timestamp"]
+        latest_input_tokens = int(derived_rollups["latest_input_tokens"] or 0)
+        latest_cached_input_tokens = int(derived_rollups["latest_cached_input_tokens"] or 0)
+        latest_output_tokens = int(derived_rollups["latest_output_tokens"] or 0)
+        latest_reasoning_output_tokens = int(derived_rollups["latest_reasoning_output_tokens"] or 0)
+        latest_total_tokens = int(derived_rollups["latest_total_tokens"] or 0)
+        latest_context_window = (
+            int(derived_rollups["latest_context_window"])
+            if derived_rollups["latest_context_window"] is not None
+            else None
+        )
+        latest_context_remaining_percent = (
+            int(derived_rollups["latest_context_remaining_percent"])
+            if derived_rollups["latest_context_remaining_percent"] is not None
+            else None
+        )
+        latest_primary_limit_used_percent = (
+            float(derived_rollups["latest_primary_limit_used_percent"])
+            if derived_rollups["latest_primary_limit_used_percent"] is not None
+            else None
+        )
+        latest_primary_limit_resets_at = derived_rollups["latest_primary_limit_resets_at"]
+        latest_secondary_limit_used_percent = (
+            float(derived_rollups["latest_secondary_limit_used_percent"])
+            if derived_rollups["latest_secondary_limit_used_percent"] is not None
+            else None
+        )
+        latest_secondary_limit_resets_at = derived_rollups["latest_secondary_limit_resets_at"]
+        latest_rate_limit_name = derived_rollups["latest_rate_limit_name"]
+        latest_rate_limit_reached_type = derived_rollups["latest_rate_limit_reached_type"]
     else:
         last_turn_timestamp = _payload_str(session.get("last_turn_timestamp"))
         latest_turn_summary = _payload_str(session.get("latest_turn_summary"))
+        latest_usage_timestamp = _payload_str(session.get("latest_usage_timestamp"))
+        latest_input_tokens = _payload_int(session.get("latest_input_tokens")) or 0
+        latest_cached_input_tokens = _payload_int(session.get("latest_cached_input_tokens")) or 0
+        latest_output_tokens = _payload_int(session.get("latest_output_tokens")) or 0
+        latest_reasoning_output_tokens = _payload_int(session.get("latest_reasoning_output_tokens")) or 0
+        latest_total_tokens = _payload_int(session.get("latest_total_tokens")) or 0
+        latest_context_window = _payload_int(session.get("latest_context_window"))
+        latest_context_remaining_percent = _payload_int(session.get("latest_context_remaining_percent"))
+        latest_primary_limit_used_percent = _payload_float(session.get("latest_primary_limit_used_percent"))
+        latest_primary_limit_resets_at = _payload_str(session.get("latest_primary_limit_resets_at"))
+        latest_secondary_limit_used_percent = _payload_float(session.get("latest_secondary_limit_used_percent"))
+        latest_secondary_limit_resets_at = _payload_str(session.get("latest_secondary_limit_resets_at"))
+        latest_rate_limit_name = _payload_str(session.get("latest_rate_limit_name"))
+        latest_rate_limit_reached_type = _payload_str(session.get("latest_rate_limit_reached_type"))
+
+    forked_from_id = _payload_str(session.get("forked_from_id"))
+    agent_nickname = _payload_str(session.get("agent_nickname"))
+    agent_role = _payload_str(session.get("agent_role"))
+    agent_path = _payload_str(session.get("agent_path"))
+    memory_mode = _payload_str(session.get("memory_mode"))
+    if "forked_from_id" not in session:
+        forked_from_id = derived_agent_metadata["forked_from_id"]
+    if "agent_nickname" not in session:
+        agent_nickname = derived_agent_metadata["agent_nickname"]
+    if "agent_role" not in session:
+        agent_role = derived_agent_metadata["agent_role"]
+    if "agent_path" not in session:
+        agent_path = derived_agent_metadata["agent_path"]
+    if "memory_mode" not in session:
+        memory_mode = derived_agent_metadata["memory_mode"]
 
     return ParsedSession(
         session_id=session_id,
@@ -834,6 +1172,11 @@ def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
         github_org=_payload_str(session.get("github_org")),
         github_repo=_payload_str(session.get("github_repo")),
         github_slug=_payload_str(session.get("github_slug")),
+        forked_from_id=forked_from_id,
+        agent_nickname=agent_nickname,
+        agent_role=agent_role,
+        agent_path=agent_path,
+        memory_mode=memory_mode,
         inferred_project_kind=inferred_project_kind,
         inferred_project_key=inferred_project_key,
         inferred_project_label=inferred_project_label,
@@ -849,6 +1192,20 @@ def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
         latest_turn_summary=latest_turn_summary,
         command_failure_count=command_failure_count,
         aborted_turn_count=aborted_turn_count,
+        latest_usage_timestamp=latest_usage_timestamp,
+        latest_input_tokens=latest_input_tokens,
+        latest_cached_input_tokens=latest_cached_input_tokens,
+        latest_output_tokens=latest_output_tokens,
+        latest_reasoning_output_tokens=latest_reasoning_output_tokens,
+        latest_total_tokens=latest_total_tokens,
+        latest_context_window=latest_context_window,
+        latest_context_remaining_percent=latest_context_remaining_percent,
+        latest_primary_limit_used_percent=latest_primary_limit_used_percent,
+        latest_primary_limit_resets_at=latest_primary_limit_resets_at,
+        latest_secondary_limit_used_percent=latest_secondary_limit_used_percent,
+        latest_secondary_limit_resets_at=latest_secondary_limit_resets_at,
+        latest_rate_limit_name=latest_rate_limit_name,
+        latest_rate_limit_reached_type=latest_rate_limit_reached_type,
         import_warning=_payload_str(session.get("import_warning")),
         search_text=search_text,
         raw_meta_json=raw_meta_json,
@@ -886,6 +1243,71 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
     raw_artifact_sha256 = parsed.raw_artifact_sha256
     if raw_artifact_sha256 is None and existing_by_id is not None:
         raw_artifact_sha256 = str(existing_by_id["raw_artifact_sha256"] or "").strip() or None
+    session_columns = (
+        "id",
+        "source_path",
+        "source_root",
+        "file_size",
+        "file_mtime_ns",
+        "content_sha256",
+        "raw_artifact_sha256",
+        "session_timestamp",
+        "started_at",
+        "ended_at",
+        "cwd",
+        "cwd_name",
+        "source_host",
+        "originator",
+        "cli_version",
+        "source",
+        "model_provider",
+        "git_branch",
+        "git_commit_hash",
+        "git_repository_url",
+        "github_remote_url",
+        "github_org",
+        "github_repo",
+        "github_slug",
+        "forked_from_id",
+        "agent_nickname",
+        "agent_role",
+        "agent_path",
+        "memory_mode",
+        "inferred_project_kind",
+        "inferred_project_key",
+        "inferred_project_label",
+        "summary",
+        "event_count",
+        "user_message_count",
+        "assistant_message_count",
+        "tool_call_count",
+        "rollup_version",
+        "turn_count",
+        "last_user_message",
+        "last_turn_timestamp",
+        "latest_turn_summary",
+        "command_failure_count",
+        "aborted_turn_count",
+        "latest_usage_timestamp",
+        "latest_input_tokens",
+        "latest_cached_input_tokens",
+        "latest_output_tokens",
+        "latest_reasoning_output_tokens",
+        "latest_total_tokens",
+        "latest_context_window",
+        "latest_context_remaining_percent",
+        "latest_primary_limit_used_percent",
+        "latest_primary_limit_resets_at",
+        "latest_secondary_limit_used_percent",
+        "latest_secondary_limit_resets_at",
+        "latest_rate_limit_name",
+        "latest_rate_limit_reached_type",
+        "import_warning",
+        "search_text",
+        "raw_meta_json",
+        "imported_at",
+        "updated_at",
+    )
     session_values = (
         parsed.session_id,
         str(parsed.source_path),
@@ -911,6 +1333,11 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
         parsed.github_org,
         parsed.github_repo,
         parsed.github_slug,
+        parsed.forked_from_id,
+        parsed.agent_nickname,
+        parsed.agent_role,
+        parsed.agent_path,
+        parsed.memory_mode,
         parsed.inferred_project_kind,
         parsed.inferred_project_key,
         parsed.inferred_project_label,
@@ -926,6 +1353,20 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
         parsed.latest_turn_summary,
         parsed.command_failure_count,
         parsed.aborted_turn_count,
+        parsed.latest_usage_timestamp,
+        parsed.latest_input_tokens,
+        parsed.latest_cached_input_tokens,
+        parsed.latest_output_tokens,
+        parsed.latest_reasoning_output_tokens,
+        parsed.latest_total_tokens,
+        parsed.latest_context_window,
+        parsed.latest_context_remaining_percent,
+        parsed.latest_primary_limit_used_percent,
+        parsed.latest_primary_limit_resets_at,
+        parsed.latest_secondary_limit_used_percent,
+        parsed.latest_secondary_limit_resets_at,
+        parsed.latest_rate_limit_name,
+        parsed.latest_rate_limit_reached_type,
         parsed.import_warning,
         parsed.search_text,
         parsed.raw_meta_json,
@@ -933,74 +1374,17 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
         parsed.updated_at,
     )
     if existing_by_id is None:
+        insert_columns_sql = ", ".join(session_columns)
+        insert_placeholders_sql = ", ".join("?" for _ in session_columns)
         connection.execute(
-            """
-            INSERT INTO sessions (
-                id, source_path, source_root, file_size, file_mtime_ns, content_sha256,
-                raw_artifact_sha256,
-                session_timestamp, started_at, ended_at, cwd, cwd_name,
-                source_host, originator, cli_version, source, model_provider,
-                git_branch, git_commit_hash, git_repository_url, github_remote_url,
-                github_org, github_repo, github_slug, inferred_project_kind,
-                inferred_project_key, inferred_project_label, summary, event_count,
-                user_message_count, assistant_message_count, tool_call_count,
-                rollup_version, turn_count, last_user_message, last_turn_timestamp,
-                latest_turn_summary, command_failure_count, aborted_turn_count,
-                import_warning, search_text, raw_meta_json, imported_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            f"INSERT INTO sessions ({insert_columns_sql}) VALUES ({insert_placeholders_sql})",
             session_values,
         )
     else:
+        update_columns = session_columns[1:]
+        update_assignments_sql = ", ".join(f"{column} = ?" for column in update_columns)
         connection.execute(
-            """
-            UPDATE sessions
-            SET
-                source_path = ?,
-                source_root = ?,
-                file_size = ?,
-                file_mtime_ns = ?,
-                content_sha256 = ?,
-                raw_artifact_sha256 = ?,
-                session_timestamp = ?,
-                started_at = ?,
-                ended_at = ?,
-                cwd = ?,
-                cwd_name = ?,
-                source_host = ?,
-                originator = ?,
-                cli_version = ?,
-                source = ?,
-                model_provider = ?,
-                git_branch = ?,
-                git_commit_hash = ?,
-                git_repository_url = ?,
-                github_remote_url = ?,
-                github_org = ?,
-                github_repo = ?,
-                github_slug = ?,
-                inferred_project_kind = ?,
-                inferred_project_key = ?,
-                inferred_project_label = ?,
-                summary = ?,
-                event_count = ?,
-                user_message_count = ?,
-                assistant_message_count = ?,
-                tool_call_count = ?,
-                rollup_version = ?,
-                turn_count = ?,
-                last_user_message = ?,
-                last_turn_timestamp = ?,
-                latest_turn_summary = ?,
-                command_failure_count = ?,
-                aborted_turn_count = ?,
-                import_warning = ?,
-                search_text = ?,
-                raw_meta_json = ?,
-                imported_at = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
+            f"UPDATE sessions SET {update_assignments_sql} WHERE id = ?",
             session_values[1:] + (parsed.session_id,),
         )
     connection.executemany(
@@ -1085,20 +1469,24 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
         with write_transaction(connection):
             from .projects import sync_project_registry
 
-            if force:
-                connection.execute("DELETE FROM events")
-                connection.execute("DELETE FROM sessions")
-                project_registry_changed = True
-
             existing_rows = connection.execute(
                 """
-                SELECT id, source_path, file_size, file_mtime_ns, content_sha256, source_host, raw_artifact_sha256
+                SELECT
+                    id,
+                    source_path,
+                    source_root,
+                    file_size,
+                    file_mtime_ns,
+                    content_sha256,
+                    source_host,
+                    raw_artifact_sha256
                 FROM sessions
                 """
             ).fetchall()
             existing_by_source = {
                 (row["source_host"], row["source_path"]): {
                     "id": row["id"],
+                    "source_root": row["source_root"],
                     "file_size": row["file_size"],
                     "file_mtime_ns": row["file_mtime_ns"],
                     "content_sha256": row["content_sha256"],
@@ -1107,6 +1495,12 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
                 }
                 for row in existing_rows
             }
+            if force:
+                connection.execute("DELETE FROM events")
+                connection.execute("DELETE FROM sessions")
+                project_registry_changed = True
+
+            restored_source_keys: set[tuple[str, str]] = set()
 
             for source_root, path in iter_session_files(settings.session_roots):
                 stat = path.stat()
@@ -1141,12 +1535,55 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
                     continue
                 parsed.raw_artifact_sha256 = store_session_artifact(connection, settings, raw_jsonl)
                 upsert_parsed_session(connection, parsed)
+                restored_source_keys.add((parsed.source_host, str(parsed.source_path)))
                 project_registry_changed = True
 
                 if record:
                     updated += 1
                 else:
                     imported += 1
+
+            if force:
+                for row in existing_rows:
+                    source_host = str(row["source_host"] or "").strip()
+                    source_path = str(row["source_path"] or "").strip()
+                    if not source_host or not source_path:
+                        continue
+                    source_key = (source_host, source_path)
+                    if source_key in restored_source_keys:
+                        continue
+                    artifact_sha256 = str(row["raw_artifact_sha256"] or "").strip()
+                    if not artifact_sha256:
+                        continue
+
+                    raw_jsonl = load_session_artifact_text(connection, settings, artifact_sha256)
+                    if raw_jsonl is None:
+                        skipped += 1
+                        continue
+
+                    try:
+                        parsed = parse_session_text(
+                            raw_jsonl,
+                            Path(source_path),
+                            Path(str(row["source_root"] or "").strip() or Path(source_path).parent),
+                            source_host,
+                            file_size=int(row["file_size"] or len(raw_jsonl.encode("utf-8"))),
+                            file_mtime_ns=int(row["file_mtime_ns"] or 0),
+                        )
+                    except SessionParseError as exc:
+                        logger.warning("Skipping malformed stored session artifact %s", exc)
+                        skipped += 1
+                        continue
+
+                    if project_is_ignored(connection, parsed.inferred_project_key):
+                        skipped += 1
+                        continue
+
+                    parsed.raw_artifact_sha256 = artifact_sha256
+                    upsert_parsed_session(connection, parsed)
+                    restored_source_keys.add(source_key)
+                    project_registry_changed = True
+                    updated += 1
 
             if project_registry_changed:
                 sync_project_registry(connection)

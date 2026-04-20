@@ -9,6 +9,7 @@ import threading
 
 from .config import Settings
 from .remote_sync import RemoteSyncError, RestartRequired, sync_sessions_remote
+from .session_exports import build_execution_context_export
 
 
 def get_events(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
@@ -24,6 +25,7 @@ def get_events(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.
 
 
 def export_markdown(session: sqlite3.Row, events: list[sqlite3.Row]) -> str:
+    execution_context = build_execution_context_export(session, events)
     lines = [
         f"# {session['summary']}",
         "",
@@ -33,9 +35,26 @@ def export_markdown(session: sqlite3.Row, events: list[sqlite3.Row]) -> str:
         f"- Host: `{session['source_host'] or 'unknown'}`",
         f"- Model Provider: `{session['model_provider'] or 'unknown'}`",
         "",
+    ]
+
+    if any(value for value in execution_context.values()):
+        lines.extend(
+            [
+                "## Execution Context",
+                "",
+                "~~~json",
+                json.dumps(execution_context, indent=2, ensure_ascii=False, sort_keys=True),
+                "~~~",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
         "## Timeline",
         "",
-    ]
+        ]
+    )
 
     for event in events:
         lines.append(f"### {event['title']}")

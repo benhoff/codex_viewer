@@ -11,6 +11,8 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
+from .git_utils import normalize_git_remote, normalize_github_remote
+from .session_insights import session_agent_snapshot, usage_pressure_snapshot
 from .session_rollups import activity_date_key
 from .session_status import is_user_turn_start, prefers_event_msg_user_turns, terminal_turn_summary
 from .text_utils import shorten, strip_codex_wrappers
@@ -46,6 +48,20 @@ GROUP_ROW_SELECT = f"""
     s.latest_turn_summary,
     s.command_failure_count,
     s.aborted_turn_count,
+    s.latest_usage_timestamp,
+    s.latest_input_tokens,
+    s.latest_cached_input_tokens,
+    s.latest_output_tokens,
+    s.latest_reasoning_output_tokens,
+    s.latest_total_tokens,
+    s.latest_context_window,
+    s.latest_context_remaining_percent,
+    s.latest_primary_limit_used_percent,
+    s.latest_primary_limit_resets_at,
+    s.latest_secondary_limit_used_percent,
+    s.latest_secondary_limit_resets_at,
+    s.latest_rate_limit_name,
+    s.latest_rate_limit_reached_type,
     s.source_host,
     s.cwd,
     s.cwd_name,
@@ -54,6 +70,11 @@ GROUP_ROW_SELECT = f"""
     s.github_org,
     s.github_repo,
     s.github_slug,
+    s.forked_from_id,
+    s.agent_nickname,
+    s.agent_role,
+    s.agent_path,
+    s.memory_mode,
     s.inferred_project_kind,
     s.inferred_project_key,
     s.inferred_project_label,
@@ -102,6 +123,27 @@ TURN_STREAM_SELECT = f"""
     s.inferred_project_key,
     s.inferred_project_label,
     s.import_warning,
+    s.forked_from_id,
+    s.agent_nickname,
+    s.agent_role,
+    s.agent_path,
+    s.memory_mode,
+    s.command_failure_count,
+    s.aborted_turn_count,
+    s.latest_usage_timestamp,
+    s.latest_input_tokens,
+    s.latest_cached_input_tokens,
+    s.latest_output_tokens,
+    s.latest_reasoning_output_tokens,
+    s.latest_total_tokens,
+    s.latest_context_window,
+    s.latest_context_remaining_percent,
+    s.latest_primary_limit_used_percent,
+    s.latest_primary_limit_resets_at,
+    s.latest_secondary_limit_used_percent,
+    s.latest_secondary_limit_resets_at,
+    s.latest_rate_limit_name,
+    s.latest_rate_limit_reached_type,
     p.id AS project_id,
     p.current_group_key AS current_project_group_key,
     p.display_label AS current_project_display_label,
@@ -164,10 +206,90 @@ def build_command_exit_badges(
     ]
 
 
+def build_agent_lineage_badges(
+    source: sqlite3.Row | dict[str, Any],
+) -> list[dict[str, str]]:
+    snapshot = session_agent_snapshot(source)
+    badges: list[dict[str, str]] = []
+    role = str(snapshot["agent_role"] or "").strip().lower()
+    if role and role != "default":
+        badges.append({"tone": "sky", "label": str(snapshot["agent_role_label"])})
+    if snapshot["forked_from_id"]:
+        badges.append({"tone": "stone", "label": "Spawned agent"})
+    return badges
+
+
+def build_session_signal_badges(
+    source: sqlite3.Row | dict[str, Any],
+    *,
+    command_exits: int = 0,
+    aborted_turns: int = 0,
+    viewer_warning: str | None = None,
+    max_badges: int = 4,
+) -> list[dict[str, str]]:
+    badges: list[dict[str, str]] = []
+    usage = usage_pressure_snapshot(source)
+    if bool(usage["has_pressure"]):
+        badges.extend(list(usage["badges"])[:3])
+    badges.extend(build_agent_lineage_badges(source))
+    badges.extend(build_command_exit_badges(command_exits=command_exits, tone="rose"))
+    if aborted_turns > 0:
+        badges.append(
+            {
+                "tone": "amber",
+                "label": count_label(aborted_turns, "aborted turn"),
+            }
+        )
+    if trimmed(viewer_warning):
+        badges.append({"tone": "amber", "label": "Import warning"})
+    return badges[:max_badges]
+
+
 def summarize_attention_status(
     *,
     recent_turn_count: int = 0,
+    usage: dict[str, Any] | None = None,
+    command_failure_count: int = 0,
+    aborted_turn_count: int = 0,
+    viewer_warning: str | None = None,
 ) -> dict[str, str | int | bool]:
+    usage_snapshot = usage or {}
+    has_usage_pressure = bool(usage_snapshot.get("has_pressure"))
+    has_errors = command_failure_count > 0 or bool(trimmed(viewer_warning))
+    has_aborts = aborted_turn_count > 0
+
+    if has_usage_pressure or has_errors or has_aborts:
+        attention_count = int(has_usage_pressure) + int(command_failure_count > 0) + int(has_aborts) + int(bool(trimmed(viewer_warning)))
+        if has_usage_pressure and not has_errors and not has_aborts:
+            return {
+                "status_tone": str(usage_snapshot.get("status_tone") or "amber"),
+                "status_label": str(usage_snapshot.get("status_label") or "Attention"),
+                "status_title": str(usage_snapshot.get("status_title") or "Usage pressure detected"),
+                "has_attention": True,
+                "attention_count": attention_count,
+                "attention_score": int(usage_snapshot.get("score") or 0),
+            }
+
+        detail_parts: list[str] = []
+        if trimmed(viewer_warning):
+            detail_parts.append("Import warning")
+        if command_failure_count > 0:
+            detail_parts.append(count_label(command_failure_count, "command exit"))
+        if aborted_turn_count > 0:
+            detail_parts.append(count_label(aborted_turn_count, "aborted turn"))
+        if has_usage_pressure:
+            detail_parts.append(str(usage_snapshot.get("status_title") or "Usage pressure detected"))
+        tone = "rose" if has_errors else "amber"
+        score = 90 if has_errors else max(int(usage_snapshot.get("score") or 0), 72)
+        return {
+            "status_tone": tone,
+            "status_label": "Attention",
+            "status_title": " · ".join(detail_parts) if detail_parts else "Attention needed",
+            "has_attention": True,
+            "attention_count": attention_count,
+            "attention_score": score,
+        }
+
     if recent_turn_count > 0:
         return {
             "status_tone": "emerald",
@@ -175,6 +297,7 @@ def summarize_attention_status(
             "status_title": count_label(recent_turn_count, "turn") + " in the last 7 days",
             "has_attention": False,
             "attention_count": 0,
+            "attention_score": 0,
         }
     return {
         "status_tone": "stone",
@@ -182,6 +305,7 @@ def summarize_attention_status(
         "status_title": "No recent turn activity",
         "has_attention": False,
         "attention_count": 0,
+        "attention_score": 0,
     }
 
 
@@ -191,7 +315,7 @@ def slugify_project_segment(value: str | None, fallback: str) -> str:
 
 
 def project_route_segments(project: "GroupedProject") -> tuple[str, str]:
-    if project.inferred_kind == "github":
+    if project.inferred_kind in {"github", "git"}:
         owner = project.organization or "project"
     else:
         owner = project.hosts[0] if project.hosts else project.organization or "project"
@@ -308,37 +432,73 @@ def effective_project_fields(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any
     inferred_key = trimmed(row["inferred_project_key"]) or f"directory:{source_host}:{trimmed(row['cwd']) or row['id']}"
     override_key = trimmed(row["override_group_key"])
     override_remote_url = trimmed(row["override_remote_url"])
+    inferred_label = trimmed(row["inferred_project_label"])
+    remote_url = (
+        override_remote_url
+        or trimmed(row["github_remote_url"])
+        or trimmed(row["git_repository_url"])
+    )
+    remote_info = normalize_git_remote(remote_url)
+    github_override = normalize_github_remote(override_remote_url) if override_remote_url else None
+
+    effective_group_key = override_key or inferred_key
+    effective_kind = trimmed(row["inferred_project_kind"]) or ("git" if remote_info else "directory")
+    if effective_group_key.startswith("github:"):
+        effective_kind = "github"
+    elif effective_group_key.startswith("git:"):
+        effective_kind = "git"
+    elif effective_group_key.startswith("directory:"):
+        effective_kind = "directory"
+    elif github_override is not None:
+        effective_kind = "github"
+    elif override_remote_url and remote_info is not None:
+        effective_kind = "git"
+
+    inferred_project_repository = None
+    if effective_kind == "project" and inferred_label:
+        project_prefix = f"{source_host}/"
+        if inferred_label.startswith(project_prefix):
+            inferred_project_repository = inferred_label[len(project_prefix) :].strip() or None
+        else:
+            inferred_project_repository = inferred_label
 
     organization = (
         trimmed(row["override_organization"])
         or trimmed(row["github_org"])
+        or (
+            str(remote_info["host"]).strip()
+            if remote_info is not None and not bool(remote_info["is_local"])
+            else None
+        )
         or source_host
     )
     repository = (
         trimmed(row["override_repository"])
         or trimmed(row["github_repo"])
+        or (
+            str(remote_info["path"]).strip()
+            if remote_info is not None and not bool(remote_info["is_local"])
+            else None
+        )
+        or inferred_project_repository
+        or (str(remote_info["repo"]).strip() if remote_info is not None else None)
         or trimmed(row["cwd_name"])
         or trimmed(row["cwd"])
         or "unassigned"
     )
-    remote_url = (
-        trimmed(row["override_remote_url"])
-        or trimmed(row["github_remote_url"])
-        or trimmed(row["git_repository_url"])
-    )
     display_label = (
         trimmed(row["override_display_label"])
+        or (
+            inferred_label
+            if effective_kind in {"git", "project"}
+            and not trimmed(row["override_organization"])
+            and not trimmed(row["override_repository"])
+            else None
+        )
         or (f"{organization}/{repository}" if organization and repository else repository)
+        or inferred_label
         or inferred_key
     )
-    effective_group_key = override_key or inferred_key
-    effective_kind = trimmed(row["inferred_project_kind"]) or "directory"
-    if effective_group_key.startswith("github:"):
-        effective_kind = "github"
-    elif effective_group_key.startswith("directory:"):
-        effective_kind = "directory"
-    elif override_remote_url and "github.com" in override_remote_url.lower():
-        effective_kind = "github"
 
     return {
         "project_id": trimmed(row["project_id"]),
@@ -360,7 +520,7 @@ def effective_project_fields(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any
             )
         ),
         "inferred_project_key": inferred_key,
-        "inferred_project_label": trimmed(row["inferred_project_label"]) or display_label,
+        "inferred_project_label": inferred_label or display_label,
         "inferred_project_kind": trimmed(row["inferred_project_kind"]) or "directory",
         "source_host": source_host,
         "cwd": trimmed(row["cwd"]),
@@ -971,7 +1131,8 @@ def fetch_session_stream_summaries(
             e.payload_type,
             e.kind,
             e.role,
-            e.display_text
+            e.display_text,
+            e.record_json
         FROM events AS e
         INNER JOIN last_turn AS lt
             ON lt.session_id = e.session_id
@@ -989,7 +1150,7 @@ def fetch_session_stream_summaries(
             )
             OR (
                 e.record_type = 'event_msg'
-                AND e.payload_type IN ('task_complete', 'turn_aborted')
+                AND e.payload_type IN ('task_complete', 'turn_complete', 'turn_aborted')
             )
             OR e.kind IN ('tool_call', 'tool_result')
           )
@@ -1378,7 +1539,12 @@ def search_turn_hits(
                 "patch_count": int(row["patch_count"] or 0),
                 "failure_count": command_exit_count,
                 "files_touched_count": int(row["files_touched_count"] or 0),
-                "signal_badges": build_command_exit_badges(command_exits=command_exit_count),
+                "signal_badges": build_session_signal_badges(
+                    row,
+                    command_exits=command_exit_count,
+                    aborted_turns=int(row["aborted_turn_count"] or 0),
+                    viewer_warning=trimmed(row["import_warning"]),
+                ),
                 "project_label": project["display_label"],
                 "project_detail_href": detail_href,
                 "host": project["source_host"],
@@ -1445,6 +1611,10 @@ def fetch_turn_stream(
             ON s.id = st.session_id
         LEFT JOIN project_overrides AS o
             ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
         {where_clause}
     """
     order_clause = """
@@ -1499,7 +1669,12 @@ def fetch_turn_stream(
         viewer_warning = trimmed(row["import_warning"]) or ""
         canceled_turns = 1 if response_state == "canceled" else 0
         command_exit_count = int(row["failure_count"] or 0)
-        signal_badges = build_command_exit_badges(command_exits=command_exit_count)
+        signal_badges = build_session_signal_badges(
+            row,
+            command_exits=command_exit_count,
+            aborted_turns=int(row["aborted_turn_count"] or 0),
+            viewer_warning=viewer_warning,
+        )
         timestamp = (
             trimmed(row["latest_timestamp"])
             or trimmed(row["response_timestamp"])
@@ -1777,6 +1952,8 @@ def fetch_group_detail(
         "viewer_warnings": 0,
         "attention_sessions": 0,
     }
+    latest_status_source: sqlite3.Row | None = None
+    latest_status_timestamp = ""
     attention_sessions: list[dict[str, Any]] = []
     all_sessions: list[dict[str, Any]] = []
     for row in matching_rows:
@@ -1784,8 +1961,13 @@ def fetch_group_detail(
         aborted_turns = int(row["aborted_turn_count"] or 0)
         viewer_warning = trimmed(row["import_warning"]) or ""
         recent_turns = int(recent_turn_activity.get(str(row["id"]), {}).get("turn_count", 0) or 0)
+        usage = usage_pressure_snapshot(row)
         session_status = summarize_attention_status(
             recent_turn_count=recent_turns,
+            usage=usage,
+            command_failure_count=int(row["command_failure_count"] or 0),
+            aborted_turn_count=aborted_turns,
+            viewer_warning=viewer_warning,
         )
         source_group = by_source.setdefault(
             project["inferred_project_key"],
@@ -1813,6 +1995,9 @@ def fetch_group_detail(
         session_title = trimmed(row["last_user_message"]) or trimmed(row["latest_turn_summary"]) or row["summary"]
         session_timestamp = row["session_timestamp"] or row["started_at"] or row["imported_at"]
         session_when = trimmed(row["last_turn_timestamp"]) or session_timestamp or ""
+        if session_when >= latest_status_timestamp:
+            latest_status_source = row
+            latest_status_timestamp = session_when
         session_item = {
             "id": row["id"],
             "href": f"/sessions/{quote(str(row['id']), safe='')}",
@@ -1828,11 +2013,17 @@ def fetch_group_detail(
             "viewer_warning": viewer_warning,
             "has_viewer_warning": bool(viewer_warning),
             "recent_turn_count": recent_turns,
-            "signal_badges": [],
+            "signal_badges": build_session_signal_badges(
+                row,
+                command_exits=int(row["command_failure_count"] or 0),
+                aborted_turns=aborted_turns,
+                viewer_warning=viewer_warning,
+            ),
             "needs_attention": bool(session_status["has_attention"]),
             "status_tone": str(session_status["status_tone"]),
             "status_label": str(session_status["status_label"]),
             "status_title": str(session_status["status_title"]),
+            "attention_score": int(session_status["attention_score"] or 0),
             "project_label": project["display_label"],
         }
         source_group["sessions"].append(session_item)
@@ -1891,6 +2082,7 @@ def fetch_group_detail(
                     "signal_badges": session_item["signal_badges"],
                     "status_tone": session_item["status_tone"],
                     "status_label": session_item["status_label"],
+                    "attention_score": session_item["attention_score"],
                 }
             )
 
@@ -1917,8 +2109,7 @@ def fetch_group_detail(
     )
     attention_sessions.sort(
         key=lambda item: (
-            1 if item["viewer_warning"] else 0,
-            int(item["aborted_turn_count"]),
+            int(item["attention_score"]),
             str(item["timestamp"] or ""),
         ),
         reverse=True,
@@ -1936,6 +2127,10 @@ def fetch_group_detail(
     )
     health_summary = summarize_attention_status(
         recent_turn_count=sum(int(item.get("turn_count", 0) or 0) for item in recent_turn_activity.values()),
+        usage=usage_pressure_snapshot(latest_status_source) if latest_status_source is not None else None,
+        command_failure_count=int(latest_status_source["command_failure_count"] or 0) if latest_status_source is not None else 0,
+        aborted_turn_count=int(latest_status_source["aborted_turn_count"] or 0) if latest_status_source is not None else 0,
+        viewer_warning=trimmed(latest_status_source["import_warning"]) if latest_status_source is not None else None,
     )
     latest_session = all_sessions[0] if all_sessions else None
     host_rows = sorted(

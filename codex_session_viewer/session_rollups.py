@@ -10,10 +10,11 @@ from .session_status import (
     prefers_event_msg_user_turns,
     terminal_turn_summary,
 )
+from .session_insights import compute_usage_rollup, default_usage_rollup
 from .text_utils import shorten, strip_codex_wrappers
 
 
-ROLLUP_VERSION = 1
+ROLLUP_VERSION = 3
 TURN_ACTIVITY_ROLLUP_VERSION = 1
 
 
@@ -37,6 +38,7 @@ def _compact_event(event: sqlite3.Row | dict[str, Any] | object) -> dict[str, An
         "role": _event_value(event, "role"),
         "display_text": _event_value(event, "display_text"),
         "exit_code": _event_value(event, "exit_code"),
+        "record_json": _event_value(event, "record_json"),
     }
 
 
@@ -65,7 +67,7 @@ def activity_date_key(value: object) -> str | None:
 
 
 def default_rollups() -> dict[str, Any]:
-    return {
+    rollups = {
         "rollup_version": ROLLUP_VERSION,
         "turn_count": 0,
         "last_user_message": "",
@@ -74,6 +76,8 @@ def default_rollups() -> dict[str, Any]:
         "command_failure_count": 0,
         "aborted_turn_count": 0,
     }
+    rollups.update(default_usage_rollup())
+    return rollups
 
 
 def compute_session_turn_activity_daily(
@@ -127,6 +131,7 @@ def compute_session_rollups(
 
     compact_events = [_compact_event(event) for event in events]
     prefer_event_msg = prefers_event_msg_user_turns(compact_events)
+    usage_rollups = compute_usage_rollup(compact_events)
 
     turn_count = 0
     last_user_message = ""
@@ -150,7 +155,7 @@ def compute_session_rollups(
         timestamp = str(event.get("timestamp") or "").strip()
         last_turn_timestamp = timestamp or last_turn_timestamp
 
-    return {
+    rollups = {
         "rollup_version": ROLLUP_VERSION,
         "turn_count": turn_count,
         "last_user_message": last_user_message,
@@ -159,6 +164,8 @@ def compute_session_rollups(
         "command_failure_count": command_failure_count,
         "aborted_turn_count": aborted_turn_count,
     }
+    rollups.update(usage_rollups)
+    return rollups
 
 
 def backfill_session_rollups(connection: sqlite3.Connection) -> int:
@@ -187,7 +194,8 @@ def backfill_session_rollups(connection: sqlite3.Connection) -> int:
             kind,
             role,
             display_text,
-            exit_code
+            exit_code,
+            record_json
         FROM events
         WHERE session_id IN ({placeholders})
         ORDER BY session_id ASC, event_index ASC
@@ -211,6 +219,20 @@ def backfill_session_rollups(connection: sqlite3.Connection) -> int:
                 rollups["latest_turn_summary"],
                 int(rollups["command_failure_count"]),
                 int(rollups["aborted_turn_count"]),
+                rollups["latest_usage_timestamp"],
+                int(rollups["latest_input_tokens"] or 0),
+                int(rollups["latest_cached_input_tokens"] or 0),
+                int(rollups["latest_output_tokens"] or 0),
+                int(rollups["latest_reasoning_output_tokens"] or 0),
+                int(rollups["latest_total_tokens"] or 0),
+                rollups["latest_context_window"],
+                rollups["latest_context_remaining_percent"],
+                rollups["latest_primary_limit_used_percent"],
+                rollups["latest_primary_limit_resets_at"],
+                rollups["latest_secondary_limit_used_percent"],
+                rollups["latest_secondary_limit_resets_at"],
+                rollups["latest_rate_limit_name"],
+                rollups["latest_rate_limit_reached_type"],
                 session_id,
             )
         )
@@ -225,7 +247,21 @@ def backfill_session_rollups(connection: sqlite3.Connection) -> int:
             last_turn_timestamp = ?,
             latest_turn_summary = ?,
             command_failure_count = ?,
-            aborted_turn_count = ?
+            aborted_turn_count = ?,
+            latest_usage_timestamp = ?,
+            latest_input_tokens = ?,
+            latest_cached_input_tokens = ?,
+            latest_output_tokens = ?,
+            latest_reasoning_output_tokens = ?,
+            latest_total_tokens = ?,
+            latest_context_window = ?,
+            latest_context_remaining_percent = ?,
+            latest_primary_limit_used_percent = ?,
+            latest_primary_limit_resets_at = ?,
+            latest_secondary_limit_used_percent = ?,
+            latest_secondary_limit_resets_at = ?,
+            latest_rate_limit_name = ?,
+            latest_rate_limit_reached_type = ?
         WHERE id = ?
         """,
         updates,
