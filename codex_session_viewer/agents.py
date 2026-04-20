@@ -308,12 +308,9 @@ def _new_agent_entry(source_host: str, remote: dict[str, Any] | None) -> dict[st
         "source_host": source_host,
         "remote": remote,
         "session_count_total": 0,
-        "command_failure_count_total": 0,
         "aborted_turn_count_total": 0,
         "recent_turn_count": 0,
         "recent_session_count": 0,
-        "recent_command_failures": 0,
-        "recent_failure_sessions": 0,
         "recent_aborted_turns": 0,
         "projects_24h": {},
         "recent_projects": {},
@@ -360,13 +357,6 @@ def _attention_badges(entry: dict[str, Any]) -> list[dict[str, str]]:
     remote = entry.get("remote") or {}
     if int(remote.get("last_fail_count") or 0) > 0 or remote.get("last_error"):
         badges.append({"tone": "rose", "label": "Sync failure"})
-    if int(entry.get("recent_command_failures") or 0) > 1:
-        badges.append(
-            {
-                "tone": "rose",
-                "label": f"{int(entry['recent_command_failures'])} recent command failures",
-            }
-        )
     return badges
 
 
@@ -420,7 +410,6 @@ def fetch_agents_dashboard(
             continue
         entry = entries.setdefault(source_host, _new_agent_entry(source_host, None))
         entry["session_count_total"] += 1
-        entry["command_failure_count_total"] += int(row["command_failure_count"] or 0)
         entry["aborted_turn_count_total"] += int(row["aborted_turn_count"] or 0)
 
         project_href = route_map.get(project["effective_group_key"], "")
@@ -434,8 +423,7 @@ def fetch_agents_dashboard(
         entry["latest_session"] = _latest_session(entry["latest_session"], session_item)
 
         session_problematic = (
-            int(row["command_failure_count"] or 0) > 0
-            or bool(trimmed(row["import_warning"]))
+            bool(trimmed(row["import_warning"]))
             or int(row["aborted_turn_count"] or 0) > 1
         )
         if session_problematic:
@@ -445,10 +433,7 @@ def fetch_agents_dashboard(
         if recent:
             entry["recent_turn_count"] += int(recent.get("turn_count", 0) or 0)
             entry["recent_session_count"] += 1
-            entry["recent_command_failures"] += int(row["command_failure_count"] or 0)
             entry["recent_aborted_turns"] += int(row["aborted_turn_count"] or 0)
-            if int(row["command_failure_count"] or 0) > 0:
-                entry["recent_failure_sessions"] += 1
             entry["projects_24h"][project["display_label"]] = {
                 "label": str(project["display_label"]),
                 "href": project_href,
@@ -480,7 +465,7 @@ def fetch_agents_dashboard(
                 else str(remote.get("last_error") or "Needs attention")
             )
             primary = latest_failed_session or latest_session
-            primary_label = "Open latest failed session" if latest_failed_session else "Open latest session"
+            primary_label = "Open latest attention session" if latest_failed_session else "Open latest session"
         elif is_dormant:
             section = "dormant"
             summary = (
@@ -515,7 +500,6 @@ def fetch_agents_dashboard(
             "recent_turn_count": int(entry["recent_turn_count"] or 0),
             "recent_session_count": int(entry["recent_session_count"] or 0),
             "projects_touched_24h_count": len(entry["projects_24h"]),
-            "recent_command_failures": int(entry["recent_command_failures"] or 0),
             "recent_aborted_turns": int(entry["recent_aborted_turns"] or 0),
             "recent_projects": recent_projects,
             "recent_sessions": entry["recent_sessions"],

@@ -21,7 +21,7 @@
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Project Environment Audit</p>
           <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">{{ audit.group.display_label }}</h1>
           <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
-            What this repo appears to need, which hosts have been a good fit, and which failures look like install, auth, access, or repo-setup problems.
+            What this repo appears to need, which hosts have been a good fit, and which command exits look like install, auth, access, or repo-setup problems.
           </p>
         </div>
 
@@ -39,7 +39,7 @@
             <p class="mt-2 text-2xl font-semibold text-stone-900">{{ audit.summary.host_count }}</p>
           </div>
           <div class="rounded-[1.15rem] bg-rose-50 p-4">
-            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-rose-600">Top Failure</p>
+            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-rose-600">Top Exit Cause</p>
             <p class="mt-2 text-sm font-semibold text-stone-900">{{ audit.summary.top_failure_class }}</p>
           </div>
         </div>
@@ -91,7 +91,7 @@
                     <span>{{ item.success_count }} ok</span>
                   {% endif %}
                   {% if item.failure_count %}
-                    <span>{{ item.failure_count }} fail</span>
+                    <span>{{ item.failure_count }} exit{% if item.failure_count != 1 %}s{% endif %}</span>
                   {% endif %}
                 </div>
               </div>
@@ -154,8 +154,8 @@
       <article class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Failure Hotspots</h2>
-            <p class="mt-1 text-sm text-stone-600">The repeat problems this repo runs into most often.</p>
+            <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Command Exit Hotspots</h2>
+            <p class="mt-1 text-sm text-stone-600">The repeat exit patterns this repo runs into most often.</p>
           </div>
         </div>
         <div class="mt-5 space-y-3">
@@ -188,7 +188,7 @@
             </div>
           {% else %}
             <div class="rounded-[1.2rem] border border-emerald-200 bg-emerald-50/80 p-6 text-sm text-emerald-900">
-              No recurring failures have been inferred for this repo yet.
+              No recurring command exits have been inferred for this repo yet.
             </div>
           {% endfor %}
         </div>

@@ -320,7 +320,6 @@ def build_group_signal_map(
             {
                 "recent_turn_count": 0,
                 "latest_recent_timestamp": "",
-                "command_failures": 0,
                 "aborted_turns": 0,
                 "viewer_warnings": 0,
             },
@@ -333,14 +332,12 @@ def build_group_signal_map(
             if latest_recent_timestamp and latest_recent_timestamp > str(signal["latest_recent_timestamp"] or ""):
                 signal["latest_recent_timestamp"] = latest_recent_timestamp
 
-        signal["command_failures"] = int(signal["command_failures"]) + int(row["command_failure_count"] or 0)
         signal["aborted_turns"] = int(signal["aborted_turns"]) + int(row["aborted_turn_count"] or 0)
         if str(row["import_warning"] or "").strip():
             signal["viewer_warnings"] = int(signal["viewer_warnings"]) + 1
 
     for signal in signals.values():
         status = summarize_attention_status(
-            command_failures=int(signal["command_failures"]),
             aborted_turns=int(signal["aborted_turns"]),
             viewer_warnings=int(signal["viewer_warnings"]),
             recent_turn_count=int(signal["recent_turn_count"]),
@@ -379,13 +376,11 @@ def build_active_repos_panel(
     for group in repo_groups:
         signal = group_signals.get(group.key, {})
         recent_turn_count = int(signal.get("recent_turn_count", 0) or 0)
-        command_failures = int(signal.get("command_failures", 0) or 0)
         aborted_turns = int(signal.get("aborted_turns", 0) or 0)
         viewer_warnings = int(signal.get("viewer_warnings", 0) or 0)
         latest_recent_timestamp = str(signal.get("latest_recent_timestamp") or "")
         latest_timestamp = latest_recent_timestamp or str(group.latest_timestamp or "")
         status = summarize_attention_status(
-            command_failures=command_failures,
             aborted_turns=aborted_turns,
             viewer_warnings=viewer_warnings,
             recent_turn_count=recent_turn_count,
@@ -411,11 +406,9 @@ def build_active_repos_panel(
                 "host_label": f"{group.host_count} host" + ("" if group.host_count == 1 else "s"),
                 "session_count": group.session_count,
                 "summary": group.latest_summary or "",
-                "command_failures": command_failures,
                 "aborted_turns": aborted_turns,
                 "viewer_warnings": viewer_warnings,
                 "signal_badges": build_signal_badges(
-                    command_failures=command_failures,
                     aborted_turns=aborted_turns,
                     viewer_warnings=viewer_warnings,
                 ),
@@ -448,11 +441,9 @@ def build_error_sessions_panel(
     group_index = {group.key: group for group in repo_groups}
     items: list[dict[str, object]] = []
     for row in rows:
-        command_failures = int(row["command_failure_count"] or 0)
         aborted_turns = int(row["aborted_turn_count"] or 0)
         import_warning = str(row["import_warning"] or "").strip()
         status = summarize_attention_status(
-            command_failures=command_failures,
             aborted_turns=aborted_turns,
             viewer_warnings=1 if import_warning else 0,
         )
@@ -474,11 +465,9 @@ def build_error_sessions_panel(
                 "project_label": group.display_label if group is not None else str(project["display_label"]),
                 "host": str(project["source_host"] or ""),
                 "timestamp": latest_timestamp,
-                "command_failures": command_failures,
                 "aborted_turns": aborted_turns,
                 "viewer_warning": import_warning,
                 "signal_badges": build_signal_badges(
-                    command_failures=command_failures,
                     aborted_turns=aborted_turns,
                     viewer_warnings=1 if import_warning else 0,
                 ),

@@ -111,11 +111,11 @@
                   </div>
                   <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
                     <span>{{ session.project_label }}</span>
-                    {% if session.command_failures %}
-                      <span class="rounded-full bg-rose-100 px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-rose-800">{{ session.command_failures }} failures</span>
-                    {% endif %}
                     {% if session.viewer_warning %}
                       <span class="rounded-full bg-stone-200 px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-stone-700">Viewer warning</span>
+                    {% endif %}
+                    {% if session.aborted_turns > 1 %}
+                      <span class="rounded-full bg-amber-100 px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-amber-800">{{ session.aborted_turns }} canceled turns</span>
                     {% endif %}
                   </div>
                 </a>
@@ -133,10 +133,6 @@
             <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Host Health</p>
             <div class="mt-3 grid gap-3 sm:grid-cols-2">
               <div class="rounded-[0.95rem] bg-white/90 p-3">
-                <p class="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Recent command failures</p>
-                <p class="mt-2 text-xl font-semibold text-stone-900">{{ agent.recent_command_failures }}</p>
-              </div>
-              <div class="rounded-[0.95rem] bg-white/90 p-3">
                 <p class="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Recent aborted turns</p>
                 <p class="mt-2 text-xl font-semibold text-stone-900">{{ agent.recent_aborted_turns }}</p>
               </div>
@@ -149,7 +145,7 @@
             {% if agent.latest_failed_session %}
               <div class="mt-4 rounded-[0.95rem] border border-rose-200 bg-rose-50/80 p-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
-                  <p class="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-rose-700">Latest failed session</p>
+                  <p class="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-rose-700">Latest attention session</p>
                   <a href="{{ agent.latest_failed_session.href }}" class="text-xs font-semibold uppercase tracking-[0.16em] text-rose-700 hover:text-rose-800">Open</a>
                 </div>
                 <p class="mt-2 text-sm font-semibold text-rose-950">{{ agent.latest_failed_session.title }}</p>
@@ -235,7 +231,7 @@
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Needs Attention</h2>
-          <p class="mt-1 text-sm text-stone-600">Hosts with sync failures or repeated recent command failures.</p>
+          <p class="mt-1 text-sm text-stone-600">Hosts with sync trouble that likely need operator attention.</p>
         </div>
         <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">{{ agents_dashboard.counts.attention }} hosts</span>
       </div>
