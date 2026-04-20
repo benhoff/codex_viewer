@@ -24,6 +24,27 @@ from ..context import get_app_context
 router = APIRouter()
 
 
+def build_pagination_tokens(current_page: int, total_pages: int) -> list[int | None]:
+    if total_pages <= 7:
+        return list(range(1, total_pages + 1))
+
+    pages = {1, total_pages, current_page - 1, current_page, current_page + 1}
+    if current_page <= 3:
+        pages.update({2, 3, 4})
+    if current_page >= total_pages - 2:
+        pages.update({total_pages - 3, total_pages - 2, total_pages - 1})
+
+    valid_pages = sorted(page for page in pages if 1 <= page <= total_pages)
+    tokens: list[int | None] = []
+    previous = None
+    for page in valid_pages:
+        if previous is not None and page - previous > 1:
+            tokens.append(None)
+        tokens.append(page)
+        previous = page
+    return tokens
+
+
 def get_session_view_events(connection, session_id: str):
     return connection.execute(
         """
@@ -89,6 +110,7 @@ def session_detail(
     view: str = Query(default="conversation"),
     turn: int | None = Query(default=None),
     before_turn: int | None = Query(default=None),
+    page: int | None = Query(default=None),
     focus: int | None = Query(default=None),
 ) -> HTMLResponse:
     context = get_app_context(request)
@@ -105,6 +127,7 @@ def session_detail(
             window_size=turn_window_size(session_view_mode),
             turn_number=requested_turn,
             before_turn=before_turn,
+            page_number=page,
         )
         if window["event_start_index"] is not None and window["event_end_index"] is not None:
             events = get_session_view_events_range(
@@ -150,24 +173,45 @@ def session_detail(
     session_display_summary = terminal_turn_summary(events) or str(session["summary"])
     audit_summary = build_session_audit_summary(session, turns_chrono)
     audit_focus_turn = int(requested_turn) if session_view_mode == "audit" and focus and requested_turn else None
+    current_page = int(window["current_page"] or 1)
+    total_pages = int(window["total_pages"] or 1)
+
+    def page_href(page_number: int) -> str:
+        if page_number <= 1:
+            return f"{request.url.path}?view={quote(session_view_mode, safe='')}"
+        return f"{request.url.path}?view={quote(session_view_mode, safe='')}&page={page_number}"
+
     pagination = {
         "total_turns": int(window["total_turns"] or 0),
         "window_size": int(window["window_size"] or 0),
+        "current_page": current_page,
+        "total_pages": total_pages,
         "oldest_turn": window["oldest_turn"],
         "newest_turn": window["newest_turn"],
         "has_older": bool(window["has_older"]),
         "has_newer": bool(window["has_newer"]),
         "older_href": (
-            f"{request.url.path}?view={quote(session_view_mode, safe='')}&before_turn={int(window['older_before_turn'])}"
-            if window.get("older_before_turn")
+            page_href(int(window["older_page"]))
+            if window.get("older_page")
             else None
         ),
         "newer_href": (
-            f"{request.url.path}?view={quote(session_view_mode, safe='')}&turn={int(window['newer_turn'])}"
-            if window.get("newer_turn")
+            page_href(int(window["newer_page"]))
+            if window.get("newer_page")
             else None
         ),
         "latest_href": f"{request.url.path}?view={quote(session_view_mode, safe='')}",
+        "page_links": [
+            {
+                "kind": "gap" if page_token is None else "page",
+                "page": page_token,
+                "href": page_href(int(page_token)) if page_token is not None else None,
+                "current": page_token == current_page,
+            }
+            for page_token in build_pagination_tokens(current_page, total_pages)
+        ],
+        "first_href": page_href(1) if current_page > 1 else None,
+        "last_href": page_href(total_pages) if current_page < total_pages else None,
     }
     audit_focus = None
     if audit_focus_turn:

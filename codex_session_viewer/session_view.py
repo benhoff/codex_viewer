@@ -895,6 +895,65 @@ def aggregate_file_manifest(patch_events: list[dict[str, object]]) -> list[dict[
     return results
 
 
+def classify_risky_file_path(path: str | None) -> str | None:
+    normalized = str(path or "").strip().lower().lstrip("./")
+    if not normalized:
+        return None
+
+    parts = [part for part in Path(normalized).parts if part not in {"", "."}]
+    basename = parts[-1] if parts else normalized
+
+    if basename.startswith(".env") or any("secret" in part for part in parts):
+        return "Secrets-adjacent"
+    if normalized.startswith(".github/workflows/"):
+        return "CI/CD"
+    if basename in {
+        "dockerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+        "caddyfile",
+        "nginx.conf",
+    }:
+        return "Infra"
+    if any(
+        part in {
+            "deploy",
+            "deployment",
+            "deployments",
+            "infra",
+            "ops",
+            "terraform",
+            "ansible",
+            "helm",
+            "k8s",
+            "kubernetes",
+            "systemd",
+            "nginx",
+            "caddy",
+        }
+        for part in parts
+    ):
+        return "Infra"
+    return None
+
+
+def risky_file_manifest(file_manifest: list[dict[str, object]]) -> list[dict[str, str]]:
+    risky_items: list[dict[str, str]] = []
+    seen_paths: set[str] = set()
+    for item in file_manifest:
+        path = str(item.get("path") or "").strip()
+        if not path or path in seen_paths:
+            continue
+        risk_kind = classify_risky_file_path(path)
+        if not risk_kind:
+            continue
+        risky_items.append({"path": path, "kind": risk_kind})
+        seen_paths.add(path)
+    return risky_items
+
+
 def task_duration_seconds(
     completion_event: sqlite3.Row | None,
     prompt_timestamp: str | None,
@@ -968,13 +1027,49 @@ def response_evidence(
     warnings: list[str] = []
     normalized = response_text.lower()
     change_claim = any(token in normalized for token in ("updated ", "changed ", "added ", "removed ", "created ", "modified ", "renamed "))
-    verification_claim = any(token in normalized for token in ("test", "tests", "verified", "verification", "lint", "build", "compile", "checked"))
-    rollout_claim = any(token in normalized for token in ("restart", "restarted", "reload", "reloaded", "deploy", "deployed"))
+    verification_claim = any(
+        token in normalized
+        for token in (
+            "verified with",
+            "verified by",
+            "verified:",
+            "verification passed",
+            "verification:",
+            "tests passed",
+            "test passed",
+            "checks passed",
+            "build passed",
+            "lint passed",
+            "checked with",
+            "compiled with",
+        )
+    )
+    positive_verification_claim = any(
+        token in normalized
+        for token in (
+            "tests passed",
+            "test passed",
+            "build passed",
+            "build succeeded",
+            "lint passed",
+            "checks passed",
+            "verified successfully",
+            "successfully verified",
+            "compiled successfully",
+        )
+    )
+    rollout_claim = bool(
+        re.search(r"\brestarted\b", normalized)
+        or re.search(r"\bdeployed\b", normalized)
+        or re.search(r"\breloaded\s+(?:nginx|caddy|service|the service)\b", normalized)
+    )
 
     if change_claim and not patch_events:
         warnings.append("Response describes code or file changes, but no applied patch was recorded.")
     if verification_claim and verification_count == 0:
         warnings.append("Response describes verification or tests, but no verification command was detected.")
+    if positive_verification_claim and str(verification_verdict_data.get("status") or "") == "failed":
+        warnings.append("Response implies verification succeeded, but detected verification commands failed.")
     if rollout_claim:
         rollout_supported = any(
             any(keyword in str(event.get("display_command_text") or event.get("command_text") or "").lower() for keyword in ("restart", "reload", "deploy", "systemctl", "docker compose", "service "))
@@ -986,7 +1081,61 @@ def response_evidence(
     return {
         "links": links,
         "warnings": warnings,
+        "warning_count": len(warnings),
     }
+
+
+def build_trust_signals(
+    *,
+    turn_number: int,
+    verification_verdict_data: dict[str, object],
+    response_evidence_data: dict[str, object],
+    risky_files: list[dict[str, str]],
+) -> list[dict[str, object]]:
+    signals: list[dict[str, object]] = []
+
+    verification_status = str(verification_verdict_data.get("status") or "")
+    verification_warning_count = int(verification_verdict_data.get("warning_count") or 0)
+    if verification_status == "passed_with_warnings" and verification_warning_count > 0:
+        signals.append(
+            {
+                "key": "verification_warnings",
+                "tone": "amber",
+                "label": "Verification warnings",
+                "detail": f"Verification completed, but {verification_warning_count} warning line{'s' if verification_warning_count != 1 else ''} were detected in successful checks.",
+                "href": f"#turn-{turn_number}-verification",
+                "examples": [],
+            }
+        )
+
+    mismatch_count = int(response_evidence_data.get("warning_count") or 0)
+    if mismatch_count > 0:
+        signals.append(
+            {
+                "key": "claim_evidence_mismatch",
+                "tone": "rose",
+                "label": "Claim/evidence mismatch",
+                "detail": f"{mismatch_count} response claim{'s were' if mismatch_count != 1 else ' was'} not backed by the recorded commands, patches, or verification in this turn.",
+                "href": f"#turn-{turn_number}-response",
+                "examples": [],
+            }
+        )
+
+    if risky_files and verification_status == "none":
+        risk_kinds = sorted({item["kind"] for item in risky_files if item.get("kind")})
+        kind_summary = ", ".join(risk_kinds) if risk_kinds else "risky"
+        signals.append(
+            {
+                "key": "risky_changes_unverified",
+                "tone": "amber",
+                "label": "Risky changes unverified",
+                "detail": f"{len(risky_files)} {kind_summary.lower()} file change{'s were' if len(risky_files) != 1 else ' was'} recorded without any verification command in this turn.",
+                "href": f"#turn-{turn_number}-files",
+                "examples": [item["path"] for item in risky_files[:3]],
+            }
+        )
+
+    return signals
 
 
 def summarize_patch_changes(detail_text: str) -> tuple[str, str]:
@@ -1433,6 +1582,7 @@ def build_turns(
         verification_state = verification_status_label(command_events)
         verification_verdict_data = verification_verdict(command_events)
         file_manifest = aggregate_file_manifest(patch_events)
+        risky_files = risky_file_manifest(file_manifest)
         inspect_count = sum(1 for event in command_events if event.get("command_intent") == "inspect")
         mutate_command_count = sum(1 for event in command_events if event.get("command_intent") == "mutate")
         phase_strip = build_phase_strip(
@@ -1449,6 +1599,12 @@ def build_turns(
             patch_events=patch_events,
             verification_verdict_data=verification_verdict_data,
             file_manifest=file_manifest,
+        )
+        trust_signals = build_trust_signals(
+            turn_number=int(turn["number"]),
+            verification_verdict_data=verification_verdict_data,
+            response_evidence_data=response_evidence_data,
+            risky_files=risky_files,
         )
 
         return {
@@ -1483,6 +1639,8 @@ def build_turns(
             "audit_warning_commands": warning_commands,
             "audit_phase_strip": phase_strip,
             "audit_response_evidence": response_evidence_data,
+            "audit_risky_files": risky_files,
+            "audit_trust_signals": trust_signals,
             "audit_summary": {
                 "command_count": len(command_events),
                 "patch_count": len(patch_events),
@@ -1492,6 +1650,9 @@ def build_turns(
                 "warning_count": len(warning_commands),
                 "failure_count": len(failed_commands),
                 "canceled": response_state == "canceled",
+                "evidence_mismatch_count": int(response_evidence_data.get("warning_count") or 0),
+                "trust_signal_count": len(trust_signals),
+                "risky_file_count": len(risky_files),
             },
         }
 
@@ -1559,6 +1720,22 @@ def build_session_audit_summary(
     total_failures = sum(int(turn["audit_summary"]["failure_count"]) for turn in turns)
     total_warnings = sum(int(turn["audit_summary"]["warning_count"]) for turn in turns)
     total_verification = sum(int(turn["audit_summary"]["verification_count"]) for turn in turns)
+    review_signal_turn_count = sum(1 for turn in turns if int(turn["audit_summary"].get("trust_signal_count") or 0) > 0)
+    verification_warning_turn_count = sum(
+        1
+        for turn in turns
+        if any(signal.get("key") == "verification_warnings" for signal in turn.get("audit_trust_signals", []))
+    )
+    claim_mismatch_turn_count = sum(
+        1
+        for turn in turns
+        if any(signal.get("key") == "claim_evidence_mismatch" for signal in turn.get("audit_trust_signals", []))
+    )
+    risky_unverified_turn_count = sum(
+        1
+        for turn in turns
+        if any(signal.get("key") == "risky_changes_unverified" for signal in turn.get("audit_trust_signals", []))
+    )
     return {
         "started_at": session_row.get("session_timestamp") or session_row.get("started_at"),
         "ended_at": session_row.get("ended_at"),
@@ -1571,6 +1748,10 @@ def build_session_audit_summary(
         "warning_count": total_warnings,
         "aborted_turn_count": int(session_row.get("aborted_turn_count") or 0),
         "verification_count": total_verification,
+        "review_signal_turn_count": review_signal_turn_count,
+        "verification_warning_turn_count": verification_warning_turn_count,
+        "claim_mismatch_turn_count": claim_mismatch_turn_count,
+        "risky_unverified_turn_count": risky_unverified_turn_count,
         "git_branch": str(session_row.get("git_branch") or "").strip(),
         "git_commit_hash": str(session_row.get("git_commit_hash") or "").strip(),
     }

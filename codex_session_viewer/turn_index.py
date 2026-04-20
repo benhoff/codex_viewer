@@ -384,7 +384,7 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
 
 
 def turn_window_size(view_mode: str) -> int:
-    return 5 if str(view_mode or "").strip().lower() == "audit" else 5
+    return 5 if str(view_mode or "").strip().lower() == "audit" else 10
 
 
 def fetch_session_turn_window(
@@ -394,6 +394,7 @@ def fetch_session_turn_window(
     window_size: int,
     turn_number: int | None = None,
     before_turn: int | None = None,
+    page_number: int | None = None,
 ) -> dict[str, Any]:
     total_row = connection.execute(
         "SELECT COUNT(*) AS count FROM session_turns WHERE session_id = ?",
@@ -404,6 +405,8 @@ def fetch_session_turn_window(
         return {
             "total_turns": 0,
             "window_size": window_size,
+            "total_pages": 0,
+            "current_page": 1,
             "oldest_turn": None,
             "newest_turn": None,
             "display_turns": [],
@@ -414,18 +417,29 @@ def fetch_session_turn_window(
             "has_newer": False,
             "older_before_turn": None,
             "newer_turn": None,
+            "older_page": None,
+            "newer_page": None,
         }
 
     normalized_window = max(int(window_size or 10), 1)
+    total_pages = max((total_turns + normalized_window - 1) // normalized_window, 1)
     target_turn = max(1, min(int(turn_number or 0), total_turns)) if turn_number else None
     older_cursor = max(1, min(int(before_turn or 0), total_turns + 1)) if before_turn else None
+    explicit_page = max(1, min(int(page_number or 0), total_pages)) if page_number else None
 
     if target_turn is not None:
         page_index = (total_turns - target_turn) // normalized_window
+        current_page = page_index + 1
+        newest_turn = max(1, total_turns - (page_index * normalized_window))
+    elif explicit_page is not None:
+        current_page = explicit_page
+        page_index = current_page - 1
         newest_turn = max(1, total_turns - (page_index * normalized_window))
     elif older_cursor is not None:
         newest_turn = max(1, min(total_turns, older_cursor - 1))
+        current_page = ((total_turns - newest_turn) // normalized_window) + 1
     else:
+        current_page = 1
         newest_turn = total_turns
 
     oldest_turn = max(1, newest_turn - normalized_window + 1)
@@ -464,6 +478,8 @@ def fetch_session_turn_window(
     return {
         "total_turns": total_turns,
         "window_size": normalized_window,
+        "total_pages": total_pages,
+        "current_page": current_page,
         "oldest_turn": oldest_turn,
         "newest_turn": newest_turn,
         "display_turns": display_turns,
@@ -474,4 +490,6 @@ def fetch_session_turn_window(
         "has_newer": newest_turn < total_turns,
         "older_before_turn": oldest_turn if oldest_turn > 1 else None,
         "newer_turn": newest_turn + 1 if newest_turn < total_turns else None,
+        "older_page": current_page + 1 if current_page < total_pages else None,
+        "newer_page": current_page - 1 if current_page > 1 else None,
     }
