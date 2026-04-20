@@ -33,7 +33,6 @@ from ...local_auth import (
 )
 from ...projects import (
     build_grouped_projects,
-    build_signal_badges,
     dashboard_stats,
     effective_project_fields,
     fetch_group_detail,
@@ -320,8 +319,6 @@ def build_group_signal_map(
             {
                 "recent_turn_count": 0,
                 "latest_recent_timestamp": "",
-                "aborted_turns": 0,
-                "viewer_warnings": 0,
             },
         )
 
@@ -332,14 +329,8 @@ def build_group_signal_map(
             if latest_recent_timestamp and latest_recent_timestamp > str(signal["latest_recent_timestamp"] or ""):
                 signal["latest_recent_timestamp"] = latest_recent_timestamp
 
-        signal["aborted_turns"] = int(signal["aborted_turns"]) + int(row["aborted_turn_count"] or 0)
-        if str(row["import_warning"] or "").strip():
-            signal["viewer_warnings"] = int(signal["viewer_warnings"]) + 1
-
     for signal in signals.values():
         status = summarize_attention_status(
-            aborted_turns=int(signal["aborted_turns"]),
-            viewer_warnings=int(signal["viewer_warnings"]),
             recent_turn_count=int(signal["recent_turn_count"]),
         )
         signal.update(status)
@@ -376,13 +367,9 @@ def build_active_repos_panel(
     for group in repo_groups:
         signal = group_signals.get(group.key, {})
         recent_turn_count = int(signal.get("recent_turn_count", 0) or 0)
-        aborted_turns = int(signal.get("aborted_turns", 0) or 0)
-        viewer_warnings = int(signal.get("viewer_warnings", 0) or 0)
         latest_recent_timestamp = str(signal.get("latest_recent_timestamp") or "")
         latest_timestamp = latest_recent_timestamp or str(group.latest_timestamp or "")
         status = summarize_attention_status(
-            aborted_turns=aborted_turns,
-            viewer_warnings=viewer_warnings,
             recent_turn_count=recent_turn_count,
         )
         owner_name = str(group.organization or "").strip()
@@ -406,12 +393,7 @@ def build_active_repos_panel(
                 "host_label": f"{group.host_count} host" + ("" if group.host_count == 1 else "s"),
                 "session_count": group.session_count,
                 "summary": group.latest_summary or "",
-                "aborted_turns": aborted_turns,
-                "viewer_warnings": viewer_warnings,
-                "signal_badges": build_signal_badges(
-                    aborted_turns=aborted_turns,
-                    viewer_warnings=viewer_warnings,
-                ),
+                "signal_badges": [],
                 "status_tone": str(status["status_tone"]),
                 "status_label": str(status["status_label"]),
                 "status_title": str(status["status_title"]),
@@ -438,50 +420,7 @@ def build_error_sessions_panel(
     *,
     limit: int = 6,
 ) -> list[dict[str, object]]:
-    group_index = {group.key: group for group in repo_groups}
-    items: list[dict[str, object]] = []
-    for row in rows:
-        aborted_turns = int(row["aborted_turn_count"] or 0)
-        import_warning = str(row["import_warning"] or "").strip()
-        status = summarize_attention_status(
-            aborted_turns=aborted_turns,
-            viewer_warnings=1 if import_warning else 0,
-        )
-        if not status["has_attention"]:
-            continue
-
-        project = effective_project_fields(row)
-        group = group_index.get(str(project["effective_group_key"]))
-        title = str(row["last_user_message"] or "").strip() or str(row["summary"] or "").strip() or "Session with errors"
-        latest_timestamp = (
-            str(row["last_turn_timestamp"] or "").strip()
-            or str(row["session_timestamp"] or row["started_at"] or row["imported_at"] or "").strip()
-        )
-        items.append(
-            {
-                "session_id": row["id"],
-                "session_href": f"/sessions/{row['id']}",
-                "title": title,
-                "project_label": group.display_label if group is not None else str(project["display_label"]),
-                "host": str(project["source_host"] or ""),
-                "timestamp": latest_timestamp,
-                "aborted_turns": aborted_turns,
-                "viewer_warning": import_warning,
-                "signal_badges": build_signal_badges(
-                    aborted_turns=aborted_turns,
-                    viewer_warnings=1 if import_warning else 0,
-                ),
-                "status_tone": str(status["status_tone"]),
-                "status_label": str(status["status_label"]),
-                "attention_count": int(status["attention_count"]),
-            }
-        )
-
-    return sorted(
-        items,
-        key=lambda item: (int(item["attention_count"]), str(item["timestamp"] or "")),
-        reverse=True,
-    )[:limit]
+    return []
 
 
 @router.get("/setup", response_class=HTMLResponse)

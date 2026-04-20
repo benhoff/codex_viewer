@@ -109,29 +109,6 @@ def count_label(count: int, singular: str, plural: str | None = None) -> str:
     return f"{count} {suffix}"
 
 
-def build_signal_badges(
-    *,
-    aborted_turns: int = 0,
-    viewer_warnings: int = 0,
-) -> list[dict[str, str]]:
-    badges: list[dict[str, str]] = []
-    if aborted_turns > 0:
-        badges.append(
-            {
-                "tone": "amber",
-                "label": count_label(aborted_turns, "canceled turn"),
-            }
-        )
-    if viewer_warnings > 0:
-        badges.append(
-            {
-                "tone": "stone",
-                "label": count_label(viewer_warnings, "viewer warning"),
-            }
-        )
-    return badges
-
-
 def build_command_exit_badges(
     *,
     command_exits: int = 0,
@@ -149,28 +126,8 @@ def build_command_exit_badges(
 
 def summarize_attention_status(
     *,
-    aborted_turns: int = 0,
-    viewer_warnings: int = 0,
     recent_turn_count: int = 0,
 ) -> dict[str, str | int | bool]:
-    repeated_canceled = aborted_turns > 1
-    has_attention = viewer_warnings > 0 or repeated_canceled
-    if viewer_warnings > 0:
-        return {
-            "status_tone": "amber",
-            "status_label": "Viewer Warning",
-            "status_title": count_label(viewer_warnings, "viewer warning"),
-            "has_attention": True,
-            "attention_count": viewer_warnings + (1 if repeated_canceled else 0),
-        }
-    if repeated_canceled:
-        return {
-            "status_tone": "amber",
-            "status_label": "Canceled",
-            "status_title": count_label(aborted_turns, "canceled turn"),
-            "has_attention": True,
-            "attention_count": viewer_warnings + 1,
-        }
     if recent_turn_count > 0:
         return {
             "status_tone": "emerald",
@@ -778,12 +735,7 @@ def fetch_turn_stream(
         viewer_warning = trimmed(row["import_warning"]) or ""
         canceled_turns = 1 if response_state == "canceled" else 0
         command_exit_count = int(row["failure_count"] or 0)
-        signal_badges = build_command_exit_badges(
-            command_exits=command_exit_count,
-        ) + build_signal_badges(
-            aborted_turns=canceled_turns,
-            viewer_warnings=1 if viewer_warning else 0,
-        )
+        signal_badges = build_command_exit_badges(command_exits=command_exit_count)
         timestamp = (
             trimmed(row["latest_timestamp"])
             or trimmed(row["response_timestamp"])
@@ -1034,8 +986,6 @@ def fetch_group_detail(
         viewer_warning = trimmed(row["import_warning"]) or ""
         recent_turns = int(recent_turn_activity.get(str(row["id"]), {}).get("turn_count", 0) or 0)
         session_status = summarize_attention_status(
-            aborted_turns=aborted_turns,
-            viewer_warnings=1 if viewer_warning else 0,
             recent_turn_count=recent_turns,
         )
         source_group = by_source.setdefault(
@@ -1079,10 +1029,7 @@ def fetch_group_detail(
             "viewer_warning": viewer_warning,
             "has_viewer_warning": bool(viewer_warning),
             "recent_turn_count": recent_turns,
-            "signal_badges": build_signal_badges(
-                aborted_turns=aborted_turns,
-                viewer_warnings=1 if viewer_warning else 0,
-            ),
+            "signal_badges": [],
             "needs_attention": bool(session_status["has_attention"]),
             "status_tone": str(session_status["status_tone"]),
             "status_label": str(session_status["status_label"]),
@@ -1184,8 +1131,6 @@ def fetch_group_detail(
 
     recent_sessions = all_sessions[:8]
     health_summary = summarize_attention_status(
-        aborted_turns=signal_summary["canceled_turns"],
-        viewer_warnings=signal_summary["viewer_warnings"],
         recent_turn_count=sum(int(item.get("turn_count", 0) or 0) for item in recent_turn_activity.values()),
     )
     latest_session = all_sessions[0] if all_sessions else None

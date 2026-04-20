@@ -422,10 +422,7 @@ def fetch_agents_dashboard(
             entry["recent_sessions"].append(session_item)
         entry["latest_session"] = _latest_session(entry["latest_session"], session_item)
 
-        session_problematic = (
-            bool(trimmed(row["import_warning"]))
-            or int(row["aborted_turn_count"] or 0) > 1
-        )
+        session_problematic = False
         if session_problematic:
             entry["latest_failed_session"] = _latest_session(entry["latest_failed_session"], session_item)
 
