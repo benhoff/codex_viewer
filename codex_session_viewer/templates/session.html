@@ -17,6 +17,18 @@
           Edit repo
         </a>
         {% endif %}
+        <a href="{{ request.url.path }}/export/bundle" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
+          Export bundle
+        </a>
+        <a href="{{ request.url.path }}/export/raw" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Raw JSONL
+        </a>
+        <a href="{{ request.url.path }}/export/json" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          JSON
+        </a>
+        <a href="{{ request.url.path }}/export/markdown" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Markdown
+        </a>
       </div>
       <div data-session-view-toggle-group class="flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/80 p-1 shadow-[0_14px_35px_-24px_rgba(41,37,36,0.35)]">
         <a

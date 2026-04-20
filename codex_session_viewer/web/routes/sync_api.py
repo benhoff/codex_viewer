@@ -24,6 +24,7 @@ from ...onboarding import (
     record_first_session_ingested,
 )
 from ...projects import ignored_project_keys, sync_project_registry
+from ...session_artifacts import store_session_artifact
 from ..auth import require_sync_api_auth
 from ..context import get_settings
 
@@ -138,6 +139,7 @@ async def sync_session(request: Request) -> JSONResponse:
                         "inferred_project_key": parsed.inferred_project_key,
                     }
                 )
+            parsed.raw_artifact_sha256 = store_session_artifact(connection, settings, raw_jsonl)
             upsert_parsed_session(connection, parsed)
             sync_project_registry(connection)
             record_first_session_ingested(

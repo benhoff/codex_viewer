@@ -11,6 +11,8 @@ from .db import connect, init_db
 from .importer import sync_sessions
 from .projects import fetch_session_with_project
 from .runtime import export_markdown, get_events, run_sync_daemon
+from .session_artifacts import resolve_session_raw_text
+from .session_exports import build_session_bundle, export_json_payload
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -39,7 +41,8 @@ def parse_args() -> argparse.Namespace:
 
     export = subparsers.add_parser("export", help="Export one imported session")
     export.add_argument("session_id")
-    export.add_argument("--format", choices=["json", "markdown"], default="json")
+    export.add_argument("--format", choices=["json", "markdown", "raw", "bundle"], default="json")
+    export.add_argument("--output")
 
     return parser.parse_args()
 
@@ -105,11 +108,42 @@ def cli() -> int:
             if session is None:
                 raise SystemExit(f"Unknown session: {args.session_id}")
             events = get_events(connection, args.session_id)
+            raw_jsonl, raw_export_info = resolve_session_raw_text(connection, settings, session)
 
         if args.format == "json":
-            print(json.dumps({"session": dict(session), "events": [dict(row) for row in events]}, indent=2))
+            output = json.dumps(export_json_payload(session, events), indent=2, ensure_ascii=False)
+            if args.output:
+                Path(args.output).write_text(output + "\n", encoding="utf-8")
+            else:
+                print(output)
+        elif args.format == "markdown":
+            output = export_markdown(session, events)
+            if args.output:
+                Path(args.output).write_text(output, encoding="utf-8")
+            else:
+                print(output)
+        elif args.format == "raw":
+            if raw_jsonl is None:
+                raise SystemExit(f"Raw rollout is unavailable for session: {args.session_id}")
+            if args.output:
+                with Path(args.output).open("w", encoding="utf-8", newline="") as handle:
+                    handle.write(raw_jsonl)
+            else:
+                print(raw_jsonl, end="")
         else:
-            print(export_markdown(session, events))
+            if raw_jsonl is None:
+                raise SystemExit(f"Portable bundle requires a raw rollout artifact for session: {args.session_id}")
+            bundle_bytes = build_session_bundle(
+                session,
+                events,
+                raw_jsonl=raw_jsonl,
+                raw_export_info=raw_export_info,
+            )
+            output_path = Path(args.output or f"{args.session_id}.zip")
+            output_path.write_bytes(bundle_bytes)
+            print(str(output_path))
+        if args.format != "bundle" and args.output:
+            print(str(Path(args.output)))
         return 0
 
     raise SystemExit(f"Unsupported command: {args.command}")

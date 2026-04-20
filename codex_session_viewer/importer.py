@@ -18,6 +18,7 @@ from .session_rollups import (
     compute_session_rollups,
     replace_session_turn_activity_daily,
 )
+from .session_artifacts import read_session_source_text, store_session_artifact
 from .turn_index import replace_session_turns
 from .text_utils import shorten, strip_codex_wrappers
 
@@ -241,6 +242,7 @@ class ParsedSession:
     imported_at: str
     updated_at: str
     events: list[NormalizedEvent]
+    raw_artifact_sha256: str | None = None
 
 
 class SessionParseError(ValueError):
@@ -577,15 +579,15 @@ def _parse_session_lines(
 
 def parse_session_file(source_path: Path, source_root: Path, source_host: str) -> ParsedSession:
     stat = source_path.stat()
-    with source_path.open("r", encoding="utf-8") as handle:
-        return _parse_session_lines(
-            handle,
-            source_path,
-            source_root,
-            source_host,
-            file_size=stat.st_size,
-            file_mtime_ns=stat.st_mtime_ns,
-        )
+    raw_jsonl = read_session_source_text(source_path)
+    return parse_session_text(
+        raw_jsonl,
+        source_path,
+        source_root,
+        source_host,
+        file_size=stat.st_size,
+        file_mtime_ns=stat.st_mtime_ns,
+    )
 
 
 def parse_session_text(
@@ -645,6 +647,7 @@ def parsed_session_to_payload(parsed: ParsedSession) -> dict[str, object]:
             "file_size": parsed.file_size,
             "file_mtime_ns": parsed.file_mtime_ns,
             "content_sha256": parsed.content_sha256,
+            "raw_artifact_sha256": parsed.raw_artifact_sha256,
             "session_timestamp": parsed.session_timestamp,
             "started_at": parsed.started_at,
             "ended_at": parsed.ended_at,
@@ -706,6 +709,7 @@ def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
     source_root = _payload_str(session.get("source_root"))
     source_host = _payload_str(session.get("source_host"))
     content_sha256 = _payload_str(session.get("content_sha256"))
+    raw_artifact_sha256 = _payload_str(session.get("raw_artifact_sha256"))
     file_size = _payload_int(session.get("file_size"))
     file_mtime_ns = _payload_int(session.get("file_mtime_ns"))
     cwd_name = _payload_str(session.get("cwd_name"))
@@ -851,6 +855,7 @@ def parsed_session_from_payload(payload: dict[str, object]) -> ParsedSession:
         imported_at=imported_at,
         updated_at=updated_at,
         events=normalized_events,
+        raw_artifact_sha256=raw_artifact_sha256,
     )
 
 
@@ -874,6 +879,13 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
         )
 
     connection.execute("DELETE FROM events WHERE session_id = ?", (parsed.session_id,))
+    existing_by_id = connection.execute(
+        "SELECT raw_artifact_sha256 FROM sessions WHERE id = ?",
+        (parsed.session_id,),
+    ).fetchone()
+    raw_artifact_sha256 = parsed.raw_artifact_sha256
+    if raw_artifact_sha256 is None and existing_by_id is not None:
+        raw_artifact_sha256 = str(existing_by_id["raw_artifact_sha256"] or "").strip() or None
     session_values = (
         parsed.session_id,
         str(parsed.source_path),
@@ -881,6 +893,7 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
         parsed.file_size,
         parsed.file_mtime_ns,
         parsed.content_sha256,
+        raw_artifact_sha256,
         parsed.session_timestamp,
         parsed.started_at,
         parsed.ended_at,
@@ -919,15 +932,12 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
         parsed.imported_at,
         parsed.updated_at,
     )
-    existing_by_id = connection.execute(
-        "SELECT 1 FROM sessions WHERE id = ?",
-        (parsed.session_id,),
-    ).fetchone()
     if existing_by_id is None:
         connection.execute(
             """
             INSERT INTO sessions (
                 id, source_path, source_root, file_size, file_mtime_ns, content_sha256,
+                raw_artifact_sha256,
                 session_timestamp, started_at, ended_at, cwd, cwd_name,
                 source_host, originator, cli_version, source, model_provider,
                 git_branch, git_commit_hash, git_repository_url, github_remote_url,
@@ -937,7 +947,7 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
                 rollup_version, turn_count, last_user_message, last_turn_timestamp,
                 latest_turn_summary, command_failure_count, aborted_turn_count,
                 import_warning, search_text, raw_meta_json, imported_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             session_values,
         )
@@ -951,6 +961,7 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
                 file_size = ?,
                 file_mtime_ns = ?,
                 content_sha256 = ?,
+                raw_artifact_sha256 = ?,
                 session_timestamp = ?,
                 started_at = ?,
                 ended_at = ?,
@@ -1036,12 +1047,15 @@ def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -
             s.file_size,
             s.file_mtime_ns,
             s.content_sha256,
+            MAX(CASE WHEN s.raw_artifact_sha256 IS NOT NULL AND sa.sha256 IS NOT NULL THEN 1 ELSE 0 END) AS has_raw_artifact,
             s.event_count,
             COUNT(e.id) AS stored_event_count,
             s.updated_at
         FROM sessions AS s
         LEFT JOIN events AS e
             ON e.session_id = s.id
+        LEFT JOIN session_artifacts AS sa
+            ON sa.sha256 = s.raw_artifact_sha256
         WHERE s.source_host = ?
         GROUP BY
             s.id,
@@ -1077,7 +1091,7 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
 
             existing_rows = connection.execute(
                 """
-                SELECT id, source_path, file_size, file_mtime_ns, content_sha256, source_host
+                SELECT id, source_path, file_size, file_mtime_ns, content_sha256, source_host, raw_artifact_sha256
                 FROM sessions
                 """
             ).fetchall()
@@ -1088,6 +1102,7 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
                     "file_mtime_ns": row["file_mtime_ns"],
                     "content_sha256": row["content_sha256"],
                     "source_host": row["source_host"],
+                    "raw_artifact_sha256": row["raw_artifact_sha256"],
                 }
                 for row in existing_rows
             }
@@ -1101,12 +1116,21 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
                     and record["file_size"] == stat.st_size
                     and record["file_mtime_ns"] == stat.st_mtime_ns
                     and record["source_host"] == settings.source_host
+                    and str(record["raw_artifact_sha256"] or "").strip()
                 ):
                     skipped += 1
                     continue
 
                 try:
-                    parsed = parse_session_file(path, source_root, settings.source_host)
+                    raw_jsonl = read_session_source_text(path)
+                    parsed = parse_session_text(
+                        raw_jsonl,
+                        path,
+                        source_root,
+                        settings.source_host,
+                        file_size=stat.st_size,
+                        file_mtime_ns=stat.st_mtime_ns,
+                    )
                 except SessionParseError as exc:
                     logger.warning("Skipping malformed session file %s", exc)
                     skipped += 1
@@ -1114,6 +1138,7 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
                 if project_is_ignored(connection, parsed.inferred_project_key):
                     skipped += 1
                     continue
+                parsed.raw_artifact_sha256 = store_session_artifact(connection, settings, raw_jsonl)
                 upsert_parsed_session(connection, parsed)
                 project_registry_changed = True
 

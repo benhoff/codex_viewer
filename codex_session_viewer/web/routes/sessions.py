@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from ...db import connect
 from ...projects import (
@@ -16,6 +16,8 @@ from ...projects import (
 )
 from ...runtime import export_markdown, get_events
 from ...saved_turns import fetch_session_saved_turn_states, owner_scope_from_request
+from ...session_artifacts import resolve_session_raw_text
+from ...session_exports import build_session_bundle, export_json_payload
 from ...session_status import terminal_turn_summary
 from ...session_view import build_session_audit_summary, build_turns
 from ...turn_index import fetch_session_turn_window, turn_window_size
@@ -277,12 +279,11 @@ def export_raw(request: Request, session_id: str) -> PlainTextResponse:
             raise HTTPException(status_code=404, detail="Session not found")
         if not row_is_visible_to_project_access(session, project_access):
             raise HTTPException(status_code=404, detail="Session not found")
-    source_path = Path(session["source_path"])
-    if not source_path.exists():
+        raw_jsonl, _raw_export_info = resolve_session_raw_text(connection, context.settings, session)
+    if raw_jsonl is None:
         raise HTTPException(status_code=404, detail="Source rollout file is no longer available")
-    content = source_path.read_text(encoding="utf-8")
     headers = {"Content-Disposition": f'attachment; filename="{session_id}.jsonl"'}
-    return PlainTextResponse(content=content, media_type="application/x-ndjson", headers=headers)
+    return PlainTextResponse(content=raw_jsonl, media_type="application/x-ndjson", headers=headers)
 
 
 @router.get("/sessions/{session_id}/export/json")
@@ -300,10 +301,7 @@ def export_json(request: Request, session_id: str) -> JSONResponse:
         if not row_is_visible_to_project_access(session, project_access):
             raise HTTPException(status_code=404, detail="Session not found")
         events = get_events(connection, session_id)
-    payload = {
-        "session": dict(session),
-        "events": [dict(event) for event in events],
-    }
+    payload = export_json_payload(session, events)
     headers = {"Content-Disposition": f'attachment; filename="{session_id}.json"'}
     return JSONResponse(content=payload, headers=headers)
 
@@ -325,3 +323,31 @@ def export_session_markdown(request: Request, session_id: str) -> PlainTextRespo
         events = get_events(connection, session_id)
     headers = {"Content-Disposition": f'attachment; filename="{session_id}.md"'}
     return PlainTextResponse(export_markdown(session, events), media_type="text/markdown", headers=headers)
+
+
+@router.get("/sessions/{session_id}/export/bundle")
+def export_session_bundle(request: Request, session_id: str) -> Response:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        session = fetch_session_with_project(connection, session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if not row_is_visible_to_project_access(session, project_access):
+            raise HTTPException(status_code=404, detail="Session not found")
+        events = get_events(connection, session_id)
+        raw_jsonl, raw_export_info = resolve_session_raw_text(connection, context.settings, session)
+    if raw_jsonl is None:
+        raise HTTPException(status_code=404, detail="Source rollout file is no longer available")
+    bundle = build_session_bundle(
+        session,
+        events,
+        raw_jsonl=raw_jsonl,
+        raw_export_info=raw_export_info,
+    )
+    headers = {"Content-Disposition": f'attachment; filename="{session_id}.zip"'}
+    return Response(content=bundle, media_type="application/zip", headers=headers)

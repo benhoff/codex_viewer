@@ -13,10 +13,10 @@ from urllib.request import Request, urlopen
 from .config import Settings
 from .importer import (
     iter_session_files,
-    parse_session_file,
-    parsed_session_to_payload,
+    parse_session_text,
     SessionParseError,
 )
+from .session_artifacts import read_session_source_text
 
 INVALID_SESSION_CACHE: dict[tuple[str, int, int], str] = {}
 
@@ -136,6 +136,8 @@ def remote_entry_needs_upload(
         return True, "invalid-manifest"
     if remote_event_count != stored_event_count:
         return True, "partial-remote"
+    if not bool(entry.get("has_raw_artifact")):
+        return True, "missing-raw-artifact"
 
     if entry.get("content_sha256") in {None, ""}:
         return True, "missing-hash"
@@ -145,10 +147,6 @@ def remote_entry_needs_upload(
         return True, "mtime-mismatch"
 
     return False, "current"
-
-
-def upload_session(settings: Settings, payload: dict[str, object]) -> dict[str, Any]:
-    return json_request(settings, "POST", "/api/sync/session", payload)
 
 
 def upload_raw_session(settings: Settings, payload: dict[str, object]) -> dict[str, Any]:
@@ -242,6 +240,7 @@ def build_raw_upload_payload(
     *,
     source_root: Path,
     path: Path,
+    raw_jsonl: str,
     file_size: int,
     file_mtime_ns: int,
 ) -> dict[str, object]:
@@ -251,7 +250,7 @@ def build_raw_upload_payload(
         "source_path": str(path),
         "file_size": file_size,
         "file_mtime_ns": file_mtime_ns,
-        "raw_jsonl": path.read_text(encoding="utf-8"),
+        "raw_jsonl": raw_jsonl,
     }
 
 
@@ -333,7 +332,15 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
             continue
         try:
             if raw_resend_token:
-                parsed = parse_session_file(path, source_root, settings.source_host)
+                raw_jsonl = read_session_source_text(path)
+                parsed = parse_session_text(
+                    raw_jsonl,
+                    path,
+                    source_root,
+                    settings.source_host,
+                    file_size=stat.st_size,
+                    file_mtime_ns=stat.st_mtime_ns,
+                )
                 if parsed.inferred_project_key in ignored_keys:
                     skipped += 1
                     continue
@@ -343,6 +350,7 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
                         settings,
                         source_root=source_root,
                         path=path,
+                        raw_jsonl=raw_jsonl,
                         file_size=stat.st_size,
                         file_mtime_ns=stat.st_mtime_ns,
                     ),
@@ -360,11 +368,29 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
                     skipped += 1
                     continue
 
-                parsed = parse_session_file(path, source_root, settings.source_host)
+                raw_jsonl = read_session_source_text(path)
+                parsed = parse_session_text(
+                    raw_jsonl,
+                    path,
+                    source_root,
+                    settings.source_host,
+                    file_size=stat.st_size,
+                    file_mtime_ns=stat.st_mtime_ns,
+                )
                 if parsed.inferred_project_key in ignored_keys:
                     skipped += 1
                     continue
-                response = upload_session(settings, parsed_session_to_payload(parsed))
+                response = upload_raw_session(
+                    settings,
+                    build_raw_upload_payload(
+                        settings,
+                        source_root=source_root,
+                        path=path,
+                        raw_jsonl=raw_jsonl,
+                        file_size=stat.st_size,
+                        file_mtime_ns=stat.st_mtime_ns,
+                    ),
+                )
             if response.get("status") == "ignored":
                 skipped += 1
                 continue

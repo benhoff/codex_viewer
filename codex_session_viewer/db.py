@@ -20,6 +20,7 @@ SESSION_COLUMN_DEFS = {
     "file_size": "INTEGER NOT NULL",
     "file_mtime_ns": "INTEGER NOT NULL",
     "content_sha256": "TEXT NOT NULL DEFAULT ''",
+    "raw_artifact_sha256": "TEXT",
     "session_timestamp": "TEXT",
     "started_at": "TEXT",
     "ended_at": "TEXT",
@@ -58,6 +59,18 @@ SESSION_COLUMN_DEFS = {
     "search_text": "TEXT NOT NULL DEFAULT ''",
     "raw_meta_json": "TEXT NOT NULL",
     "imported_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
+SESSION_ARTIFACT_COLUMN_DEFS = {
+    "sha256": "TEXT PRIMARY KEY",
+    "storage_path": "TEXT NOT NULL",
+    "media_type": "TEXT NOT NULL DEFAULT 'application/x-ndjson'",
+    "text_encoding": "TEXT NOT NULL DEFAULT 'utf-8'",
+    "compression": "TEXT NOT NULL DEFAULT 'gzip'",
+    "original_size": "INTEGER NOT NULL DEFAULT 0",
+    "stored_size": "INTEGER NOT NULL DEFAULT 0",
+    "created_at": "TEXT NOT NULL",
     "updated_at": "TEXT NOT NULL",
 }
 
@@ -243,6 +256,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     file_size INTEGER NOT NULL,
     file_mtime_ns INTEGER NOT NULL,
     content_sha256 TEXT NOT NULL DEFAULT '',
+    raw_artifact_sha256 TEXT,
     session_timestamp TEXT,
     started_at TEXT,
     ended_at TEXT,
@@ -361,6 +375,18 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 CREATE TABLE IF NOT EXISTS server_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_artifacts (
+    sha256 TEXT PRIMARY KEY,
+    storage_path TEXT NOT NULL,
+    media_type TEXT NOT NULL DEFAULT 'application/x-ndjson',
+    text_encoding TEXT NOT NULL DEFAULT 'utf-8',
+    compression TEXT NOT NULL DEFAULT 'gzip',
+    original_size INTEGER NOT NULL DEFAULT 0,
+    stored_size INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
@@ -505,8 +531,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_source_host ON sessions(source_host);
 CREATE INDEX IF NOT EXISTS idx_sessions_github_slug ON sessions(github_slug);
 CREATE INDEX IF NOT EXISTS idx_sessions_project_key ON sessions(inferred_project_key);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_turn_timestamp ON sessions(last_turn_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_raw_artifact_sha256 ON sessions(raw_artifact_sha256);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_host_path_unique
 ON sessions(source_host, source_path);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_artifacts_storage_path
+ON session_artifacts(storage_path);
 
 CREATE INDEX IF NOT EXISTS idx_session_turn_activity_date
 ON session_turn_activity_daily(activity_date DESC);
@@ -765,6 +795,17 @@ def ensure_session_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_session_artifact_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "session_artifacts"):
+        return
+    artifact_columns = table_columns(connection, "session_artifacts")
+    for column_name, column_def in SESSION_ARTIFACT_COLUMN_DEFS.items():
+        if column_name not in artifact_columns and column_name != "sha256":
+            connection.execute(
+                f"ALTER TABLE session_artifacts ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def ensure_remote_agent_columns(connection: sqlite3.Connection) -> None:
     if not table_exists(connection, "remote_agents"):
         return
@@ -948,6 +989,7 @@ def init_db(database_path: Path) -> None:
             connection.execute(EVENT_TABLE_SQL)
             connection.executescript(OTHER_TABLES_SQL)
             ensure_session_columns(connection)
+            ensure_session_artifact_columns(connection)
             ensure_remote_agent_columns(connection)
             ensure_user_columns(connection)
             backfill_user_access_columns(connection)
