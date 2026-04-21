@@ -836,6 +836,23 @@ def command_call_workdir(event: dict[str, object]) -> str | None:
     return None
 
 
+def parsed_command_details(value: object) -> tuple[list[dict[str, object]], list[str]]:
+    if not isinstance(value, list):
+        return [], []
+
+    parsed_commands: list[dict[str, object]] = []
+    parsed_command_types: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        parsed_item = dict(item)
+        parsed_commands.append(parsed_item)
+        command_type = str(parsed_item.get("type") or "").strip().lower()
+        if command_type:
+            parsed_command_types.append(command_type)
+    return parsed_commands, parsed_command_types
+
+
 def build_phase_strip(
     *,
     plan_count: int,
@@ -1300,11 +1317,26 @@ def merge_compound_tool_events(detail_events: list[dict[str, object]]) -> list[d
             merged["output_text"] = output_text
             merged["exit_code"] = command_event.get("exit_code") if command_event is not None else None
             command_payload = parse_record_payload(command_event.get("record_json")) if command_event is not None else None
+            parsed_commands, parsed_command_types = parsed_command_details(
+                command_payload.get("parsed_cmd") if isinstance(command_payload, dict) else None
+            )
             merged["command_cwd"] = (
                 str(command_payload.get("cwd") or "").strip()
                 if isinstance(command_payload, dict)
                 else (command_call_workdir(event) or None)
             )
+            merged["turn_id"] = (
+                str(command_payload.get("turn_id") or "").strip()
+                if isinstance(command_payload, dict)
+                else None
+            ) or None
+            merged["command_status"] = (
+                str(command_payload.get("status") or "").strip().lower()
+                if isinstance(command_payload, dict)
+                else ""
+            ) or None
+            merged["parsed_commands"] = parsed_commands
+            merged["parsed_command_types"] = parsed_command_types
             duration = command_payload.get("duration") if isinstance(command_payload, dict) else None
             merged["duration_seconds"] = coerce_duration_seconds(duration)
             merged["timestamp"] = (
@@ -1367,6 +1399,7 @@ def merge_compound_tool_events(detail_events: list[dict[str, object]]) -> list[d
                 if patch_apply_event is not None
                 else ""
             )
+            patch_payload = parse_record_payload(patch_apply_event.get("record_json")) if patch_apply_event is not None else None
             display_text, merged_detail = summarize_patch_changes(detail_text)
 
             tool_output = ""
@@ -1387,6 +1420,21 @@ def merge_compound_tool_events(detail_events: list[dict[str, object]]) -> list[d
             merged["patch_files"] = parse_patch_files(merged_detail)
             merged["patch_manifest"] = parse_patch_manifest(merged_detail)
             merged["patch_file_count"] = len(merged["patch_files"])
+            merged["turn_id"] = (
+                str(patch_payload.get("turn_id") or "").strip()
+                if isinstance(patch_payload, dict)
+                else None
+            ) or None
+            merged["patch_success"] = (
+                bool(patch_payload.get("success"))
+                if isinstance(patch_payload, dict) and isinstance(patch_payload.get("success"), bool)
+                else None
+            )
+            merged["patch_status"] = (
+                str(patch_payload.get("status") or "").strip().lower()
+                if isinstance(patch_payload, dict)
+                else ""
+            ) or None
             merged["timestamp"] = (
                 patch_apply_event.get("timestamp")
                 if patch_apply_event is not None and patch_apply_event.get("timestamp")
@@ -1602,6 +1650,31 @@ def build_turns(
         prompt_excerpt = shorten(prompt_text, 220)
         response_excerpt = shorten(response_text, 280) if response_text else "No assistant response captured."
         agent_model, agent_effort, execution_context = turn_context_details(all_events, cwd=cwd)
+        turn_id = None
+        for candidate_event in [completion_event, abort_event, *all_events]:
+            if candidate_event is None:
+                continue
+            payload = parse_record_payload(candidate_event["record_json"])
+            if not isinstance(payload, dict):
+                continue
+            candidate_turn_id = str(payload.get("turn_id") or "").strip()
+            if candidate_turn_id:
+                turn_id = candidate_turn_id
+                break
+        abort_reason = None
+        if abort_event is not None:
+            abort_payload = parse_record_payload(abort_event["record_json"])
+            if isinstance(abort_payload, dict):
+                abort_reason = str(abort_payload.get("reason") or "").strip().lower() or None
+        latest_event_timestamp = None
+        latest_event_dt = None
+        for timestamp_value in [turn.get("prompt_timestamp"), response_timestamp, *[event["timestamp"] for event in all_events]]:
+            parsed_timestamp = parse_timestamp(str(timestamp_value or ""))
+            if parsed_timestamp is None:
+                continue
+            if latest_event_dt is None or parsed_timestamp > latest_event_dt:
+                latest_event_dt = parsed_timestamp
+                latest_event_timestamp = str(timestamp_value)
         turn_duration_seconds = task_duration_seconds(
             completion_event,
             str(turn["prompt_timestamp"]) if turn.get("prompt_timestamp") else None,
@@ -1724,6 +1797,7 @@ def build_turns(
             "prompt_segments": prompt_segments(prompt_text),
             "prompt_excerpt": prompt_excerpt,
             "prompt_timestamp": turn["prompt_timestamp"],
+            "turn_id": turn_id,
             "duration_seconds": turn_duration_seconds,
             "duration_label": humanize_duration(turn_duration_seconds) if turn_duration_seconds is not None else "",
             "agent_model": agent_model,
@@ -1732,8 +1806,10 @@ def build_turns(
             "response_text": response_text,
             "response_excerpt": response_excerpt,
             "response_timestamp": response_timestamp,
+            "latest_event_timestamp": latest_event_timestamp,
             "response_state": response_state,
             "response_label": response_label,
+            "abort_reason": abort_reason,
             "detail_events": detail_events,
             "merged_detail_events": merged_detail_events,
             "detail_entries": detail_entries,

@@ -19,6 +19,7 @@ from ...api_tokens import (
     list_api_tokens,
     revoke_api_token,
 )
+from ...action_queue import build_homepage_action_queue
 from ...db import connect, write_transaction
 from ...environment_audit import fetch_host_environment_audit
 from ...importer import sync_sessions
@@ -978,6 +979,11 @@ def index(
         )
         stats = dashboard_stats(rows)
         remotes = fetch_remote_agent_health(connection, context.settings)
+        action_queue = build_homepage_action_queue(
+            connection,
+            rows,
+            repo_groups,
+        )
 
     active_host_count, active_hosts, active_hosts_from_agents = build_active_hosts_panel(
         rows,
@@ -993,10 +999,6 @@ def index(
     repo_nav_items = build_repo_nav_items(
         repo_groups,
         group_signals,
-    )
-    error_sessions = build_error_sessions_panel(
-        rows,
-        repo_groups,
     )
     stats["active_hosts"] = active_host_count
     stats["failed_agents"] = len([remote for remote in remotes if agent_has_failure(remote)])
@@ -1019,7 +1021,7 @@ def index(
             "active_hosts": active_hosts,
             "active_hosts_from_agents": active_hosts_from_agents,
             "failed_agents": failed_agents,
-            "error_sessions": error_sessions,
+            "action_queue": action_queue,
         },
     )
 

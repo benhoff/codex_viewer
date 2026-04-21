@@ -9,6 +9,11 @@ It is optimized for the shortest path to useful output:
 - no `.env` file is required for first run
 - no token or agent daemon is required for first run
 
+Design notes:
+
+- [Action queue scoring](docs/action-queue-scoring.md)
+- [Self-hosted launch priorities](docs/selfhosted-launch-priorities.md)
+
 ## Fastest Path To Value
 
 If you want to see your own sessions in the UI as quickly as possible, start here.

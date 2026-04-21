@@ -62,13 +62,13 @@
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="text-lg font-semibold text-stone-900">Needs Attention</h2>
-            <p class="text-sm text-stone-600">Start here when something is broken, stale, or noisy.</p>
+            <p class="text-sm text-stone-600">Start here when a machine is unhealthy or a recent session still needs follow-up.</p>
           </div>
           <a href="/remotes" class="text-sm font-semibold text-stone-600 transition hover:text-stone-900">View machines</a>
         </div>
 
-        {% if failed_agents or error_sessions %}
-          <div class="mt-4 grid min-w-0 gap-4 {% if failed_agents and error_sessions %}xl:grid-cols-2{% endif %}">
+        {% if failed_agents or action_queue %}
+          <div class="mt-4 grid min-w-0 gap-4 {% if failed_agents and action_queue %}xl:grid-cols-2{% endif %}">
             <section class="min-w-0 rounded-[1.15rem] border border-rose-200 bg-rose-50/60">
               <div class="flex items-center justify-between gap-3 border-b border-rose-200/80 px-4 py-3">
                 <h3 class="text-sm font-semibold text-rose-950">Machines Needing Attention</h3>
@@ -98,24 +98,26 @@
               </div>
             </section>
 
-            {% if error_sessions %}
+            {% if action_queue %}
             <section class="min-w-0 rounded-[1.15rem] border border-amber-200 bg-amber-50/55">
               <div class="flex items-center justify-between gap-3 border-b border-amber-200/80 px-4 py-3">
-                <h3 class="text-sm font-semibold text-amber-950">Attention Sessions</h3>
+                <h3 class="text-sm font-semibold text-amber-950">Action Queue</h3>
                 <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">
-                  {{ error_sessions|length }}
+                  {{ action_queue|length }}
                 </span>
               </div>
               <div class="divide-y divide-amber-200/70">
-                {% for item in error_sessions %}
-                  <a href="{{ item.session_href }}" class="block px-4 py-3 transition hover:bg-white/50">
-                    <div class="flex items-center justify-between gap-3">
+                {% for item in action_queue %}
+                  <a href="{{ item.session_href }}" class="block min-w-0 px-4 py-3 transition hover:bg-white/50">
+                    <div class="flex min-w-0 items-center justify-between gap-3">
                       <p class="min-w-0 truncate text-sm font-semibold text-amber-950">{{ item.title }}</p>
-                      <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                      <span class="shrink-0 rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
                         {{ item.status_label }}
                       </span>
                     </div>
                     <p class="mt-1 text-xs leading-5 text-amber-900">{{ item.project_label }}</p>
+                    <p class="mt-1 break-words text-xs leading-5 text-amber-900">{{ item.status_title }}</p>
+                    <p class="mt-1 break-words text-xs leading-5 font-medium text-amber-950">{{ item.next_action }}</p>
                     <p class="mt-1 text-xs text-amber-800">
                       {{ item.host }}{% if item.timestamp %} • <span title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>{% endif %}
                     </p>
@@ -134,7 +136,7 @@
           </div>
         {% else %}
           <div class="mt-4 rounded-[1.15rem] border border-emerald-200 bg-emerald-50/80 px-4 py-4 text-sm text-emerald-900">
-            All clear right now. No machines needing attention are currently surfaced.
+            All clear right now. No machines or unresolved session actions are currently surfaced.
           </div>
         {% endif %}
       </section>
