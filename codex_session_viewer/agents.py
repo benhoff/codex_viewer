@@ -362,6 +362,17 @@ def _new_agent_entry(source_host: str, remote: dict[str, Any] | None) -> dict[st
     }
 
 
+def _has_fresh_remote_contact(remote: dict[str, Any] | None) -> bool:
+    remote = remote or {}
+    sync_mode = str(remote.get("sync_mode") or "").strip()
+    return bool(
+        trimmed(remote.get("last_seen_at"))
+        and not bool(remote.get("stale"))
+        and sync_mode
+        and sync_mode != "unknown"
+    )
+
+
 def _session_link(session_id: str) -> str:
     return f"/sessions/{quote(session_id, safe='')}"
 
@@ -586,6 +597,10 @@ def remote_health_issues(remote: dict[str, Any] | None) -> list[dict[str, object
     return issues
 
 
+def remote_needs_attention(remote: dict[str, Any] | None) -> bool:
+    return any(bool(issue.get("attention")) for issue in remote_health_issues(remote))
+
+
 def _attention_badges(entry: dict[str, Any]) -> list[dict[str, str]]:
     remote = entry.get("remote") or {}
     return [
@@ -713,7 +728,12 @@ def fetch_agents_dashboard(
             for issue in issues
         ]
         is_attention = bool(issue_badges)
-        is_dormant = bool(remote.get("stale")) or (not is_attention and int(entry["recent_turn_count"] or 0) == 0)
+        has_fresh_contact = _has_fresh_remote_contact(remote)
+        is_dormant = bool(remote.get("stale")) or (
+            not is_attention
+            and int(entry["recent_turn_count"] or 0) == 0
+            and not has_fresh_contact
+        )
         if is_attention:
             section = "attention"
             summary = issue_details[0]["detail"] if issue_details else str(remote.get("last_error") or "Needs attention")
@@ -731,10 +751,13 @@ def fetch_agents_dashboard(
         else:
             section = "active"
             project_count_24h = len(entry["projects_24h"])
-            summary = (
-                f"{int(entry['recent_turn_count'])} turns · {int(entry['recent_session_count'])} sessions · "
-                f"{project_count_24h} project{'s' if project_count_24h != 1 else ''} in the last 24h"
-            )
+            if int(entry["recent_turn_count"] or 0) == 0 and has_fresh_contact:
+                summary = "Heartbeat healthy · no recent turns in the last 24h"
+            else:
+                summary = (
+                    f"{int(entry['recent_turn_count'])} turns · {int(entry['recent_session_count'])} sessions · "
+                    f"{project_count_24h} project{'s' if project_count_24h != 1 else ''} in the last 24h"
+                )
             primary = latest_session
             primary_label = "Open latest session"
 

@@ -162,6 +162,7 @@ class Settings:
     sync_api_token: str | None
     sync_interval_seconds: int
     remote_timeout_seconds: int
+    remote_batch_size: int
     log_level: str
     source_host: str
     auth_mode: str
@@ -202,6 +203,7 @@ class Settings:
         sync_api_token = os.getenv("CODEX_VIEWER_SYNC_API_TOKEN", "").strip() or None
         sync_interval_seconds = int(os.getenv("CODEX_VIEWER_SYNC_INTERVAL", "30"))
         remote_timeout_seconds = int(os.getenv("CODEX_VIEWER_REMOTE_TIMEOUT", "15"))
+        remote_batch_size = max(1, min(int(os.getenv("CODEX_VIEWER_REMOTE_BATCH_SIZE", "25")), 25))
         log_level = os.getenv("CODEX_VIEWER_LOG_LEVEL", "info")
         source_host = os.getenv("CODEX_VIEWER_SOURCE_HOST", socket.gethostname())
         auth_mode = _normalize_auth_mode(os.getenv("CODEX_VIEWER_AUTH_MODE"))
@@ -237,6 +239,7 @@ class Settings:
             sync_api_token=sync_api_token,
             sync_interval_seconds=sync_interval_seconds,
             remote_timeout_seconds=remote_timeout_seconds,
+            remote_batch_size=remote_batch_size,
             log_level=log_level,
             source_host=source_host,
             auth_mode=auth_mode,

@@ -15,6 +15,7 @@ cmd=(
   codex_session_viewer
   serve
   --no-sync
+  "$@"
 )
 
 server_dev_reload="${CODEX_VIEWER_SERVER_DEV_RELOAD:-0}"

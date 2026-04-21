@@ -68,8 +68,8 @@
         </div>
 
         {% if failed_agents or error_sessions %}
-          <div class="mt-4 grid gap-4 {% if failed_agents and error_sessions %}xl:grid-cols-2{% endif %}">
-            <section class="rounded-[1.15rem] border border-rose-200 bg-rose-50/60">
+          <div class="mt-4 grid min-w-0 gap-4 {% if failed_agents and error_sessions %}xl:grid-cols-2{% endif %}">
+            <section class="min-w-0 rounded-[1.15rem] border border-rose-200 bg-rose-50/60">
               <div class="flex items-center justify-between gap-3 border-b border-rose-200/80 px-4 py-3">
                 <h3 class="text-sm font-semibold text-rose-950">Machines Needing Attention</h3>
                 <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
@@ -78,14 +78,14 @@
               </div>
               <div class="divide-y divide-rose-200/70">
                 {% for remote in failed_agents %}
-                  <a href="/remotes" class="block px-4 py-3 transition hover:bg-white/50">
-                    <div class="flex items-center justify-between gap-3">
+                  <a href="/remotes" class="block min-w-0 px-4 py-3 transition hover:bg-white/50">
+                    <div class="flex min-w-0 items-center justify-between gap-3">
                       <p class="min-w-0 truncate text-sm font-semibold text-rose-950">{{ remote.source_host }}</p>
-                      <span class="rounded-full bg-rose-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
-                        {{ remote.update_state }}
+                      <span class="shrink-0 rounded-full bg-rose-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
+                        {{ remote.update_state|replace('_', ' ') }}
                       </span>
                     </div>
-                    <p class="mt-1 text-xs leading-5 text-rose-900">
+                    <p class="mt-1 break-words text-xs leading-5 text-rose-900">
                       {{ remote.last_error or remote.update_message or (remote.last_fail_count ~ " failed operations") }}
                     </p>
                     <p class="mt-1 text-xs text-rose-700" title="{{ remote.last_seen_at|full_timestamp if remote.last_seen_at else '' }}">
@@ -99,7 +99,7 @@
             </section>
 
             {% if error_sessions %}
-            <section class="rounded-[1.15rem] border border-amber-200 bg-amber-50/55">
+            <section class="min-w-0 rounded-[1.15rem] border border-amber-200 bg-amber-50/55">
               <div class="flex items-center justify-between gap-3 border-b border-amber-200/80 px-4 py-3">
                 <h3 class="text-sm font-semibold text-amber-950">Attention Sessions</h3>
                 <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">

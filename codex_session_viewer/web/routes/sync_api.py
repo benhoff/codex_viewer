@@ -30,6 +30,7 @@ from ..context import get_settings
 
 
 router = APIRouter()
+RAW_SYNC_BATCH_MAX_ITEMS = 25
 
 
 @router.get("/api/health")
@@ -139,7 +140,6 @@ async def sync_session(request: Request) -> JSONResponse:
                         "inferred_project_key": parsed.inferred_project_key,
                     }
                 )
-            parsed.raw_artifact_sha256 = store_session_artifact(connection, settings, raw_jsonl)
             upsert_parsed_session(connection, parsed)
             sync_project_registry(connection)
             record_first_session_ingested(
@@ -171,13 +171,73 @@ async def sync_session_raw(request: Request) -> JSONResponse:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Raw sync payload must be an object")
 
+    header_host = request.headers.get("x-codex-viewer-host", "").strip()
+
+    parsed, raw_jsonl = _parse_raw_sync_payload(
+        payload,
+        header_host=header_host,
+    )
+
+    with connect(settings.database_path) as connection:
+        with write_transaction(connection):
+            results = store_raw_sync_sessions_batch(connection, settings, [(parsed, raw_jsonl)])
+
+    result = results[0]
+    result["mode"] = "raw"
+    return JSONResponse(result)
+
+
+@router.post("/api/sync/sessions-raw")
+async def sync_sessions_raw_batch(request: Request) -> JSONResponse:
+    require_sync_api_auth(request)
+    settings = get_settings(request)
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Raw sync batch payload must be an object")
+
+    sessions = payload.get("sessions")
+    if not isinstance(sessions, list) or not sessions:
+        raise HTTPException(status_code=400, detail="Raw sync batch payload must include a non-empty sessions list")
+    if len(sessions) > RAW_SYNC_BATCH_MAX_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Raw sync batch payload exceeded max size of {RAW_SYNC_BATCH_MAX_ITEMS}",
+        )
+
+    header_host = request.headers.get("x-codex-viewer-host", "").strip()
+    parsed_items = [_parse_raw_sync_payload(item, header_host=header_host) for item in sessions]
+
+    with connect(settings.database_path) as connection:
+        with write_transaction(connection):
+            results = store_raw_sync_sessions_batch(connection, settings, parsed_items)
+
+    return JSONResponse(
+        {
+            "status": "ok",
+            "mode": "raw_batch",
+            "results": results,
+            "processed_count": len(results),
+        }
+    )
+
+
+def _parse_raw_sync_payload(
+    payload: object,
+    *,
+    header_host: str,
+) -> tuple[object, str]:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Raw sync payload must be an object")
+
     source_host = str(payload.get("source_host") or "").strip()
     source_root = str(payload.get("source_root") or "").strip()
     source_path = str(payload.get("source_path") or "").strip()
     raw_jsonl = payload.get("raw_jsonl")
     file_size = payload.get("file_size")
     file_mtime_ns = payload.get("file_mtime_ns")
-    header_host = request.headers.get("x-codex-viewer-host", "").strip()
 
     if not source_host or not source_root or not source_path or not isinstance(raw_jsonl, str):
         raise HTTPException(status_code=400, detail="Raw sync payload is missing required fields")
@@ -197,34 +257,50 @@ async def sync_session_raw(request: Request) -> JSONResponse:
         )
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return parsed, raw_jsonl
 
-    with connect(settings.database_path) as connection:
-        with write_transaction(connection):
-            if parsed.inferred_project_key in ignored_project_keys(connection):
-                return JSONResponse(
-                    {
-                        "status": "ignored",
-                        "session_id": parsed.session_id,
-                        "source_host": parsed.source_host,
-                        "inferred_project_key": parsed.inferred_project_key,
-                    }
-                )
-            upsert_parsed_session(connection, parsed)
-            sync_project_registry(connection)
-            record_first_session_ingested(
-                connection,
-                source_host=parsed.source_host,
-                imported_at=parsed.imported_at,
+
+def store_raw_sync_sessions_batch(
+    connection,
+    settings,
+    parsed_items: list[tuple[object, str]],
+) -> list[dict[str, object]]:
+    ignored_keys = ignored_project_keys(connection)
+    project_registry_changed = False
+    results: list[dict[str, object]] = []
+
+    for parsed, raw_jsonl in parsed_items:
+        if parsed.inferred_project_key in ignored_keys:
+            results.append(
+                {
+                    "status": "ignored",
+                    "session_id": parsed.session_id,
+                    "source_host": parsed.source_host,
+                    "inferred_project_key": parsed.inferred_project_key,
+                }
             )
-            reconcile_onboarding_state(connection, settings)
+            continue
 
-    return JSONResponse(
-        {
-            "status": "ok",
-            "mode": "raw",
-            "session_id": parsed.session_id,
-            "source_host": parsed.source_host,
-            "event_count": parsed.event_count,
-            "content_sha256": parsed.content_sha256,
-        }
-    )
+        parsed.raw_artifact_sha256 = store_session_artifact(connection, settings, raw_jsonl)
+        upsert_parsed_session(connection, parsed)
+        record_first_session_ingested(
+            connection,
+            source_host=parsed.source_host,
+            imported_at=parsed.imported_at,
+        )
+        project_registry_changed = True
+        results.append(
+            {
+                "status": "ok",
+                "session_id": parsed.session_id,
+                "source_host": parsed.source_host,
+                "event_count": parsed.event_count,
+                "content_sha256": parsed.content_sha256,
+            }
+        )
+
+    if project_registry_changed:
+        sync_project_registry(connection)
+        reconcile_onboarding_state(connection, settings)
+
+    return results

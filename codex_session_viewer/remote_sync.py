@@ -153,6 +153,10 @@ def upload_raw_session(settings: Settings, payload: dict[str, object]) -> dict[s
     return json_request(settings, "POST", "/api/sync/session-raw", payload)
 
 
+def upload_raw_sessions_batch(settings: Settings, payloads: list[dict[str, object]]) -> dict[str, Any]:
+    return json_request(settings, "POST", "/api/sync/sessions-raw", {"sessions": payloads})
+
+
 def send_remote_heartbeat(
     settings: Settings,
     *,
@@ -274,6 +278,8 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
     failed = 0
     last_failed_source_path: str | None = None
     last_failure_detail: str | None = None
+    pending_uploads: list[tuple[dict[str, object], str, Path, str]] = []
+    batch_uploads_enabled = settings.remote_batch_size > 1
     compatibility = evaluate_server_compatibility(settings, server_meta)
     resend_raw_action = actions.get("resend_raw") if isinstance(actions.get("resend_raw"), dict) else None
     raw_resend_token = (
@@ -322,6 +328,65 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
         )
         return {"uploaded": 0, "skipped": 0, "failed": 0}
 
+    def handle_upload_response(
+        response: dict[str, Any],
+        *,
+        session_id: str,
+        path: Path,
+        reason: str,
+    ) -> None:
+        nonlocal uploaded, skipped
+        status = str(response.get("status") or "").strip().lower() or "ok"
+        if status == "ignored":
+            skipped += 1
+            logger.info("Skipped ignored session %s from %s (%s)", session_id, path, reason)
+            return
+        if status != "ok":
+            raise RemoteSyncError(f"Remote sync response had unexpected status {status!r}")
+        uploaded += 1
+        logger.info("Uploaded session %s from %s (%s)", session_id, path, reason)
+
+    def upload_single_pending(item: tuple[dict[str, object], str, Path, str]) -> None:
+        payload, session_id, path, reason = item
+        response = upload_raw_session(settings, payload)
+        handle_upload_response(response, session_id=session_id, path=path, reason=reason)
+
+    def flush_pending_uploads() -> None:
+        nonlocal failed, last_failed_source_path, last_failure_detail, batch_uploads_enabled
+        if not pending_uploads:
+            return
+
+        batch = list(pending_uploads)
+        pending_uploads.clear()
+
+        if batch_uploads_enabled and len(batch) > 1:
+            try:
+                response = upload_raw_sessions_batch(settings, [item[0] for item in batch])
+                results = response.get("results")
+                if not isinstance(results, list) or len(results) != len(batch):
+                    raise RemoteSyncError("Remote batch sync response was missing per-session results")
+                for result, item in zip(results, batch):
+                    _, session_id, path, reason = item
+                    if not isinstance(result, dict):
+                        raise RemoteSyncError("Remote batch sync response contained an invalid item")
+                    handle_upload_response(result, session_id=session_id, path=path, reason=reason)
+                return
+            except Exception as exc:
+                batch_uploads_enabled = False
+                logger.warning(
+                    "Batch upload failed; retrying sessions individually for the rest of this pass: %s",
+                    exception_summary(exc),
+                )
+
+        for item in batch:
+            try:
+                upload_single_pending(item)
+            except Exception as exc:
+                failed += 1
+                last_failed_source_path = str(item[2])
+                last_failure_detail = exception_summary(exc)
+                logger.exception("Failed to upload session from %s", item[2])
+
     for source_root, path in iter_session_files(settings.session_roots):
         stat = path.stat()
         cached_parse_error = INVALID_SESSION_CACHE.get(
@@ -344,18 +409,21 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
                 if parsed.inferred_project_key in ignored_keys:
                     skipped += 1
                     continue
-                response = upload_raw_session(
-                    settings,
-                    build_raw_upload_payload(
-                        settings,
-                        source_root=source_root,
-                        path=path,
-                        raw_jsonl=raw_jsonl,
-                        file_size=stat.st_size,
-                        file_mtime_ns=stat.st_mtime_ns,
-                    ),
+                pending_uploads.append(
+                    (
+                        build_raw_upload_payload(
+                            settings,
+                            source_root=source_root,
+                            path=path,
+                            raw_jsonl=raw_jsonl,
+                            file_size=stat.st_size,
+                            file_mtime_ns=stat.st_mtime_ns,
+                        ),
+                        parsed.session_id,
+                        path,
+                        f"raw-resend:{raw_resend_token}",
+                    )
                 )
-                reason = f"raw-resend:{raw_resend_token}"
             else:
                 needs_upload, reason = remote_entry_needs_upload(
                     manifest.get(str(path)),
@@ -380,22 +448,23 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
                 if parsed.inferred_project_key in ignored_keys:
                     skipped += 1
                     continue
-                response = upload_raw_session(
-                    settings,
-                    build_raw_upload_payload(
-                        settings,
-                        source_root=source_root,
-                        path=path,
-                        raw_jsonl=raw_jsonl,
-                        file_size=stat.st_size,
-                        file_mtime_ns=stat.st_mtime_ns,
-                    ),
+                pending_uploads.append(
+                    (
+                        build_raw_upload_payload(
+                            settings,
+                            source_root=source_root,
+                            path=path,
+                            raw_jsonl=raw_jsonl,
+                            file_size=stat.st_size,
+                            file_mtime_ns=stat.st_mtime_ns,
+                        ),
+                        parsed.session_id,
+                        path,
+                        reason,
+                    )
                 )
-            if response.get("status") == "ignored":
-                skipped += 1
-                continue
-            uploaded += 1
-            logger.info("Uploaded session %s from %s (%s)", parsed.session_id, path, reason)
+            if len(pending_uploads) >= settings.remote_batch_size:
+                flush_pending_uploads()
         except SessionParseError as exc:
             skipped += 1
             remember_invalid_session(path, stat.st_size, stat.st_mtime_ns, str(exc))
@@ -405,6 +474,8 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
             last_failed_source_path = str(path)
             last_failure_detail = exception_summary(exc)
             logger.exception("Failed to upload session from %s", path)
+
+    flush_pending_uploads()
 
     stats = {"uploaded": uploaded, "skipped": skipped, "failed": failed}
     sync_completed_at = utc_now_iso()

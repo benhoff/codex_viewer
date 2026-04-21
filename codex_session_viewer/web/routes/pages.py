@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from ...agents import (
     fetch_agents_dashboard,
     fetch_remote_agent_health,
+    remote_needs_attention,
     request_remote_raw_resend,
 )
 from ...api_tokens import (
@@ -86,13 +87,6 @@ from ..forms import parse_form_fields
 
 
 router = APIRouter()
-
-
-FAILED_AGENT_STATES = {
-    "protocol_mismatch",
-    "manual_update_required",
-    "update_failed",
-}
 
 
 def guided_setup_required(
@@ -321,13 +315,7 @@ def queue_action_response(
 
 
 def agent_has_failure(remote: dict[str, object]) -> bool:
-    return bool(
-        int(remote.get("last_fail_count") or 0) > 0
-        or remote.get("last_error")
-        or remote.get("api_mismatch")
-        or remote.get("version_mismatch")
-        or str(remote.get("update_state") or "").strip() in FAILED_AGENT_STATES
-    )
+    return remote_needs_attention(remote)
 
 
 def build_active_hosts_panel(

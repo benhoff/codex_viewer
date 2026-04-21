@@ -14,7 +14,7 @@ from .session_insights import compute_usage_rollup, default_usage_rollup
 from .text_utils import shorten, strip_codex_wrappers
 
 
-ROLLUP_VERSION = 3
+ROLLUP_VERSION = 4
 TURN_ACTIVITY_ROLLUP_VERSION = 1
 
 

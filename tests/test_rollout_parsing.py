@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from codex_session_viewer import SYNC_API_VERSION, __version__
 from codex_session_viewer.git_utils import infer_project_identity
 from codex_session_viewer.config import Settings
 from codex_session_viewer.db import connect, init_db, write_transaction
@@ -20,6 +21,7 @@ from codex_session_viewer.importer import (
     sync_sessions,
     upsert_parsed_session,
 )
+from codex_session_viewer.remote_sync import RemoteSyncError, sync_sessions_remote
 from codex_session_viewer.projects import (
     build_project_access_context,
     effective_project_fields,
@@ -28,6 +30,7 @@ from codex_session_viewer.projects import (
 from codex_session_viewer.session_status import is_task_complete, terminal_turn_summary
 from codex_session_viewer.session_artifacts import store_session_artifact
 from codex_session_viewer.session_view import build_turns
+from codex_session_viewer.web.routes.sync_api import store_raw_sync_sessions_batch
 
 
 def make_record_json(payload: dict[str, object], *, record_type: str = "response_item") -> str:
@@ -65,6 +68,114 @@ def message_event(
         "exit_code": None,
         "record_json": make_record_json(payload),
     }
+
+
+def make_raw_session_jsonl(
+    session_id: str,
+    *,
+    cwd: str = "/workspace/repo",
+    user_message: str | None = None,
+) -> str:
+    return "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": session_id,
+                        "timestamp": "2026-04-20T03:19:14Z",
+                        "cwd": cwd,
+                        "originator": "tester",
+                        "cli_version": "1.0.0",
+                        "source": "cli",
+                        "model_provider": "openai",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-04-20T03:19:15Z",
+                    "payload": {
+                        "type": "user_message",
+                        "message": user_message or f"Investigate {session_id}.",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-04-20T03:19:16Z",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "model_context_window": 128000,
+                            "total_token_usage": {
+                                "input_tokens": 1000,
+                                "cached_input_tokens": 0,
+                                "output_tokens": 100,
+                                "reasoning_output_tokens": 0,
+                                "total_tokens": 1100,
+                            },
+                            "last_token_usage": {
+                                "input_tokens": 1000,
+                                "cached_input_tokens": 0,
+                                "output_tokens": 100,
+                                "reasoning_output_tokens": 0,
+                                "total_tokens": 1100,
+                            },
+                        },
+                    },
+                }
+            ),
+        ]
+    )
+
+
+def make_test_settings(
+    *,
+    data_dir: Path,
+    session_roots: list[Path],
+    source_host: str = "test-host",
+    remote_batch_size: int = 25,
+) -> Settings:
+    return Settings(
+        project_root=Path.cwd(),
+        environment_name="test",
+        data_dir=data_dir,
+        database_path=data_dir / "viewer.sqlite3",
+        session_roots=session_roots,
+        sync_mode="remote",
+        app_version=__version__,
+        sync_api_version=SYNC_API_VERSION,
+        expected_agent_version=__version__,
+        agent_update_command=None,
+        daemon_rebuild_on_start=False,
+        sync_on_start=False,
+        page_size=24,
+        alerts_enabled=False,
+        alerts_provider="webhook",
+        alerts_webhook_url=None,
+        alerts_realert_minutes=60,
+        alerts_send_resolutions=True,
+        server_host="127.0.0.1",
+        server_port=8000,
+        server_base_url="http://127.0.0.1:8000",
+        sync_api_token="test-token",
+        sync_interval_seconds=30,
+        remote_timeout_seconds=15,
+        remote_batch_size=remote_batch_size,
+        log_level="info",
+        source_host=source_host,
+        auth_mode="none",
+        session_secret=None,
+        auth_proxy_user_header="X-Forwarded-User",
+        auth_proxy_name_header="X-Forwarded-Name",
+        auth_proxy_email_header="X-Forwarded-Email",
+        auth_proxy_login_url=None,
+        auth_proxy_logout_url=None,
+        auth_cookie_secure=False,
+    )
 
 
 class RolloutParsingTests(unittest.TestCase):
@@ -705,6 +816,129 @@ class RolloutParsingTests(unittest.TestCase):
                     "git:bitbucket.org/finderscope/book-match-service",
                 )
 
+    def test_store_raw_sync_sessions_batch_persists_sessions_and_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            settings = make_test_settings(data_dir=data_dir, session_roots=[Path(tmpdir) / "sessions"])
+            init_db(settings.database_path)
+
+            raw_items: list[tuple[object, str]] = []
+            for session_id in ("batch-session-1", "batch-session-2"):
+                raw_jsonl = make_raw_session_jsonl(session_id)
+                parsed = parse_session_text(
+                    raw_jsonl,
+                    Path(f"/tmp/{session_id}.jsonl"),
+                    Path("/tmp"),
+                    "remote-host",
+                    file_size=len(raw_jsonl.encode("utf-8")),
+                    file_mtime_ns=0,
+                )
+                raw_items.append((parsed, raw_jsonl))
+
+            with connect(settings.database_path) as connection:
+                with write_transaction(connection):
+                    results = store_raw_sync_sessions_batch(connection, settings, raw_items)
+                session_count = connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+                artifact_count = connection.execute("SELECT COUNT(*) FROM session_artifacts").fetchone()[0]
+
+        self.assertEqual([result["status"] for result in results], ["ok", "ok"])
+        self.assertEqual(session_count, 2)
+        self.assertEqual(artifact_count, 2)
+
+    def test_sync_sessions_remote_batches_raw_uploads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_root = Path(tmpdir) / "sessions"
+            session_root.mkdir(parents=True, exist_ok=True)
+            for session_id in ("remote-batch-1", "remote-batch-2", "remote-batch-3"):
+                (session_root / f"{session_id}.jsonl").write_text(
+                    make_raw_session_jsonl(session_id),
+                    encoding="utf-8",
+                )
+
+            settings = make_test_settings(
+                data_dir=Path(tmpdir) / "data",
+                session_roots=[session_root],
+                remote_batch_size=2,
+            )
+            calls: list[tuple[str, str, object | None]] = []
+
+            def fake_json_request(
+                _settings: Settings,
+                method: str,
+                path: str,
+                payload: dict[str, object] | None = None,
+            ) -> dict[str, object]:
+                calls.append((method, path, payload))
+                if path == "/api/sync/sessions-raw":
+                    sessions = payload.get("sessions") if isinstance(payload, dict) else None
+                    assert isinstance(sessions, list)
+                    return {"status": "ok", "results": [{"status": "ok"} for _ in sessions]}
+                if path == "/api/sync/session-raw":
+                    return {"status": "ok"}
+                if path == "/api/sync/heartbeat":
+                    return {"status": "ok"}
+                raise AssertionError(f"Unexpected request path: {path}")
+
+            with mock.patch("codex_session_viewer.remote_sync.json_request", side_effect=fake_json_request):
+                stats = sync_sessions_remote(settings, force=True)
+
+        batch_calls = [call for call in calls if call[1] == "/api/sync/sessions-raw"]
+        single_calls = [call for call in calls if call[1] == "/api/sync/session-raw"]
+        heartbeat_calls = [call for call in calls if call[1] == "/api/sync/heartbeat"]
+
+        self.assertEqual(stats, {"uploaded": 3, "skipped": 0, "failed": 0})
+        self.assertEqual(len(batch_calls), 1)
+        self.assertEqual(len(single_calls), 1)
+        self.assertEqual(len(heartbeat_calls), 1)
+        self.assertEqual(len(batch_calls[0][2]["sessions"]), 2)
+
+    def test_sync_sessions_remote_falls_back_to_single_uploads_when_batch_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_root = Path(tmpdir) / "sessions"
+            session_root.mkdir(parents=True, exist_ok=True)
+            for session_id in ("remote-fallback-1", "remote-fallback-2", "remote-fallback-3"):
+                (session_root / f"{session_id}.jsonl").write_text(
+                    make_raw_session_jsonl(session_id),
+                    encoding="utf-8",
+                )
+
+            settings = make_test_settings(
+                data_dir=Path(tmpdir) / "data",
+                session_roots=[session_root],
+                remote_batch_size=2,
+            )
+            calls: list[tuple[str, str, object | None]] = []
+            batch_attempted = False
+
+            def fake_json_request(
+                _settings: Settings,
+                method: str,
+                path: str,
+                payload: dict[str, object] | None = None,
+            ) -> dict[str, object]:
+                nonlocal batch_attempted
+                calls.append((method, path, payload))
+                if path == "/api/sync/sessions-raw":
+                    batch_attempted = True
+                    raise RemoteSyncError("404 Not Found")
+                if path == "/api/sync/session-raw":
+                    return {"status": "ok"}
+                if path == "/api/sync/heartbeat":
+                    return {"status": "ok"}
+                raise AssertionError(f"Unexpected request path: {path}")
+
+            with mock.patch("codex_session_viewer.remote_sync.json_request", side_effect=fake_json_request):
+                stats = sync_sessions_remote(settings, force=True)
+
+        batch_calls = [call for call in calls if call[1] == "/api/sync/sessions-raw"]
+        single_calls = [call for call in calls if call[1] == "/api/sync/session-raw"]
+
+        self.assertTrue(batch_attempted)
+        self.assertEqual(stats, {"uploaded": 3, "skipped": 0, "failed": 0})
+        self.assertEqual(len(batch_calls), 1)
+        self.assertEqual(len(single_calls), 3)
+
     def test_parse_session_text_extracts_agent_lineage_and_usage_pressure(self) -> None:
         raw_jsonl = "\n".join(
             [
@@ -792,6 +1026,75 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(parsed.latest_context_remaining_percent, 74)
         self.assertAlmostEqual(parsed.latest_primary_limit_used_percent or 0.0, 82.4)
         self.assertEqual(parsed.latest_rate_limit_name, "requests")
+
+    def test_parse_session_text_uses_last_token_usage_for_context_pressure(self) -> None:
+        raw_jsonl = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "agent-usage-last-token-session",
+                            "timestamp": "2026-04-20T03:19:14Z",
+                            "cwd": "/workspace/repo",
+                            "originator": "tester",
+                            "cli_version": "1.0.0",
+                            "source": "cli",
+                            "model_provider": "openai",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:15Z",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "Compute context pressure from the latest request.",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:16Z",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "model_context_window": 258400,
+                                "total_token_usage": {
+                                    "input_tokens": 626588,
+                                    "cached_input_tokens": 575488,
+                                    "output_tokens": 4709,
+                                    "reasoning_output_tokens": 1770,
+                                    "total_tokens": 631297,
+                                },
+                                "last_token_usage": {
+                                    "input_tokens": 73245,
+                                    "cached_input_tokens": 72960,
+                                    "output_tokens": 143,
+                                    "reasoning_output_tokens": 21,
+                                    "total_tokens": 73388,
+                                },
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+
+        parsed = parse_session_text(
+            raw_jsonl,
+            Path("/tmp/agent-usage-last-token-session.jsonl"),
+            Path("/tmp"),
+            "local-host",
+            file_size=len(raw_jsonl.encode("utf-8")),
+            file_mtime_ns=0,
+        )
+
+        self.assertEqual(parsed.latest_total_tokens, 631297)
+        self.assertEqual(parsed.latest_context_window, 258400)
+        self.assertEqual(parsed.latest_context_remaining_percent, 75)
 
     def test_parsed_session_from_payload_backfills_lineage_and_usage_from_older_payloads(self) -> None:
         raw_jsonl = "\n".join(
@@ -885,7 +1188,7 @@ class RolloutParsingTests(unittest.TestCase):
 
         restored = parsed_session_from_payload(payload)
 
-        self.assertEqual(restored.rollup_version, 3)
+        self.assertEqual(restored.rollup_version, 4)
         self.assertEqual(restored.forked_from_id, "parent-session")
         self.assertEqual(restored.agent_role, "explorer")
         self.assertEqual(restored.agent_path, "root/explorer-1")

@@ -139,6 +139,17 @@ def _context_remaining_percent(total_tokens: int, context_window: int | None) ->
     return round((remaining / effective_window) * 100.0)
 
 
+def _context_usage_total_tokens(info: dict[str, Any], fallback_total_tokens: int | None) -> int | None:
+    # `total_token_usage` is cumulative across the whole session and quickly exceeds
+    # the model window on long rollouts. For context pressure we want the latest
+    # request footprint when Codex provides it.
+    last_usage = info.get("last_token_usage") if isinstance(info.get("last_token_usage"), dict) else {}
+    last_total_tokens = coerce_int(last_usage.get("total_tokens"))
+    if last_total_tokens is not None:
+        return last_total_tokens
+    return fallback_total_tokens
+
+
 def compute_usage_rollup(
     events: list[sqlite3.Row | dict[str, Any] | object],
 ) -> dict[str, Any]:
@@ -164,6 +175,7 @@ def compute_usage_rollup(
         reasoning_output_tokens = coerce_int(total_usage.get("reasoning_output_tokens"))
         total_tokens = coerce_int(total_usage.get("total_tokens"))
         context_window = coerce_int(info.get("model_context_window"))
+        context_usage_total_tokens = _context_usage_total_tokens(info, total_tokens)
 
         if input_tokens is not None:
             usage["latest_input_tokens"] = input_tokens
@@ -179,7 +191,7 @@ def compute_usage_rollup(
             usage["latest_context_window"] = context_window
 
         usage["latest_context_remaining_percent"] = _context_remaining_percent(
-            int(usage["latest_total_tokens"] or 0),
+            int(context_usage_total_tokens if context_usage_total_tokens is not None else (usage["latest_total_tokens"] or 0)),
             coerce_int(usage["latest_context_window"]),
         )
 
