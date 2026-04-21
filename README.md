@@ -61,6 +61,7 @@ docker compose up --build -d
 
 `compose.yml` starts in `remote` sync mode, serves the UI on port `8000`, and defaults browser auth to `password`.
 If you want to hand auth off to a trusted proxy instead, set `CODEX_VIEWER_AUTH_MODE=proxy`.
+Concrete reverse-proxy examples live in [deploy/proxy](deploy/proxy).
 
 Then open the viewer, finish `/setup`, create a sync token, and connect an agent host.
 
@@ -179,6 +180,13 @@ CODEX_VIEWER_AUTH_PROXY_NAME_HEADER=X-Forwarded-Name
 CODEX_VIEWER_AUTH_PROXY_EMAIL_HEADER=X-Forwarded-Email
 ```
 
+Concrete proxy examples:
+
+- [Caddy + Authentik](deploy/proxy/Caddyfile.authentik.example)
+- [Traefik + Authelia middleware](deploy/proxy/traefik.authelia.dynamic.yml.example)
+- [Traefik viewer labels](deploy/proxy/traefik.authelia.viewer-compose.example.yml)
+- [Reverse-proxy setup notes](deploy/proxy/README.md)
+
 If auth is enabled and no admin exists yet, the first visit will route through `/setup` so the initial admin can be created or claimed.
 
 ## Docker
@@ -191,6 +199,7 @@ Defaults in [compose.yml](compose.yml):
 - SQLite persisted in the `viewer-data` Docker volume
 - viewer served on port `8000`
 - browser auth defaults to `password`
+- Docker health is exposed through an explicit Compose `healthcheck:` hitting `/api/health`
 
 The Docker build now compiles Tailwind inside the image, so the host does not need Node for the container path.
 

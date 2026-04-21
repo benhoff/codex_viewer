@@ -1,0 +1,10 @@
+http:
+  middlewares:
+    authelia-viewer-auth:
+      forwardAuth:
+        address: http://authelia:9091/api/authz/forward-auth
+        trustForwardHeader: true
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Name
+          - Remote-Email

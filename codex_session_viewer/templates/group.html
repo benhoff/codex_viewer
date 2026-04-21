@@ -63,7 +63,7 @@
               </span>
             </summary>
             <div class="absolute left-0 z-20 mt-2 flex min-w-[10rem] flex-wrap gap-2 rounded-[1rem] border border-stone-200 bg-white/95 p-3 shadow-[0_18px_45px_-30px_rgba(41,37,36,0.24)]">
-              <form method="post" action="/projects/actions" onsubmit="return confirm('Delete this repo and all imported sessions from the viewer?');">
+              <form method="post" action="/projects/actions" onsubmit="return confirm('Delete this project and all imported sessions from the viewer?');">
                 <input type="hidden" name="group_key" value="{{ group.key }}">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="return_to" value="/">
@@ -95,7 +95,7 @@
         <aside class="rounded-[1.2rem] border p-4 {% if primary_status_tone == 'rose' %}border-rose-200 bg-rose-50/85{% elif primary_status_tone == 'amber' %}border-amber-200 bg-amber-50/85{% elif primary_status_tone == 'emerald' %}border-emerald-200 bg-emerald-50/85{% else %}border-stone-200 bg-stone-50/85{% endif %}">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] {% if primary_status_tone == 'rose' %}text-rose-700{% elif primary_status_tone == 'amber' %}text-amber-700{% elif primary_status_tone == 'emerald' %}text-emerald-700{% else %}text-stone-600{% endif %}">Current repo state</p>
+              <p class="text-[0.7rem] font-semibold uppercase tracking-[0.18em] {% if primary_status_tone == 'rose' %}text-rose-700{% elif primary_status_tone == 'amber' %}text-amber-700{% elif primary_status_tone == 'emerald' %}text-emerald-700{% else %}text-stone-600{% endif %}">Current project state</p>
               <div class="mt-2 flex flex-wrap items-center gap-2">
                 <span class="rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if primary_status_tone == 'rose' %}bg-white text-rose-700{% elif primary_status_tone == 'amber' %}bg-white text-amber-700{% elif primary_status_tone == 'emerald' %}bg-white text-emerald-700{% else %}bg-white text-stone-700{% endif %}">
                   {{ primary_status_label }}
@@ -116,13 +116,13 @@
               </a>
             {% endif %}
           </div>
-          <p class="mt-3 text-sm font-semibold leading-6 text-stone-900">{{ primary_status_title or 'No unresolved repo blockers right now.' }}</p>
+          <p class="mt-3 text-sm font-semibold leading-6 text-stone-900">{{ primary_status_title or 'No unresolved project blockers right now.' }}</p>
           {% if primary_next_action %}
             <p class="mt-2 text-sm leading-6 text-stone-700">
               <span class="font-semibold text-stone-900">Next:</span> {{ primary_next_action }}
             </p>
           {% elif not primary_blocker %}
-            <p class="mt-2 text-sm leading-6 text-stone-600">No high-confidence repo blockers are currently surfaced for this project.</p>
+            <p class="mt-2 text-sm leading-6 text-stone-600">No high-confidence project blockers are currently surfaced for this project.</p>
           {% endif %}
         </aside>
       </div>
@@ -133,7 +133,7 @@
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Recent Turns</h2>
-            <p class="mt-1 text-sm text-stone-600">The newest work across this repo, sorted by time instead of session.</p>
+            <p class="mt-1 text-sm text-stone-600">The newest work across this project, sorted by time instead of session.</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-700">
@@ -255,7 +255,7 @@
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Sessions</h2>
-            <p class="mt-1 text-sm text-stone-600">The latest session threads for this repo, with pagination for deeper history.</p>
+            <p class="mt-1 text-sm text-stone-600">The latest session threads for this project, with pagination for deeper history.</p>
           </div>
           <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-700">
             {% if all_sessions_page.showing_from %}
@@ -334,7 +334,7 @@
           </div>
         {% else %}
           <div class="mt-5 rounded-[1.2rem] border border-dashed border-stone-900/15 bg-white/70 p-6 text-sm text-stone-600">
-            No sessions are available for this repo yet.
+            No sessions are available for this project yet.
           </div>
         {% endif %}
       </aside>
@@ -343,7 +343,7 @@
     <section id="repo-blockers" class="mb-8">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Repo Blockers</h2>
+          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Project Blockers</h2>
           <p class="mt-1 text-sm text-stone-600">Current unresolved blocker groups, ordered by severity and freshness.</p>
         </div>
         <div class="flex flex-wrap gap-2">
@@ -456,7 +456,7 @@
         </div>
       {% else %}
         <div class="rounded-[1.2rem] border border-emerald-200 bg-emerald-50/80 px-4 py-4 text-sm text-emerald-900">
-          No unresolved repo blockers are currently surfaced for this project.
+          No unresolved project blockers are currently surfaced for this project.
         </div>
       {% endif %}
     </section>

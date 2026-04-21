@@ -48,10 +48,10 @@ def normalize_page_size(raw: object) -> int:
     try:
         value = int(str(raw).strip())
     except (TypeError, ValueError) as exc:
-        raise ValueError("Home page repo limit must be a whole number.") from exc
+        raise ValueError("Home page project limit must be a whole number.") from exc
     if value < MIN_PAGE_SIZE or value > MAX_PAGE_SIZE:
         raise ValueError(
-            f"Home page repo limit must be between {MIN_PAGE_SIZE} and {MAX_PAGE_SIZE}."
+            f"Home page project limit must be between {MIN_PAGE_SIZE} and {MAX_PAGE_SIZE}."
         )
     return value
 

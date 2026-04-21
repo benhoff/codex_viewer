@@ -529,7 +529,7 @@ def build_repo_action_signal_map(
         if status_title:
             detail_parts.append(status_title)
         if blocker_count > 1:
-            detail_parts.append(f"{blocker_count} unresolved repo blockers")
+            detail_parts.append(f"{blocker_count} unresolved project blockers")
         repo_priority = _repo_issue_priority(primary)
         issue_kind = str(primary.get("issue_kind") or "")
         status_tone = str(primary.get("status_tone") or "amber")

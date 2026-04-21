@@ -112,7 +112,7 @@ FAILURE_CLASS_META = {
     "auth_failure": {"label": "Auth / credentials", "tone": "amber", "guidance": "Auth"},
     "timeout": {"label": "Timeout", "tone": "amber", "guidance": "Runtime"},
     "network_failure": {"label": "Network failure", "tone": "amber", "guidance": "Access"},
-    "repo_state_missing": {"label": "Repo setup", "tone": "stone", "guidance": "Repo setup"},
+    "repo_state_missing": {"label": "Project setup", "tone": "stone", "guidance": "Project setup"},
     "unknown": {"label": "Other failure", "tone": "stone", "guidance": "Inspect"},
 }
 
@@ -1388,7 +1388,7 @@ def _build_install_guidance(signals: list[dict[str, Any]]) -> list[dict[str, Any
     guidance: list[dict[str, Any]] = []
     for signal in signals:
         status = str(signal["status"])
-        label = "Blocked by access" if status == "blocked" else ("Required" if status == "missing" else "Repo-specific")
+        label = "Blocked by access" if status == "blocked" else ("Required" if status == "missing" else "Project-specific")
         guidance.append(
             {
                 "subject_label": signal["subject_label"],

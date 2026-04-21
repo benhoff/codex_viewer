@@ -742,7 +742,7 @@ def fetch_agents_dashboard(
         elif is_dormant:
             section = "dormant"
             summary = (
-                f"Last repo {latest_session['project_label']}"
+                f"Last project {latest_session['project_label']}"
                 if latest_session
                 else "No recent session activity"
             )
@@ -761,7 +761,7 @@ def fetch_agents_dashboard(
             primary = latest_session
             primary_label = "Open latest session"
 
-        latest_repo = latest_session["project_label"] if latest_session else "No repo yet"
+        latest_repo = latest_session["project_label"] if latest_session else "No project yet"
         latest_repo_href = latest_session["project_href"] if latest_session else ""
         row_item = {
             "source_host": source_host,

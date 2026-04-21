@@ -10,11 +10,11 @@
           Back to projects
         </a>
         <a href="{{ group_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
-          Back to repo
+          Back to project
         </a>
         {% if edit_href %}
         <a href="{{ edit_href }}" class="inline-flex items-center rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-700">
-          Edit repo
+          Edit project
         </a>
         {% endif %}
         <a href="{{ request.url.path }}/export/bundle" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">

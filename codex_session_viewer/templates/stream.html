@@ -10,7 +10,7 @@
           Back to projects
         </a>
         <a href="{{ stream_project.detail_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
-          Back to repo
+          Back to project
         </a>
       </div>
     </div>
@@ -21,7 +21,7 @@
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Cross-session turn stream</p>
           <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">{{ stream_project.display_label }}</h1>
           <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
-            All turns across every session in this repo, newest first.
+            All turns across every session in this project, newest first.
           </p>
         </div>
 
@@ -56,7 +56,7 @@
       <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Turn Stream</h2>
-          <p class="mt-1 text-sm text-stone-600">Cross-session activity for this repo.</p>
+          <p class="mt-1 text-sm text-stone-600">Cross-session activity for this project.</p>
         </div>
         <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">
           {% if stream_data.showing_from %}

@@ -19,6 +19,16 @@ services:
       CODEX_VIEWER_AUTH_PROXY_LOGIN_URL: ${CODEX_VIEWER_AUTH_PROXY_LOGIN_URL:-}
       CODEX_VIEWER_AUTH_PROXY_LOGOUT_URL: ${CODEX_VIEWER_AUTH_PROXY_LOGOUT_URL:-}
       CODEX_VIEWER_AUTH_COOKIE_SECURE: ${CODEX_VIEWER_AUTH_COOKIE_SECURE:-0}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import json,urllib.request; json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3))
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     volumes:
       - viewer-data:/app/data
 

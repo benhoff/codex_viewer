@@ -10,7 +10,7 @@
           Back to projects
         </a>
         <a href="{{ audit.group.detail_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
-          Back to repo
+          Back to project
         </a>
       </div>
     </div>
@@ -21,7 +21,7 @@
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Project Environment Audit</p>
           <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">{{ audit.group.display_label }}</h1>
           <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
-            What this repo appears to need, which hosts have been a good fit, and which command exits look like install, auth, access, or repo-setup problems.
+            What this project appears to need, which hosts have been a good fit, and which command exits look like install, auth, access, or project-setup problems.
           </p>
         </div>
 
@@ -60,7 +60,7 @@
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Observed Requirements</h2>
-            <p class="mt-1 text-sm text-stone-600">What the agent actually reached for while working in this repo.</p>
+            <p class="mt-1 text-sm text-stone-600">What the agent actually reached for while working in this project.</p>
           </div>
           <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">{{ audit.requirements|length }} items</p>
         </div>
@@ -98,7 +98,7 @@
             </div>
           {% else %}
             <div class="rounded-[1.2rem] border border-dashed border-stone-900/15 bg-stone-50/60 p-6 text-sm text-stone-600">
-              No environment requirements have been inferred yet for this repo.
+              No environment requirements have been inferred yet for this project.
             </div>
           {% endfor %}
         </div>
@@ -108,7 +108,7 @@
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Host Fit</h2>
-            <p class="mt-1 text-sm text-stone-600">Which machines look ready for this repo’s current workload.</p>
+            <p class="mt-1 text-sm text-stone-600">Which machines look ready for this project’s current workload.</p>
           </div>
         </div>
         <div class="mt-5 space-y-3">
@@ -155,7 +155,7 @@
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Command Exit Hotspots</h2>
-            <p class="mt-1 text-sm text-stone-600">The repeat exit patterns this repo runs into most often.</p>
+            <p class="mt-1 text-sm text-stone-600">The repeat exit patterns this project runs into most often.</p>
           </div>
         </div>
         <div class="mt-5 space-y-3">
@@ -188,7 +188,7 @@
             </div>
           {% else %}
             <div class="rounded-[1.2rem] border border-emerald-200 bg-emerald-50/80 p-6 text-sm text-emerald-900">
-              No recurring command exits have been inferred for this repo yet.
+              No recurring command exits have been inferred for this project yet.
             </div>
           {% endfor %}
         </div>
@@ -223,7 +223,7 @@
             </div>
           {% else %}
             <div class="rounded-[1.2rem] border border-emerald-200 bg-emerald-50/80 p-6 text-sm text-emerald-900">
-              No host-specific setup blockers are currently surfaced for this repo.
+              No host-specific setup blockers are currently surfaced for this project.
             </div>
           {% endfor %}
         </div>
@@ -234,7 +234,7 @@
       <div class="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Recent Evidence</h2>
-          <p class="mt-1 text-sm text-stone-600">Recent commands that shaped the repo environment audit.</p>
+          <p class="mt-1 text-sm text-stone-600">Recent commands that shaped the project environment audit.</p>
         </div>
       </div>
       <div class="mt-5 space-y-3">
@@ -260,7 +260,7 @@
           </a>
         {% else %}
           <div class="rounded-[1.2rem] border border-dashed border-stone-900/15 bg-stone-50/60 p-6 text-sm text-stone-600">
-            No recent command evidence is available yet for this repo.
+            No recent command evidence is available yet for this project.
           </div>
         {% endfor %}
       </div>

@@ -33,7 +33,7 @@
       <div class="flex shrink-0 flex-wrap items-center gap-2">
         {% if item.project_href %}
           <a href="{{ item.project_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
-            Repo
+            Project
           </a>
         {% endif %}
         <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
@@ -74,9 +74,9 @@
           <h1 class="mt-2 font-display text-3xl text-stone-900 sm:text-4xl">{% if queue_project %}{{ queue_project.display_label }}{% else %}Review Queue{% endif %}</h1>
           <p class="mt-2 text-sm text-stone-600">
             {% if queue_project %}
-              Saved turns for this repo, pulled out of the stream so you can come back and resolve them later.
+              Saved turns for this project, pulled out of the stream so you can come back and resolve them later.
             {% else %}
-              Pull important turns out of the stream, then filter or group them by repo when you need to work through them.
+              Pull important turns out of the stream, then filter or group them by project when you need to work through them.
             {% endif %}
           </p>
           {% if queue_project %}
@@ -85,7 +85,7 @@
                 All projects
               </a>
               <a href="{{ queue_project.detail_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-stone-50">
-                Back to repo
+                Back to project
               </a>
             </div>
           {% elif queue_projects %}

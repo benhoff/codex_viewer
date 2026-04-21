@@ -1,0 +1,9 @@
+services:
+  viewer:
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.agent-ops-viewer.rule=Host(`viewer.example.com`)
+      - traefik.http.routers.agent-ops-viewer.entrypoints=websecure
+      - traefik.http.routers.agent-ops-viewer.tls=true
+      - traefik.http.routers.agent-ops-viewer.middlewares=authelia-viewer-auth@file
+      - traefik.http.services.agent-ops-viewer.loadbalancer.server.port=8000

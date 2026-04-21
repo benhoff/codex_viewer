@@ -1,0 +1,10 @@
+# Replace viewer.example.com and auth.example.com before use.
+
+viewer.example.com {
+    forward_auth https://auth.example.com {
+        uri /outpost.goauthentik.io/auth/caddy
+        copy_headers X-authentik-username>X-Forwarded-User X-authentik-name>X-Forwarded-Name X-authentik-email>X-Forwarded-Email
+    }
+
+    reverse_proxy 127.0.0.1:8000
+}
