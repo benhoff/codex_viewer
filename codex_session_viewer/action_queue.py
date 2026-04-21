@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -23,6 +24,21 @@ ACTION_QUEUE_SCORE_THRESHOLD = 40
 MAX_ACTION_QUEUE_CANDIDATE_SESSIONS = 48
 MAX_ACTION_QUEUE_TURNS_PER_SESSION = 3
 ACTION_QUEUE_ROLLUP_VERSION = 1
+
+HIGH_CONFIDENCE_REPO_ISSUE_KINDS = {
+    "verification_failed",
+    "setup_blocker",
+    "guardian_denied",
+    "mcp_startup_failed",
+}
+MEDIUM_CONFIDENCE_REPO_ISSUE_KINDS = {
+    "approval_blocked",
+    "risky_changes_unverified",
+    "aborted_after_changes",
+}
+LOW_CONFIDENCE_REPO_ISSUE_KINDS = {
+    "claim_evidence_mismatch",
+}
 
 EVENT_VIEW_COLUMNS = """
     e.session_id,
@@ -322,6 +338,121 @@ def build_project_action_queue(
     return ranked_items[:limit]
 
 
+def build_project_action_groups(
+    items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    if not items:
+        return []
+
+    by_issue_kind: dict[str, list[dict[str, object]]] = {}
+    for item in items:
+        issue_kind = str(item.get("issue_kind") or "").strip() or str(item.get("status_label") or "").strip()
+        if not issue_kind:
+            continue
+        by_issue_kind.setdefault(issue_kind, []).append(item)
+
+    groups: list[dict[str, object]] = []
+    for issue_kind, group_items in by_issue_kind.items():
+        ordered_items = sorted(group_items, key=_repo_issue_sort_key, reverse=True)
+        if not ordered_items:
+            continue
+        primary = dict(ordered_items[0])
+        count = len(ordered_items)
+        session_count = len(
+            {
+                str(item.get("session_id") or "").strip()
+                for item in ordered_items
+                if str(item.get("session_id") or "").strip()
+            }
+        )
+        hosts = _unique_strings(
+            [str(item.get("host") or "").strip() for item in ordered_items if str(item.get("host") or "").strip()]
+        )
+        detail_variants = _unique_strings(
+            [
+                str(item.get("status_title") or "").strip()
+                for item in ordered_items
+                if str(item.get("status_title") or "").strip()
+            ]
+        )
+        next_actions = _unique_strings(
+            [
+                str(item.get("next_action") or "").strip()
+                for item in ordered_items
+                if str(item.get("next_action") or "").strip()
+            ]
+        )
+
+        status_tone = str(primary.get("status_tone") or "amber")
+        status_label = str(primary.get("status_label") or "Action needed")
+        if issue_kind in LOW_CONFIDENCE_REPO_ISSUE_KINDS:
+            status_tone = "amber"
+            status_label = "Review needed"
+
+        badge_counts: Counter[tuple[str, str]] = Counter()
+        for item in ordered_items:
+            for badge in item.get("signal_badges") or []:
+                if not isinstance(badge, dict):
+                    continue
+                label = str(badge.get("label") or "").strip()
+                tone = str(badge.get("tone") or "stone").strip() or "stone"
+                if not label:
+                    continue
+                badge_counts[(label, tone)] += 1
+
+        signal_badges = [_badge(_count_label(count, "occurrence"), status_tone)]
+        if len(hosts) > 1:
+            signal_badges.append(_badge(_count_label(len(hosts), "host"), "stone"))
+        for (label, tone), badge_count in badge_counts.most_common(3):
+            if label == signal_badges[0]["label"]:
+                continue
+            badge_label = label if badge_count <= 1 else f"{label} x{badge_count}"
+            signal_badges.append(_badge(badge_label, tone))
+            if len(signal_badges) >= 4:
+                break
+
+        summary_parts: list[str] = []
+        if count > 1:
+            summary_parts.append(
+                f"{_count_label(count, 'occurrence')} across {_count_label(session_count or 1, 'session')}"
+            )
+        if detail_variants:
+            latest_detail = detail_variants[0]
+            if count > 1 and len(detail_variants) > 1:
+                latest_detail += f" +{len(detail_variants) - 1} more variants"
+            summary_parts.append(latest_detail)
+
+        group_summary = " · ".join(part for part in summary_parts if part)
+        latest_timestamp = str(primary.get("timestamp") or "")
+        latest_session_href = str(primary.get("session_href") or "")
+        hosts_label = ", ".join(hosts[:2])
+        if len(hosts) > 2:
+            hosts_label += f" +{len(hosts) - 2} more"
+
+        groups.append(
+            {
+                "issue_kind": issue_kind,
+                "status_tone": status_tone,
+                "status_label": status_label,
+                "title": str(primary.get("title") or "").strip() or "Action needed",
+                "status_title": str(primary.get("status_title") or "").strip(),
+                "summary": group_summary,
+                "next_action": next_actions[0] if next_actions else "",
+                "signal_badges": signal_badges,
+                "count": count,
+                "session_count": session_count,
+                "hosts_label": hosts_label,
+                "host_count": len(hosts),
+                "latest_timestamp": latest_timestamp,
+                "latest_session_href": latest_session_href,
+                "items": ordered_items,
+            }
+        )
+
+    groups.sort(key=lambda item: _repo_issue_sort_key(item["items"][0]), reverse=True)
+    return groups
+
+
 def build_repo_action_signal_map(
     connection: sqlite3.Connection,
     rows: list[sqlite3.Row],
@@ -388,10 +519,7 @@ def build_repo_action_signal_map(
         if not project_key or not issues:
             continue
         issues.sort(
-            key=lambda item: (
-                int(item.get("attention_score") or 0),
-                _issue_sort_key(item),
-            ),
+            key=_repo_issue_sort_key,
             reverse=True,
         )
         primary = dict(issues[0])
@@ -402,13 +530,24 @@ def build_repo_action_signal_map(
             detail_parts.append(status_title)
         if blocker_count > 1:
             detail_parts.append(f"{blocker_count} unresolved repo blockers")
+        repo_priority = _repo_issue_priority(primary)
+        issue_kind = str(primary.get("issue_kind") or "")
+        status_tone = str(primary.get("status_tone") or "amber")
+        status_label = str(primary.get("status_label") or "Action needed")
+        has_attention = repo_priority >= 2
+        attention_count = blocker_count if has_attention else 0
+        attention_score = repo_priority * 100 + int(primary.get("attention_score") or 0)
+        if issue_kind in LOW_CONFIDENCE_REPO_ISSUE_KINDS:
+            status_tone = "amber"
+            status_label = "Review needed"
+            attention_score = int(primary.get("attention_score") or 0)
         result[project_key] = {
-            "status_tone": str(primary.get("status_tone") or "amber"),
-            "status_label": str(primary.get("status_label") or "Action needed"),
+            "status_tone": status_tone,
+            "status_label": status_label,
             "status_title": " · ".join(part for part in detail_parts if part),
-            "has_attention": True,
-            "attention_count": blocker_count,
-            "attention_score": int(primary.get("attention_score") or 0),
+            "has_attention": has_attention,
+            "attention_count": attention_count,
+            "attention_score": attention_score,
             "action_title": str(primary.get("title") or "").strip(),
             "action_detail": status_title,
             "action_next_action": str(primary.get("next_action") or "").strip(),
@@ -1674,6 +1813,29 @@ def _issue_sort_key(item: dict[str, object]) -> tuple[datetime, int]:
     if timestamp is None:
         timestamp = datetime.fromtimestamp(0, tz=UTC)
     return (timestamp.astimezone(UTC), int(item.get("severity") or 0))
+
+
+def _repo_issue_priority(item: dict[str, object]) -> int:
+    issue_kind = str(item.get("issue_kind") or "")
+    if issue_kind in HIGH_CONFIDENCE_REPO_ISSUE_KINDS:
+        return 3
+    if issue_kind in MEDIUM_CONFIDENCE_REPO_ISSUE_KINDS:
+        return 2
+    if issue_kind in LOW_CONFIDENCE_REPO_ISSUE_KINDS:
+        return 1
+    return 0
+
+
+def _repo_issue_sort_key(item: dict[str, object]) -> tuple[int, int, datetime, int]:
+    timestamp = parse_timestamp(str(item.get("timestamp") or ""))
+    if timestamp is None:
+        timestamp = datetime.fromtimestamp(0, tz=UTC)
+    return (
+        _repo_issue_priority(item),
+        int(item.get("attention_score") or 0),
+        timestamp.astimezone(UTC),
+        int(item.get("severity") or 0),
+    )
 
 
 def _verification_labels(turn: dict[str, object]) -> list[str]:

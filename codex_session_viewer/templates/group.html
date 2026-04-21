@@ -103,79 +103,111 @@
           <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Repo Blockers</h2>
           <p class="mt-1 text-sm text-stone-600">These unresolved signals drive the repo-level labels on the index page.</p>
         </div>
-        <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">
-          {{ project_action_queue|length }} blocker{% if project_action_queue|length != 1 %}s{% endif %}
-        </span>
+        <div class="flex flex-wrap gap-2">
+          <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">
+            {{ project_action_groups|length }} group{% if project_action_groups|length != 1 %}s{% endif %}
+          </span>
+          <span class="rounded-full bg-stone-200 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-700">
+            {{ project_action_queue|length }} blocker{% if project_action_queue|length != 1 %}s{% endif %}
+          </span>
+        </div>
       </div>
 
-      {% if project_action_queue %}
+      {% if project_action_groups %}
         <div class="grid gap-3">
-          {% for item in project_action_queue %}
+          {% for group_item in project_action_groups %}
             <article class="rounded-[1.2rem] border border-stone-200 bg-white/85 p-4 shadow-[0_18px_45px_-30px_rgba(41,37,36,0.2)]">
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-2">
-                    <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if item.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
-                      {{ item.status_label }}
+                    <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if group_item.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif group_item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                      {{ group_item.status_label }}
                     </span>
-                    <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.host }}</span>
-                    {% if item.timestamp %}
-                      <span class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>
+                    {% if group_item.hosts_label %}
+                      <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ group_item.hosts_label }}</span>
+                    {% endif %}
+                    {% if group_item.latest_timestamp %}
+                      <span class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ group_item.latest_timestamp|full_timestamp }}">{{ group_item.latest_timestamp|humanize_timestamp }}</span>
                     {% endif %}
                   </div>
-                  <p class="mt-3 text-sm font-semibold leading-6 text-stone-900">{{ item.title }}</p>
-                  <p class="mt-1 break-words text-xs leading-5 text-stone-600">{{ item.status_title }}</p>
-                  {% if item.next_action %}
-                    <p class="mt-2 break-words text-xs leading-5 font-medium text-stone-900">Next: {{ item.next_action }}</p>
+                  <p class="mt-3 text-sm font-semibold leading-6 text-stone-900">{{ group_item.title }}</p>
+                  {% if group_item.summary %}
+                    <p class="mt-1 break-words text-xs leading-5 text-stone-600">{{ group_item.summary }}</p>
+                  {% endif %}
+                  {% if group_item.next_action %}
+                    <p class="mt-2 break-words text-xs leading-5 font-medium text-stone-900">Next: {{ group_item.next_action }}</p>
                   {% endif %}
                 </div>
                 <div class="flex flex-wrap gap-2">
-                  <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-white">
-                    Open audit
-                  </a>
+                  {% if group_item.latest_session_href %}
+                    <a href="{{ group_item.latest_session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-white">
+                      Open latest audit
+                    </a>
+                  {% endif %}
                 </div>
               </div>
-              {% if item.signal_badges %}
+              {% if group_item.signal_badges %}
                 <div class="mt-3 flex flex-wrap gap-2">
-                  {% for badge in item.signal_badges %}
+                  {% for badge in group_item.signal_badges %}
                     <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
                       {{ badge.label }}
                     </span>
                   {% endfor %}
                 </div>
               {% endif %}
-              <div class="mt-3 flex flex-wrap gap-2">
-                <form method="post" action="/action-queue/actions" class="inline-flex">
-                  <input type="hidden" name="action" value="resolve" />
-                  <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
-                  <input type="hidden" name="project_key" value="{{ item.project_key }}" />
-                  <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
-                  <input type="hidden" name="return_to" value="{{ detail_return_to or group.detail_href }}" />
-                  <button type="submit" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[0.72rem] font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100">
-                    Resolve
-                  </button>
-                </form>
-                <form method="post" action="/action-queue/actions" class="inline-flex">
-                  <input type="hidden" name="action" value="snooze" />
-                  <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
-                  <input type="hidden" name="project_key" value="{{ item.project_key }}" />
-                  <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
-                  <input type="hidden" name="return_to" value="{{ detail_return_to or group.detail_href }}" />
-                  <button type="submit" class="inline-flex items-center rounded-full border border-amber-200 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-50">
-                    Snooze 1d
-                  </button>
-                </form>
-                <form method="post" action="/action-queue/actions" class="inline-flex">
-                  <input type="hidden" name="action" value="ignore" />
-                  <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
-                  <input type="hidden" name="project_key" value="{{ item.project_key }}" />
-                  <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
-                  <input type="hidden" name="return_to" value="{{ detail_return_to or group.detail_href }}" />
-                  <button type="submit" class="inline-flex items-center rounded-full border border-stone-300 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50">
-                    Ignore fingerprint
-                  </button>
-                </form>
-              </div>
+              <details class="mt-3 rounded-[1rem] border border-stone-200/80 bg-stone-50/70">
+                <summary class="cursor-pointer list-none px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700">
+                  View {{ group_item.count }} underlying blocker{% if group_item.count != 1 %}s{% endif %}
+                </summary>
+                <div class="space-y-3 border-t border-stone-200/80 px-3 py-3">
+                  {% for item in group_item.items %}
+                    <div class="rounded-[0.9rem] border border-stone-200 bg-white/90 p-3">
+                      <div class="flex flex-wrap items-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">
+                        <span>{{ item.host }}</span>
+                        {% if item.timestamp %}
+                          <span title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>
+                        {% endif %}
+                      </div>
+                      <p class="mt-2 break-words text-xs leading-5 text-stone-700">{{ item.status_title }}</p>
+                      <div class="mt-3 flex flex-wrap gap-2">
+                        <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-3 py-1.5 text-[0.72rem] font-semibold text-stone-700 transition hover:bg-white">
+                          Open audit
+                        </a>
+                        <form method="post" action="/action-queue/actions" class="inline-flex">
+                          <input type="hidden" name="action" value="resolve" />
+                          <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
+                          <input type="hidden" name="project_key" value="{{ item.project_key }}" />
+                          <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
+                          <input type="hidden" name="return_to" value="{{ detail_return_to or group.detail_href }}" />
+                          <button type="submit" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[0.72rem] font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100">
+                            Resolve
+                          </button>
+                        </form>
+                        <form method="post" action="/action-queue/actions" class="inline-flex">
+                          <input type="hidden" name="action" value="snooze" />
+                          <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
+                          <input type="hidden" name="project_key" value="{{ item.project_key }}" />
+                          <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
+                          <input type="hidden" name="return_to" value="{{ detail_return_to or group.detail_href }}" />
+                          <button type="submit" class="inline-flex items-center rounded-full border border-amber-200 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-50">
+                            Snooze 1d
+                          </button>
+                        </form>
+                        <form method="post" action="/action-queue/actions" class="inline-flex">
+                          <input type="hidden" name="action" value="ignore" />
+                          <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
+                          <input type="hidden" name="project_key" value="{{ item.project_key }}" />
+                          <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
+                          <input type="hidden" name="return_to" value="{{ detail_return_to or group.detail_href }}" />
+                          <button type="submit" class="inline-flex items-center rounded-full border border-stone-300 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50">
+                            Ignore fingerprint
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+              </details>
             </article>
           {% endfor %}
         </div>

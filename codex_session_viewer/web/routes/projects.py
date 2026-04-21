@@ -81,6 +81,7 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
             "group": detail["group"],
             "signal_summary": detail["signal_summary"],
             "project_action_queue": detail["project_action_queue"],
+            "project_action_groups": detail["project_action_groups"],
             "attention_sessions": detail["attention_sessions"],
             "recent_sessions": detail["recent_sessions"],
             "all_sessions_page": detail["all_sessions_page"],

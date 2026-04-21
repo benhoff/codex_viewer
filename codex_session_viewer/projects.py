@@ -2127,29 +2127,31 @@ def fetch_group_detail(
         page=sessions_page,
         page_size=sessions_page_size,
     )
-    from .action_queue import build_project_action_queue
+    from .action_queue import (
+        build_project_action_groups,
+        build_project_action_queue,
+        build_repo_action_signal_map,
+    )
 
     project_action_queue = build_project_action_queue(
         connection,
         matching_rows,
         owner_scope=owner_scope,
         project_href=detail_href or str(group.detail_href or "/"),
-        limit=12,
+        limit=48,
     )
-    if project_action_queue:
-        primary_action = project_action_queue[0]
-        health_title_parts = [str(primary_action.get("title") or "").strip()]
-        status_title = str(primary_action.get("status_title") or "").strip()
-        if status_title:
-            health_title_parts.append(status_title)
-        if len(project_action_queue) > 1:
-            health_title_parts.append(
-                f"{len(project_action_queue)} unresolved repo blockers"
-            )
+    project_action_groups = build_project_action_groups(project_action_queue)
+    repo_action_signals = build_repo_action_signal_map(
+        connection,
+        matching_rows,
+        owner_scope=owner_scope,
+    )
+    repo_action_signal = repo_action_signals.get(group.key)
+    if repo_action_signal:
         health_summary = {
-            "status_tone": str(primary_action.get("status_tone") or "amber"),
-            "status_label": str(primary_action.get("status_label") or "Action needed"),
-            "status_title": " · ".join(part for part in health_title_parts if part),
+            "status_tone": str(repo_action_signal.get("status_tone") or "amber"),
+            "status_label": str(repo_action_signal.get("status_label") or "Action needed"),
+            "status_title": str(repo_action_signal.get("status_title") or "").strip(),
         }
     else:
         health_summary = summarize_attention_status(
@@ -2175,6 +2177,7 @@ def fetch_group_detail(
         "source_groups": source_groups,
         "signal_summary": signal_summary,
         "project_action_queue": project_action_queue,
+        "project_action_groups": project_action_groups,
         "attention_sessions": attention_sessions,
         "recent_sessions": recent_sessions,
         "all_sessions_page": all_sessions_page,
