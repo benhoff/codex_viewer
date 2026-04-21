@@ -56,6 +56,7 @@ SESSION_COLUMN_DEFS = {
     "turn_activity_rollup_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_index_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_search_version": "INTEGER NOT NULL DEFAULT 0",
+    "action_queue_rollup_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_count": "INTEGER NOT NULL DEFAULT 0",
     "last_user_message": "TEXT NOT NULL DEFAULT ''",
     "last_turn_timestamp": "TEXT",
@@ -230,6 +231,36 @@ SAVED_TURN_COLUMN_DEFS = {
     "updated_at": "TEXT NOT NULL",
 }
 
+ACTION_QUEUE_STATE_COLUMN_DEFS = {
+    "owner_scope": "TEXT NOT NULL",
+    "fingerprint": "TEXT NOT NULL",
+    "project_key": "TEXT NOT NULL DEFAULT ''",
+    "issue_kind": "TEXT NOT NULL DEFAULT ''",
+    "status": "TEXT NOT NULL DEFAULT 'resolved'",
+    "snoozed_until": "TEXT",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
+ACTION_QUEUE_SIGNAL_COLUMN_DEFS = {
+    "session_id": "TEXT NOT NULL",
+    "turn_number": "INTEGER NOT NULL",
+    "issue_kind": "TEXT NOT NULL",
+    "signature": "TEXT NOT NULL",
+    "timestamp": "TEXT NOT NULL",
+    "severity": "INTEGER NOT NULL DEFAULT 0",
+    "noise_penalty": "INTEGER NOT NULL DEFAULT 0",
+    "payload_json": "TEXT NOT NULL DEFAULT '{}'",
+}
+
+ACTION_QUEUE_SUCCESS_COLUMN_DEFS = {
+    "session_id": "TEXT NOT NULL",
+    "turn_number": "INTEGER NOT NULL",
+    "timestamp": "TEXT NOT NULL",
+    "labels_json": "TEXT NOT NULL DEFAULT '[]'",
+    "files_json": "TEXT NOT NULL DEFAULT '[]'",
+}
+
 SESSION_TURN_COLUMN_DEFS = {
     "session_id": "TEXT NOT NULL",
     "turn_number": "INTEGER NOT NULL",
@@ -312,6 +343,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     turn_activity_rollup_version INTEGER NOT NULL DEFAULT 0,
     turn_index_version INTEGER NOT NULL DEFAULT 0,
     turn_search_version INTEGER NOT NULL DEFAULT 0,
+    action_queue_rollup_version INTEGER NOT NULL DEFAULT 0,
     turn_count INTEGER NOT NULL DEFAULT 0,
     last_user_message TEXT NOT NULL DEFAULT '',
     last_turn_timestamp TEXT,
@@ -537,6 +569,39 @@ CREATE TABLE IF NOT EXISTS saved_turns (
     PRIMARY KEY (owner_scope, session_id, turn_number)
 );
 
+CREATE TABLE IF NOT EXISTS action_queue_states (
+    owner_scope TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    project_key TEXT NOT NULL DEFAULT '',
+    issue_kind TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'resolved',
+    snoozed_until TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (owner_scope, fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS action_queue_signals (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_number INTEGER NOT NULL,
+    issue_kind TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    severity INTEGER NOT NULL DEFAULT 0,
+    noise_penalty INTEGER NOT NULL DEFAULT 0,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (session_id, turn_number, issue_kind, signature)
+);
+
+CREATE TABLE IF NOT EXISTS action_queue_verification_successes (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_number INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    labels_json TEXT NOT NULL DEFAULT '[]',
+    files_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (session_id, turn_number)
+);
+
 CREATE TABLE IF NOT EXISTS session_turn_activity_daily (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     activity_date TEXT NOT NULL,
@@ -647,6 +712,27 @@ ON saved_turns(owner_scope, status, updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_saved_turns_session
 ON saved_turns(session_id, turn_number);
+
+CREATE INDEX IF NOT EXISTS idx_action_queue_states_owner_status_updated
+ON action_queue_states(owner_scope, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_action_queue_states_owner_project
+ON action_queue_states(owner_scope, project_key, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_action_queue_signals_timestamp
+ON action_queue_signals(timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_action_queue_signals_session
+ON action_queue_signals(session_id, timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_action_queue_signals_issue
+ON action_queue_signals(issue_kind, timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_action_queue_verification_successes_timestamp
+ON action_queue_verification_successes(timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_action_queue_verification_successes_session
+ON action_queue_verification_successes(session_id, timestamp DESC);
 
 CREATE INDEX IF NOT EXISTS idx_users_username
 ON users(username);
@@ -818,6 +904,7 @@ def default_select(column_name: str) -> str:
         "turn_activity_rollup_version",
         "turn_index_version",
         "turn_search_version",
+        "action_queue_rollup_version",
         "turn_count",
         "command_failure_count",
         "aborted_turn_count",
@@ -1077,6 +1164,39 @@ def ensure_saved_turn_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_action_queue_state_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "action_queue_states"):
+        return
+    action_queue_state_columns = table_columns(connection, "action_queue_states")
+    for column_name, column_def in ACTION_QUEUE_STATE_COLUMN_DEFS.items():
+        if column_name not in action_queue_state_columns:
+            connection.execute(
+                f"ALTER TABLE action_queue_states ADD COLUMN {column_name} {column_def}"
+            )
+
+
+def ensure_action_queue_signal_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "action_queue_signals"):
+        return
+    action_queue_signal_columns = table_columns(connection, "action_queue_signals")
+    for column_name, column_def in ACTION_QUEUE_SIGNAL_COLUMN_DEFS.items():
+        if column_name not in action_queue_signal_columns:
+            connection.execute(
+                f"ALTER TABLE action_queue_signals ADD COLUMN {column_name} {column_def}"
+            )
+
+
+def ensure_action_queue_success_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "action_queue_verification_successes"):
+        return
+    action_queue_success_columns = table_columns(connection, "action_queue_verification_successes")
+    for column_name, column_def in ACTION_QUEUE_SUCCESS_COLUMN_DEFS.items():
+        if column_name not in action_queue_success_columns:
+            connection.execute(
+                f"ALTER TABLE action_queue_verification_successes ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def ensure_session_turn_columns(connection: sqlite3.Connection) -> None:
     if not table_exists(connection, "session_turns"):
         return
@@ -1121,6 +1241,9 @@ def init_db(database_path: Path) -> None:
             ensure_alert_incident_columns(connection)
             ensure_alert_delivery_columns(connection)
             ensure_saved_turn_columns(connection)
+            ensure_action_queue_state_columns(connection)
+            ensure_action_queue_signal_columns(connection)
+            ensure_action_queue_success_columns(connection)
             ensure_session_turn_columns(connection)
             recover_legacy_sessions(connection)
             recover_legacy_events(connection)
@@ -1138,6 +1261,9 @@ def init_db(database_path: Path) -> None:
             backfill_session_turn_activity_daily(connection)
             backfill_session_turns(connection)
             backfill_session_turn_search(connection)
+            from .action_queue import backfill_action_queue_rollups
+
+            backfill_action_queue_rollups(connection)
             from .projects import sync_project_registry
 
             sync_project_registry(connection)

@@ -940,7 +940,9 @@ def aggregate_file_manifest(patch_events: list[dict[str, object]]) -> list[dict[
 
 
 def classify_risky_file_path(path: str | None) -> str | None:
-    normalized = str(path or "").strip().lower().lstrip("./")
+    normalized = str(path or "").strip().lower()
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
     if not normalized:
         return None
 
@@ -1137,17 +1139,188 @@ def response_evidence(
     }
 
 
+AUDIT_MODULE_NOT_FOUND_RE = re.compile(r"no module named ['\"]([^'\"]+)['\"]", re.IGNORECASE)
+
+
+def _event_payloads_from_merged(
+    merged_events: list[dict[str, object]],
+    payload_types: set[str],
+) -> list[tuple[str, dict[str, object]]]:
+    matches: list[tuple[str, dict[str, object]]] = []
+    for event in merged_events:
+        payload_type = str(event.get("payload_type") or "").strip().lower()
+        if payload_type not in payload_types:
+            continue
+        payload = parse_record_payload(event.get("record_json"))
+        if isinstance(payload, dict):
+            matches.append((payload_type, payload))
+    return matches
+
+
+def _describe_permission_shape(value: object) -> str:
+    if not isinstance(value, dict):
+        return "additional permissions"
+    parts: list[str] = []
+    if value.get("file_system") is not None:
+        parts.append("filesystem access")
+    if value.get("network") is not None:
+        parts.append("network access")
+    return " and ".join(parts) if parts else "additional permissions"
+
+
+def _payload_change_paths(payload: dict[str, object]) -> list[str]:
+    changes = payload.get("changes")
+    if not isinstance(changes, dict):
+        return []
+    return sorted(str(path).strip() for path in changes if str(path).strip())
+
+
+def _payload_command_label(payload: dict[str, object]) -> str:
+    parsed_commands = payload.get("parsed_cmd")
+    if isinstance(parsed_commands, list):
+        for item in parsed_commands:
+            if not isinstance(item, dict):
+                continue
+            command_text = str(item.get("cmd") or "").strip()
+            if command_text:
+                return shorten(command_text, 80)
+    command = payload.get("command")
+    if isinstance(command, list):
+        joined = " ".join(str(part).strip() for part in command if str(part).strip())
+        if joined:
+            return shorten(joined, 80)
+    return ""
+
+
+def _guardian_action_files(action: dict[str, object]) -> list[str]:
+    if str(action.get("type") or "").strip().lower() != "apply_patch":
+        return []
+    files = action.get("files")
+    if not isinstance(files, list):
+        return []
+    return sorted(str(path).strip() for path in files if str(path).strip())
+
+
+def _command_primary_token(command_text: str) -> str:
+    normalized = command_text.strip()
+    if not normalized:
+        return ""
+    return Path(normalized.split()[0]).name
+
+
+def _setup_blockers_from_commands(command_events: list[dict[str, object]]) -> list[dict[str, str]]:
+    blockers: dict[str, dict[str, str]] = {}
+    exploratory_types = {"search", "list_files", "read"}
+    for command in command_events:
+        if not bool(command.get("has_failure")):
+            continue
+        if str(command.get("command_intent") or "") == "inspect":
+            continue
+
+        parsed_command_types = {
+            str(item).strip().lower()
+            for item in (command.get("parsed_command_types") or [])
+            if str(item).strip()
+        }
+        if parsed_command_types and parsed_command_types.issubset(exploratory_types):
+            continue
+
+        command_label = str(
+            command.get("display_command_text")
+            or command.get("command_text")
+            or command.get("primary_command_label")
+            or command.get("summary_text")
+            or ""
+        ).strip()
+        output_text = "\n".join(
+            part
+            for part in [
+                str(command.get("output_text") or "").strip(),
+                str(command.get("detail_text") or "").strip(),
+            ]
+            if part
+        )
+        output_lower = output_text.lower()
+
+        module_match = AUDIT_MODULE_NOT_FOUND_RE.search(output_text)
+        if module_match:
+            module_name = module_match.group(1).strip().lower()
+            blockers.setdefault(
+                f"missing_module:{module_name}",
+                {
+                    "signature": f"missing_module:{module_name}",
+                    "title": f"Python dependency `{module_name}` is missing",
+                    "next_action": f"Install `{module_name}` in the environment and rerun the blocked command.",
+                },
+            )
+            continue
+
+        if "ensurepip" in output_lower or "python3-venv" in output_lower:
+            blockers.setdefault(
+                "missing_venv_support",
+                {
+                    "signature": "missing_venv_support",
+                    "title": "Python venv support is missing",
+                    "next_action": "Install `python3-venv` or equivalent venv support and retry environment bootstrap.",
+                },
+            )
+            continue
+
+        primary_token = _command_primary_token(command_label)
+        if primary_token and ("command not found" in output_lower or re.search(rf"\b{re.escape(primary_token)}: not found\b", output_lower)):
+            blockers.setdefault(
+                f"missing_binary:{primary_token}",
+                {
+                    "signature": f"missing_binary:{primary_token}",
+                    "title": f"`{primary_token}` is unavailable",
+                    "next_action": f"Install `{primary_token}` and rerun the blocked command.",
+                },
+            )
+
+    return list(blockers.values())
+
+
+def _verification_labels_from_commands(commands: list[dict[str, object]]) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for command in commands:
+        label = str(
+            command.get("display_command_text")
+            or command.get("primary_command_label")
+            or command.get("command_text")
+            or command.get("summary_text")
+            or ""
+        ).strip()
+        if not label:
+            continue
+        shortened = shorten(label, 80)
+        if shortened in seen:
+            continue
+        seen.add(shortened)
+        labels.append(shortened)
+    return labels
+
+
 def build_trust_signals(
     *,
     turn_number: int,
     verification_verdict_data: dict[str, object],
     response_evidence_data: dict[str, object],
     risky_files: list[dict[str, str]],
+    command_events: list[dict[str, object]],
+    merged_detail_events: list[dict[str, object]],
+    response_state: str,
+    abort_reason: str | None,
+    patch_count: int,
+    files_touched_count: int,
 ) -> list[dict[str, object]]:
     signals: list[dict[str, object]] = []
 
     verification_status = str(verification_verdict_data.get("status") or "")
     verification_warning_count = int(verification_verdict_data.get("warning_count") or 0)
+    verification_labels = _verification_labels_from_commands(
+        [command for command in command_events if command.get("verification_kind")]
+    )
     if verification_status == "passed_with_warnings" and verification_warning_count > 0:
         signals.append(
             {
@@ -1166,7 +1339,7 @@ def build_trust_signals(
             {
                 "key": "claim_evidence_mismatch",
                 "tone": "rose",
-                "label": "Claim/evidence mismatch",
+                "label": "Evidence mismatch",
                 "detail": f"{mismatch_count} response claim{'s were' if mismatch_count != 1 else ' was'} not backed by the recorded commands, patches, or verification in this turn.",
                 "href": f"#turn-{turn_number}-response",
                 "examples": [],
@@ -1180,10 +1353,147 @@ def build_trust_signals(
             {
                 "key": "risky_changes_unverified",
                 "tone": "amber",
-                "label": "Risky changes unverified",
+                "label": "Needs verification",
                 "detail": f"{len(risky_files)} {kind_summary.lower()} file change{'s were' if len(risky_files) != 1 else ' was'} recorded without any verification command in this turn.",
                 "href": f"#turn-{turn_number}-files",
                 "examples": [item["path"] for item in risky_files[:3]],
+            }
+        )
+
+    if verification_status == "failed" and (patch_count > 0 or files_touched_count > 0):
+        detail_parts = []
+        if verification_labels:
+            detail_parts.append(f"{', '.join(verification_labels[:2])} exited non-zero")
+        else:
+            detail_parts.append("Verification exited non-zero")
+        if patch_count > 0:
+            detail_parts.append(f"after {patch_count} patch{'es' if patch_count != 1 else ''}")
+        elif files_touched_count > 0:
+            detail_parts.append(f"after {files_touched_count} file change{'s' if files_touched_count != 1 else ''}")
+        signals.append(
+            {
+                "key": "verification_failed",
+                "tone": "rose",
+                "label": "Verification failed",
+                "detail": " · ".join(detail_parts),
+                "href": f"#turn-{turn_number}-verification",
+                "examples": verification_labels[:3],
+            }
+        )
+
+    setup_blockers = _setup_blockers_from_commands(command_events)
+    if setup_blockers:
+        signals.append(
+            {
+                "key": "setup_blocker",
+                "tone": "rose",
+                "label": "Setup blocker",
+                "detail": "; ".join(blocker["title"] for blocker in setup_blockers[:2]),
+                "href": f"#turn-{turn_number}-commands",
+                "examples": [blocker["next_action"] for blocker in setup_blockers[:2]],
+            }
+        )
+
+    approval_events = _event_payloads_from_merged(
+        merged_detail_events,
+        {"exec_approval_request", "apply_patch_approval_request", "request_permissions"},
+    )
+    if response_state != "final" and approval_events:
+        detail_parts: list[str] = []
+        examples: list[str] = []
+        for payload_type, payload in approval_events:
+            if payload_type == "request_permissions":
+                detail_parts.append(f"Requested {_describe_permission_shape(payload.get('permissions'))}")
+                continue
+            if payload_type == "apply_patch_approval_request":
+                grant_root = str(payload.get("grant_root") or "").strip()
+                if grant_root:
+                    detail_parts.append(f"Patch needed write access under {grant_root}")
+                else:
+                    detail_parts.append("Patch required approval before it could run")
+                examples.extend(_payload_change_paths(payload)[:2])
+                continue
+            permission_shape = _describe_permission_shape(payload.get("additional_permissions"))
+            command_label = _payload_command_label(payload)
+            if permission_shape and permission_shape != "additional permissions":
+                detail_parts.append(f"Command needed {permission_shape}")
+            elif command_label:
+                detail_parts.append(f"{command_label} required approval")
+        signals.append(
+            {
+                "key": "approval_blocked",
+                "tone": "amber",
+                "label": "Approval blocked",
+                "detail": " · ".join(detail_parts[:3]) or "A requested action was blocked on approval.",
+                "href": f"#turn-{turn_number}-commands",
+                "examples": examples[:3],
+            }
+        )
+
+    guardian_events = [
+        payload
+        for _, payload in _event_payloads_from_merged(merged_detail_events, {"guardian_assessment"})
+        if str(payload.get("status") or "").strip().lower() in {"denied", "timed_out"}
+        and str(payload.get("risk_level") or "").strip().lower() in {"high", "critical"}
+    ]
+    if guardian_events:
+        first = guardian_events[0]
+        action = first.get("action") if isinstance(first.get("action"), dict) else {}
+        detail = str(first.get("rationale") or "").strip() or "Guardian review denied a high-risk action."
+        signals.append(
+            {
+                "key": "guardian_denied",
+                "tone": "rose",
+                "label": "Guardian denied",
+                "detail": detail,
+                "href": f"#turn-{turn_number}-commands",
+                "examples": _guardian_action_files(action)[:3],
+            }
+        )
+
+    mcp_failures: list[dict[str, str]] = []
+    for _, payload in _event_payloads_from_merged(merged_detail_events, {"mcp_startup_complete"}):
+        failed_items = payload.get("failed")
+        if not isinstance(failed_items, list):
+            continue
+        for item in failed_items:
+            if not isinstance(item, dict):
+                continue
+            server = str(item.get("server") or "").strip()
+            error = str(item.get("error") or "").strip()
+            if server:
+                mcp_failures.append({"server": server, "error": error})
+    if mcp_failures:
+        signals.append(
+            {
+                "key": "mcp_startup_failed",
+                "tone": "rose",
+                "label": "MCP failed",
+                "detail": "; ".join(
+                    f"{item['server']}: {shorten(item['error'] or 'startup failed', 80)}"
+                    for item in mcp_failures[:2]
+                ),
+                "href": None,
+                "examples": [item["server"] for item in mcp_failures[:3]],
+            }
+        )
+
+    if response_state == "canceled" and str(abort_reason or "").strip().lower() != "replaced" and (patch_count > 0 or verification_status == "failed"):
+        detail_parts = []
+        if abort_reason:
+            detail_parts.append(str(abort_reason).replace("_", " "))
+        if patch_count > 0:
+            detail_parts.append(f"after {patch_count} patch{'es' if patch_count != 1 else ''}")
+        if verification_status == "failed":
+            detail_parts.append("with failed verification pending")
+        signals.append(
+            {
+                "key": "aborted_after_changes",
+                "tone": "amber",
+                "label": "Interrupted",
+                "detail": " · ".join(detail_parts) or "The turn stopped after making changes.",
+                "href": f"#turn-{turn_number}-response",
+                "examples": [],
             }
         )
 
@@ -1789,6 +2099,12 @@ def build_turns(
             verification_verdict_data=verification_verdict_data,
             response_evidence_data=response_evidence_data,
             risky_files=risky_files,
+            command_events=command_events,
+            merged_detail_events=merged_detail_events,
+            response_state=response_state,
+            abort_reason=abort_reason,
+            patch_count=len(patch_events),
+            files_touched_count=len(files_touched),
         )
 
         return {

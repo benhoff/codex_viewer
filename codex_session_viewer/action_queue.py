@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
+from .action_queue_state import (
+    action_queue_fingerprint,
+    fetch_action_queue_states,
+    filter_action_queue_items,
+)
 from .projects import effective_project_fields
 from .session_view import build_turns, parse_record_payload, parse_timestamp
 from .text_utils import shorten
@@ -13,6 +22,7 @@ from .text_utils import shorten
 ACTION_QUEUE_SCORE_THRESHOLD = 40
 MAX_ACTION_QUEUE_CANDIDATE_SESSIONS = 48
 MAX_ACTION_QUEUE_TURNS_PER_SESSION = 3
+ACTION_QUEUE_ROLLUP_VERSION = 1
 
 EVENT_VIEW_COLUMNS = """
     e.session_id,
@@ -37,11 +47,172 @@ EXPLORATORY_PARSED_COMMAND_TYPES = {"search", "list_files", "read"}
 MODULE_NOT_FOUND_RE = re.compile(r"no module named ['\"]([^'\"]+)['\"]", re.IGNORECASE)
 
 
+@dataclass
+class VerificationSuccessMarkers:
+    by_repo_host: dict[tuple[str, str], datetime]
+    by_label: dict[tuple[str, str, str], datetime]
+    by_file: dict[tuple[str, str, str], datetime]
+
+
+def replace_session_action_queue_rollups(
+    connection: sqlite3.Connection,
+    session_id: str,
+    events: Sequence[sqlite3.Row | dict[str, Any] | object] | None = None,
+) -> None:
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_session_id:
+        return
+
+    session_rows = _fetch_action_queue_session_rows(connection, [normalized_session_id])
+    session_row = session_rows.get(normalized_session_id)
+    _delete_action_queue_rollups(connection, [normalized_session_id])
+    if session_row is None:
+        return
+
+    turn_events = _normalize_action_queue_events(
+        events
+        if events is not None
+        else _fetch_action_queue_events(connection, [normalized_session_id]).get(normalized_session_id, [])
+    )
+    turns = build_turns(
+        turn_events,
+        cwd=_normalized_string(_row_value(session_row, "cwd")) or None,
+    )
+    project = _materialization_project_fields(session_row)
+    issues = _extract_turn_issues(
+        row=session_row,
+        project=project,
+        turns=turns,
+        verification_successes=_empty_verification_success_markers(),
+        apply_verification_clears=False,
+    )
+
+    signal_inserts = _materialized_signal_inserts(normalized_session_id, issues)
+    if signal_inserts:
+        connection.executemany(
+            """
+            INSERT INTO action_queue_signals (
+                session_id,
+                turn_number,
+                issue_kind,
+                signature,
+                timestamp,
+                severity,
+                noise_penalty,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            signal_inserts,
+        )
+
+    success_inserts = _materialized_verification_success_inserts(
+        normalized_session_id,
+        turns,
+        session_row,
+    )
+    if success_inserts:
+        connection.executemany(
+            """
+            INSERT INTO action_queue_verification_successes (
+                session_id,
+                turn_number,
+                timestamp,
+                labels_json,
+                files_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            success_inserts,
+        )
+
+    connection.execute(
+        "UPDATE sessions SET action_queue_rollup_version = ? WHERE id = ?",
+        (ACTION_QUEUE_ROLLUP_VERSION, normalized_session_id),
+    )
+
+
+def backfill_action_queue_rollups(connection: sqlite3.Connection) -> int:
+    stale_rows = connection.execute(
+        """
+        SELECT id
+        FROM sessions
+        WHERE COALESCE(action_queue_rollup_version, 0) < ?
+        ORDER BY id ASC
+        """,
+        (ACTION_QUEUE_ROLLUP_VERSION,),
+    ).fetchall()
+    session_ids = [str(row["id"] or "").strip() for row in stale_rows if str(row["id"] or "").strip()]
+    if not session_ids:
+        return 0
+
+    session_rows = _fetch_action_queue_session_rows(connection, session_ids)
+    events_by_session = _fetch_action_queue_events(connection, session_ids)
+    _delete_action_queue_rollups(connection, session_ids)
+
+    signal_inserts: list[tuple[Any, ...]] = []
+    success_inserts: list[tuple[Any, ...]] = []
+    for session_id in session_ids:
+        session_row = session_rows.get(session_id)
+        if session_row is None:
+            continue
+        turns = build_turns(
+            _normalize_action_queue_events(events_by_session.get(session_id, [])),
+            cwd=_normalized_string(_row_value(session_row, "cwd")) or None,
+        )
+        project = _materialization_project_fields(session_row)
+        issues = _extract_turn_issues(
+            row=session_row,
+            project=project,
+            turns=turns,
+            verification_successes=_empty_verification_success_markers(),
+            apply_verification_clears=False,
+        )
+        signal_inserts.extend(_materialized_signal_inserts(session_id, issues))
+        success_inserts.extend(_materialized_verification_success_inserts(session_id, turns, session_row))
+
+    if signal_inserts:
+        connection.executemany(
+            """
+            INSERT INTO action_queue_signals (
+                session_id,
+                turn_number,
+                issue_kind,
+                signature,
+                timestamp,
+                severity,
+                noise_penalty,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            signal_inserts,
+        )
+
+    if success_inserts:
+        connection.executemany(
+            """
+            INSERT INTO action_queue_verification_successes (
+                session_id,
+                turn_number,
+                timestamp,
+                labels_json,
+                files_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            success_inserts,
+        )
+
+    connection.executemany(
+        "UPDATE sessions SET action_queue_rollup_version = ? WHERE id = ?",
+        [(ACTION_QUEUE_ROLLUP_VERSION, session_id) for session_id in session_ids],
+    )
+    return len(session_ids)
+
+
 def build_homepage_action_queue(
     connection: sqlite3.Connection,
     rows: list[sqlite3.Row],
     repo_groups: list[object],
     *,
+    owner_scope: str | None = None,
     limit: int = 6,
     candidate_session_limit: int = MAX_ACTION_QUEUE_CANDIDATE_SESSIONS,
     turns_per_session: int = MAX_ACTION_QUEUE_TURNS_PER_SESSION,
@@ -50,72 +221,105 @@ def build_homepage_action_queue(
     if not candidate_rows:
         return []
 
-    session_ids = [str(row["id"]) for row in candidate_rows]
-    turn_windows = _fetch_recent_turn_windows(connection, session_ids, turns_per_session=turns_per_session)
-    if not turn_windows:
-        return []
-
-    events_by_session = _fetch_recent_session_events(connection, session_ids, turns_per_session=turns_per_session)
-    if not events_by_session:
-        return []
-
-    session_analyses: list[dict[str, object]] = []
-    for row in candidate_rows:
-        session_id = str(row["id"])
-        events = events_by_session.get(session_id)
-        window = turn_windows.get(session_id)
-        if not events or window is None:
-            continue
-        turns = build_turns(
-            events,
-            cwd=str(row["cwd"] or "").strip() or None,
-            starting_turn_number=int(window["oldest_turn_number"]),
-        )
-        if not turns:
-            continue
-        session_analyses.append(
-            {
-                "row": row,
-                "project": effective_project_fields(row),
-                "turns": turns,
-            }
-        )
-
-    if not session_analyses:
+    row_by_session = {str(row["id"]): row for row in candidate_rows}
+    session_ids = list(row_by_session)
+    signal_rows = _fetch_recent_materialized_signal_rows(
+        connection,
+        session_ids,
+        turns_per_session=turns_per_session,
+    )
+    if not signal_rows:
         return []
 
     project_href_by_key = {str(group.key): group.detail_href for group in repo_groups}
-    verification_successes = _collect_latest_verification_successes(session_analyses)
+    verification_successes = _collect_materialized_verification_successes(
+        connection,
+        candidate_rows,
+    )
 
     issue_candidates: list[dict[str, object]] = []
-    for analysis in session_analyses:
-        row = analysis["row"]
-        project = analysis["project"]
-        turns = analysis["turns"]
-        for issue in _extract_turn_issues(
+    for signal_row in signal_rows:
+        session_id = str(signal_row["session_id"] or "").strip()
+        row = row_by_session.get(session_id)
+        if row is None:
+            continue
+        project = effective_project_fields(row)
+        issue = _hydrate_materialized_issue(
+            signal_row=signal_row,
             row=row,
             project=project,
-            turns=turns,
+            project_href=project_href_by_key.get(str(project["effective_group_key"]), "/"),
+        )
+        if _issue_cleared_by_later_verification(
+            issue,
+            repo_key=str(project["effective_group_key"] or ""),
+            host=str(project["source_host"] or ""),
+            issue_timestamp=parse_timestamp(str(issue.get("timestamp") or "")),
             verification_successes=verification_successes,
         ):
-            issue["project_href"] = project_href_by_key.get(str(project["effective_group_key"]), "/")
-            turn_number = int(issue.get("turn_number") or 0)
-            session_id = str(row["id"])
-            issue["session_href"] = (
-                f"/sessions/{quote(session_id, safe='')}?view=audit&turn={turn_number}&focus=1"
-                if turn_number > 0
-                else f"/sessions/{quote(session_id, safe='')}"
-            )
-            issue_candidates.append(issue)
+            continue
+        issue_candidates.append(issue)
 
-    return _dedupe_and_rank_issue_candidates(issue_candidates, limit=limit)
+    ranked_items = _dedupe_and_rank_issue_candidates(issue_candidates, limit=max(limit * 4, limit))
+    if owner_scope:
+        state_by_fingerprint = fetch_action_queue_states(
+            connection,
+            owner_scope,
+            [str(item.get("fingerprint") or "") for item in ranked_items],
+        )
+        ranked_items = filter_action_queue_items(ranked_items, state_by_fingerprint)
+    return ranked_items[:limit]
 
 
-def _fetch_recent_turn_windows(
+def _row_value(row: sqlite3.Row | dict[str, Any] | object, key: str) -> Any:
+    if isinstance(row, sqlite3.Row):
+        try:
+            return row[key]
+        except (IndexError, KeyError):
+            return None
+    if isinstance(row, dict):
+        return row.get(key)
+    return getattr(row, key, None)
+
+
+def _normalized_string(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _empty_verification_success_markers() -> VerificationSuccessMarkers:
+    return VerificationSuccessMarkers(by_repo_host={}, by_label={}, by_file={})
+
+
+def _normalize_action_queue_events(
+    events: Sequence[sqlite3.Row | dict[str, Any] | object],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for event in events:
+        normalized.append(
+            {
+                "session_id": _row_value(event, "session_id"),
+                "event_index": _row_value(event, "event_index"),
+                "timestamp": _row_value(event, "timestamp"),
+                "record_type": _row_value(event, "record_type"),
+                "payload_type": _row_value(event, "payload_type"),
+                "kind": _row_value(event, "kind"),
+                "role": _row_value(event, "role"),
+                "title": _row_value(event, "title"),
+                "display_text": _row_value(event, "display_text"),
+                "detail_text": _row_value(event, "detail_text"),
+                "tool_name": _row_value(event, "tool_name"),
+                "call_id": _row_value(event, "call_id"),
+                "command_text": _row_value(event, "command_text"),
+                "exit_code": _row_value(event, "exit_code"),
+                "record_json": _row_value(event, "record_json"),
+            }
+        )
+    return normalized
+
+
+def _fetch_action_queue_session_rows(
     connection: sqlite3.Connection,
     session_ids: list[str],
-    *,
-    turns_per_session: int,
 ) -> dict[str, sqlite3.Row]:
     if not session_ids:
         return {}
@@ -123,41 +327,29 @@ def _fetch_recent_turn_windows(
     placeholders = ", ".join("?" for _ in session_ids)
     rows = connection.execute(
         f"""
-        WITH ranked AS (
-            SELECT
-                session_id,
-                turn_number,
-                start_event_index,
-                end_event_index,
-                latest_timestamp,
-                ROW_NUMBER() OVER (
-                    PARTITION BY session_id
-                    ORDER BY turn_number DESC
-                ) AS rn
-            FROM session_turns
-            WHERE session_id IN ({placeholders})
-        )
         SELECT
-            session_id,
-            MIN(turn_number) AS oldest_turn_number,
-            MAX(turn_number) AS newest_turn_number,
-            MIN(start_event_index) AS start_event_index,
-            MAX(end_event_index) AS end_event_index,
-            MAX(latest_timestamp) AS latest_timestamp
-        FROM ranked
-        WHERE rn <= ?
-        GROUP BY session_id
+            id,
+            session_timestamp,
+            started_at,
+            imported_at,
+            last_turn_timestamp,
+            cwd,
+            cwd_name,
+            source_host,
+            inferred_project_key,
+            inferred_project_label
+        FROM sessions
+        WHERE id IN ({placeholders})
+        ORDER BY id ASC
         """,
-        (*session_ids, max(int(turns_per_session or 1), 1)),
+        session_ids,
     ).fetchall()
-    return {str(row["session_id"]): row for row in rows}
+    return {str(row["id"]): row for row in rows}
 
 
-def _fetch_recent_session_events(
+def _fetch_action_queue_events(
     connection: sqlite3.Connection,
     session_ids: list[str],
-    *,
-    turns_per_session: int,
 ) -> dict[str, list[sqlite3.Row]]:
     if not session_ids:
         return {}
@@ -165,75 +357,331 @@ def _fetch_recent_session_events(
     placeholders = ", ".join("?" for _ in session_ids)
     rows = connection.execute(
         f"""
-        WITH ranked AS (
-            SELECT
-                session_id,
-                turn_number,
-                start_event_index,
-                end_event_index,
-                ROW_NUMBER() OVER (
-                    PARTITION BY session_id
-                    ORDER BY turn_number DESC
-                ) AS rn
-            FROM session_turns
-            WHERE session_id IN ({placeholders})
-        ),
-        selected AS (
-            SELECT
-                session_id,
-                MIN(start_event_index) AS start_event_index,
-                MAX(end_event_index) AS end_event_index
-            FROM ranked
-            WHERE rn <= ?
-            GROUP BY session_id
-        )
         SELECT
             {EVENT_VIEW_COLUMNS}
         FROM events AS e
-        JOIN selected AS s
-          ON s.session_id = e.session_id
-         AND e.event_index BETWEEN s.start_event_index AND s.end_event_index
-        ORDER BY e.session_id ASC, e.event_index ASC
+        WHERE session_id IN ({placeholders})
+        ORDER BY session_id ASC, event_index ASC
         """,
-        (*session_ids, max(int(turns_per_session or 1), 1)),
+        session_ids,
     ).fetchall()
-
     grouped: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
         grouped.setdefault(str(row["session_id"]), []).append(row)
     return grouped
 
 
-def _collect_latest_verification_successes(
-    session_analyses: list[dict[str, object]],
-) -> dict[tuple[str, str, str], datetime]:
-    successes: dict[tuple[str, str, str], datetime] = {}
-    for analysis in session_analyses:
-        project = analysis["project"]
+def _delete_action_queue_rollups(connection: sqlite3.Connection, session_ids: list[str]) -> None:
+    normalized_session_ids = [str(session_id or "").strip() for session_id in session_ids if str(session_id or "").strip()]
+    if not normalized_session_ids:
+        return
+    placeholders = ", ".join("?" for _ in normalized_session_ids)
+    connection.execute(
+        f"DELETE FROM action_queue_signals WHERE session_id IN ({placeholders})",
+        normalized_session_ids,
+    )
+    connection.execute(
+        f"DELETE FROM action_queue_verification_successes WHERE session_id IN ({placeholders})",
+        normalized_session_ids,
+    )
+
+
+def _materialization_project_fields(row: sqlite3.Row | dict[str, Any] | object) -> dict[str, str]:
+    session_id = _normalized_string(_row_value(row, "id"))
+    source_host = _normalized_string(_row_value(row, "source_host")) or "unknown-host"
+    cwd = _normalized_string(_row_value(row, "cwd"))
+    cwd_name = _normalized_string(_row_value(row, "cwd_name"))
+    inferred_key = _normalized_string(_row_value(row, "inferred_project_key"))
+    inferred_label = _normalized_string(_row_value(row, "inferred_project_label"))
+    project_key = inferred_key or f"directory:{source_host}:{cwd or session_id}"
+    project_label = inferred_label or cwd_name or cwd or "Session"
+    return {
+        "effective_group_key": project_key,
+        "display_label": project_label,
+        "source_host": source_host,
+    }
+
+
+def _serialize_issue_payload(issue: dict[str, object]) -> str:
+    payload = {
+        "status_tone": str(issue.get("status_tone") or ""),
+        "status_label": str(issue.get("status_label") or ""),
+        "title": str(issue.get("title") or ""),
+        "status_title": str(issue.get("status_title") or ""),
+        "next_action": str(issue.get("next_action") or ""),
+        "signal_badges": issue.get("signal_badges") if isinstance(issue.get("signal_badges"), list) else [],
+        "files": issue.get("files") if isinstance(issue.get("files"), list) else [],
+        "verification_labels": issue.get("verification_labels")
+        if isinstance(issue.get("verification_labels"), list)
+        else [],
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _materialized_signal_inserts(
+    session_id: str,
+    issues: list[dict[str, object]],
+) -> list[tuple[Any, ...]]:
+    inserts: list[tuple[Any, ...]] = []
+    for issue in issues:
+        inserts.append(
+            (
+                session_id,
+                int(issue.get("turn_number") or 0),
+                str(issue.get("issue_kind") or ""),
+                str(issue.get("signature") or ""),
+                str(issue.get("timestamp") or ""),
+                int(issue.get("severity") or 0),
+                int(issue.get("noise_penalty") or 0),
+                _serialize_issue_payload(issue),
+            )
+        )
+    return inserts
+
+
+def _materialized_verification_success_inserts(
+    session_id: str,
+    turns: list[dict[str, object]],
+    row: sqlite3.Row | dict[str, Any] | object,
+) -> list[tuple[Any, ...]]:
+    inserts: list[tuple[Any, ...]] = []
+    for turn in turns:
+        verdict = turn.get("audit_verification_verdict", {})
+        if str(verdict.get("status") or "") not in {"passed", "passed_with_warnings"}:
+            continue
+        timestamp_row = row if isinstance(row, (sqlite3.Row, dict)) else None
+        timestamp = _issue_timestamp_value(turn, timestamp_row)
+        if not timestamp:
+            continue
+        inserts.append(
+            (
+                session_id,
+                int(turn.get("number") or 0),
+                timestamp,
+                json.dumps(_verification_labels(turn), ensure_ascii=False, sort_keys=True),
+                json.dumps(_turn_files_touched(turn), ensure_ascii=False, sort_keys=True),
+            )
+        )
+    return inserts
+
+
+def _fetch_recent_materialized_signal_rows(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+    *,
+    turns_per_session: int,
+) -> list[sqlite3.Row]:
+    if not session_ids:
+        return []
+
+    placeholders = ", ".join("?" for _ in session_ids)
+    rows = connection.execute(
+        f"""
+        WITH ranked_turns AS (
+            SELECT
+                session_id,
+                turn_number,
+                DENSE_RANK() OVER (
+                    PARTITION BY session_id
+                    ORDER BY turn_number DESC
+                ) AS rn
+            FROM (
+                SELECT DISTINCT session_id, turn_number
+                FROM action_queue_signals
+                WHERE session_id IN ({placeholders})
+            )
+        )
+        SELECT
+            s.session_id,
+            s.turn_number,
+            s.issue_kind,
+            s.signature,
+            s.timestamp,
+            s.severity,
+            s.noise_penalty,
+            s.payload_json
+        FROM action_queue_signals AS s
+        JOIN ranked_turns AS r
+          ON r.session_id = s.session_id
+         AND r.turn_number = s.turn_number
+        WHERE r.rn <= ?
+        ORDER BY s.timestamp DESC, s.session_id ASC, s.turn_number DESC, s.issue_kind ASC
+        """,
+        (*session_ids, max(int(turns_per_session or 1), 1)),
+    ).fetchall()
+    return list(rows)
+
+
+def _fetch_materialized_verification_success_rows(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+) -> list[sqlite3.Row]:
+    if not session_ids:
+        return []
+
+    placeholders = ", ".join("?" for _ in session_ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            session_id,
+            turn_number,
+            timestamp,
+            labels_json,
+            files_json
+        FROM action_queue_verification_successes
+        WHERE session_id IN ({placeholders})
+        ORDER BY timestamp DESC, session_id ASC, turn_number DESC
+        """,
+        session_ids,
+    ).fetchall()
+    return list(rows)
+
+
+def _parse_json_object(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if not isinstance(value, str) or not value.strip():
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if str(item).strip()]
+
+
+def _json_badges(value: object) -> list[dict[str, str]]:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    else:
+        parsed = value
+    if not isinstance(parsed, list):
+        return []
+    badges: list[dict[str, str]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        tone = str(item.get("tone") or "").strip()
+        if not label:
+            continue
+        badges.append({"label": label, "tone": tone})
+    return badges
+
+
+def _hydrate_materialized_issue(
+    *,
+    signal_row: sqlite3.Row,
+    row: sqlite3.Row,
+    project: dict[str, object],
+    project_href: str,
+) -> dict[str, object]:
+    payload = _parse_json_object(signal_row["payload_json"])
+    session_id = str(row["id"])
+    turn_number = int(signal_row["turn_number"] or 0)
+    issue_kind = str(signal_row["issue_kind"] or "")
+    signature = str(signal_row["signature"] or "")
+    return {
+        "issue_kind": issue_kind,
+        "signature": signature,
+        "fingerprint": action_queue_fingerprint(
+            project_key=str(project["effective_group_key"] or ""),
+            host=str(project["source_host"] or ""),
+            issue_kind=issue_kind,
+            signature=signature,
+        ),
+        "severity": int(signal_row["severity"] or 0),
+        "noise_penalty": int(signal_row["noise_penalty"] or 0),
+        "session_id": session_id,
+        "turn_number": turn_number,
+        "project_key": str(project["effective_group_key"] or ""),
+        "project_label": str(project["display_label"] or "Session"),
+        "project_href": project_href,
+        "host": str(project["source_host"] or ""),
+        "timestamp": str(signal_row["timestamp"] or ""),
+        "status_tone": str(payload.get("status_tone") or ""),
+        "status_label": str(payload.get("status_label") or ""),
+        "title": str(payload.get("title") or ""),
+        "status_title": str(payload.get("status_title") or ""),
+        "next_action": str(payload.get("next_action") or ""),
+        "signal_badges": _json_badges(payload.get("signal_badges")),
+        "files": _json_string_list(payload.get("files")),
+        "verification_labels": _json_string_list(payload.get("verification_labels")),
+        "session_href": (
+            f"/sessions/{quote(session_id, safe='')}?view=audit&turn={turn_number}&focus=1"
+            if turn_number > 0
+            else f"/sessions/{quote(session_id, safe='')}"
+        ),
+    }
+
+
+def _collect_materialized_verification_successes(
+    connection: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+) -> VerificationSuccessMarkers:
+    session_ids = [str(row["id"] or "").strip() for row in rows if str(row["id"] or "").strip()]
+    if not session_ids:
+        return _empty_verification_success_markers()
+
+    row_by_session = {str(row["id"]): row for row in rows}
+    by_repo_host: dict[tuple[str, str], datetime] = {}
+    by_label: dict[tuple[str, str, str], datetime] = {}
+    by_file: dict[tuple[str, str, str], datetime] = {}
+    for success_row in _fetch_materialized_verification_success_rows(connection, session_ids):
+        session_id = str(success_row["session_id"] or "").strip()
+        session_row = row_by_session.get(session_id)
+        if session_row is None:
+            continue
+        project = effective_project_fields(session_row)
         repo_key = str(project["effective_group_key"] or "")
         host = str(project["source_host"] or "")
-        turns = analysis["turns"]
-        for turn in turns:
-            verdict = turn.get("audit_verification_verdict", {})
-            if str(verdict.get("status") or "") not in {"passed", "passed_with_warnings"}:
-                continue
-            timestamp = _issue_timestamp(turn)
-            if timestamp is None:
-                continue
-            for label in _verification_labels(turn):
-                marker = (repo_key, host, label)
-                previous = successes.get(marker)
-                if previous is None or timestamp > previous:
-                    successes[marker] = timestamp
-    return successes
+        timestamp = parse_timestamp(str(success_row["timestamp"] or ""))
+        if timestamp is None:
+            continue
+        repo_marker = (repo_key, host)
+        previous_repo_success = by_repo_host.get(repo_marker)
+        if previous_repo_success is None or timestamp > previous_repo_success:
+            by_repo_host[repo_marker] = timestamp
+        for label in _json_string_list(success_row["labels_json"]):
+            marker = (repo_key, host, label)
+            previous = by_label.get(marker)
+            if previous is None or timestamp > previous:
+                by_label[marker] = timestamp
+        for path in _json_string_list(success_row["files_json"]):
+            marker = (repo_key, host, path)
+            previous = by_file.get(marker)
+            if previous is None or timestamp > previous:
+                by_file[marker] = timestamp
+    return VerificationSuccessMarkers(
+        by_repo_host=by_repo_host,
+        by_label=by_label,
+        by_file=by_file,
+    )
 
 
 def _extract_turn_issues(
     *,
-    row: sqlite3.Row,
+    row: sqlite3.Row | dict[str, Any],
     project: dict[str, object],
     turns: list[dict[str, object]],
-    verification_successes: dict[tuple[str, str, str], datetime],
+    verification_successes: VerificationSuccessMarkers,
+    apply_verification_clears: bool = True,
 ) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     repo_key = str(project["effective_group_key"] or "")
@@ -241,19 +689,17 @@ def _extract_turn_issues(
 
     for turn in turns:
         turn_items: list[dict[str, object]] = []
+        issue_timestamp = _issue_timestamp(turn)
 
         verification_issue = _build_verification_failed_issue(row=row, project=project, turn=turn)
-        if verification_issue is not None:
-            labels = list(verification_issue.get("verification_labels") or [])
-            issue_timestamp = _issue_timestamp(turn)
-            superseded = False
-            if issue_timestamp is not None:
-                for label in labels:
-                    success_timestamp = verification_successes.get((repo_key, host, label))
-                    if success_timestamp is not None and success_timestamp > issue_timestamp:
-                        superseded = True
-                        break
-            if not superseded:
+        if not apply_verification_clears or not _issue_cleared_by_later_verification(
+            verification_issue,
+            repo_key=repo_key,
+            host=host,
+            issue_timestamp=issue_timestamp,
+            verification_successes=verification_successes,
+        ):
+            if verification_issue is not None:
                 turn_items.append(verification_issue)
 
         claim_issue = _build_claim_mismatch_issue(row=row, project=project, turn=turn)
@@ -261,8 +707,15 @@ def _extract_turn_issues(
             turn_items.append(claim_issue)
 
         risky_issue = _build_risky_unverified_issue(row=row, project=project, turn=turn)
-        if risky_issue is not None:
-            turn_items.append(risky_issue)
+        if not apply_verification_clears or not _issue_cleared_by_later_verification(
+            risky_issue,
+            repo_key=repo_key,
+            host=host,
+            issue_timestamp=issue_timestamp,
+            verification_successes=verification_successes,
+        ):
+            if risky_issue is not None:
+                turn_items.append(risky_issue)
 
         setup_issue = _build_setup_blocker_issue(row=row, project=project, turn=turn)
         if setup_issue is not None:
@@ -287,12 +740,69 @@ def _extract_turn_issues(
             turn=turn,
             has_verification_failure=has_verification_failure,
         )
-        if aborted_issue is not None:
-            turn_items.append(aborted_issue)
+        if not apply_verification_clears or not _issue_cleared_by_later_verification(
+            aborted_issue,
+            repo_key=repo_key,
+            host=host,
+            issue_timestamp=issue_timestamp,
+            verification_successes=verification_successes,
+        ):
+            if aborted_issue is not None:
+                turn_items.append(aborted_issue)
 
         items.extend(turn_items)
 
     return items
+
+
+def _issue_cleared_by_later_verification(
+    issue: dict[str, object] | None,
+    *,
+    repo_key: str,
+    host: str,
+    issue_timestamp: datetime | None,
+    verification_successes: VerificationSuccessMarkers,
+) -> bool:
+    if issue is None or issue_timestamp is None:
+        return False
+
+    issue_kind = str(issue.get("issue_kind") or "").strip()
+    latest_success: datetime | None = None
+
+    if issue_kind == "verification_failed":
+        for label in issue.get("verification_labels") or []:
+            label_text = str(label or "").strip()
+            if not label_text:
+                continue
+            latest_success = _latest_timestamp(
+                latest_success,
+                verification_successes.by_label.get((repo_key, host, label_text)),
+            )
+        for path in issue.get("files") or []:
+            path_text = str(path or "").strip()
+            if not path_text:
+                continue
+            latest_success = _latest_timestamp(
+                latest_success,
+                verification_successes.by_file.get((repo_key, host, path_text)),
+            )
+        if latest_success is None and not list(issue.get("verification_labels") or []):
+            latest_success = verification_successes.by_repo_host.get((repo_key, host))
+    elif issue_kind in {"risky_changes_unverified", "aborted_after_changes"}:
+        latest_success = verification_successes.by_repo_host.get((repo_key, host))
+
+    return latest_success is not None and latest_success > issue_timestamp
+
+
+def _latest_timestamp(
+    current: datetime | None,
+    candidate: datetime | None,
+) -> datetime | None:
+    if candidate is None:
+        return current
+    if current is None or candidate > current:
+        return candidate
+    return current
 
 
 def _build_verification_failed_issue(
@@ -757,7 +1267,9 @@ def _repo_risk_points(files: object) -> int:
 
 
 def _path_risk_points(path: str) -> int:
-    normalized = path.strip().lower().lstrip("./")
+    normalized = path.strip().lower()
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
     if not normalized:
         return 0
 
@@ -904,6 +1416,12 @@ def _build_issue(
     return {
         "issue_kind": issue_kind,
         "signature": signature,
+        "fingerprint": action_queue_fingerprint(
+            project_key=str(project["effective_group_key"] or ""),
+            host=str(project["source_host"] or ""),
+            issue_kind=issue_kind,
+            signature=signature,
+        ),
         "severity": severity,
         "noise_penalty": noise_penalty,
         "session_id": str(row["id"]),
@@ -944,15 +1462,15 @@ def _issue_timestamp(turn: dict[str, object]) -> datetime | None:
     return parse_timestamp(_issue_timestamp_value(turn, None))
 
 
-def _issue_timestamp_value(turn: dict[str, object], row: sqlite3.Row | None) -> str:
+def _issue_timestamp_value(turn: dict[str, object], row: sqlite3.Row | dict[str, Any] | None) -> str:
     for candidate in (
         turn.get("latest_event_timestamp"),
         turn.get("response_timestamp"),
         turn.get("prompt_timestamp"),
-        row["last_turn_timestamp"] if row is not None else None,
-        row["session_timestamp"] if row is not None else None,
-        row["started_at"] if row is not None else None,
-        row["imported_at"] if row is not None else None,
+        _row_value(row, "last_turn_timestamp") if row is not None else None,
+        _row_value(row, "session_timestamp") if row is not None else None,
+        _row_value(row, "started_at") if row is not None else None,
+        _row_value(row, "imported_at") if row is not None else None,
     ):
         value = str(candidate or "").strip()
         if value:

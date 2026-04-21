@@ -20,6 +20,11 @@ from ...api_tokens import (
     revoke_api_token,
 )
 from ...action_queue import build_homepage_action_queue
+from ...action_queue_state import (
+    clear_action_queue_state,
+    default_snoozed_until,
+    set_action_queue_state,
+)
 from ...db import connect, write_transaction
 from ...environment_audit import fetch_host_environment_audit
 from ...importer import sync_sessions
@@ -309,6 +314,27 @@ def queue_action_response(
                 "session_id": session_id,
                 "turn_number": turn_number,
                 "open_count": open_count,
+                "return_to": return_to,
+            }
+        )
+    return RedirectResponse(url=return_to, status_code=303)
+
+
+def action_queue_state_response(
+    request: Request,
+    *,
+    action: str,
+    fingerprint: str,
+    status: str,
+    return_to: str,
+) -> Response:
+    if "application/json" in request.headers.get("accept", "") or request.headers.get("x-codex-viewer-fetch") == "1":
+        return JSONResponse(
+            {
+                "ok": True,
+                "action": action,
+                "fingerprint": fingerprint,
+                "status": status,
                 "return_to": return_to,
             }
         )
@@ -939,6 +965,72 @@ async def queue_action(request: Request) -> Response:
     )
 
 
+@router.post("/action-queue/actions")
+async def action_queue_action(request: Request) -> Response:
+    context = get_app_context(request)
+    owner_scope = owner_scope_from_request(request)
+    fields = await parse_form_fields(request)
+    action = fields.get("action", "").strip().lower()
+    fingerprint = fields.get("fingerprint", "").strip()
+    project_key = fields.get("project_key", "").strip()
+    issue_kind = fields.get("issue_kind", "").strip()
+    return_to = fields.get("return_to", "").strip() or "/"
+
+    if not fingerprint:
+        raise HTTPException(status_code=400, detail="Missing action-queue fingerprint")
+    if action not in {"resolve", "snooze", "ignore", "reopen"}:
+        raise HTTPException(status_code=400, detail="Unsupported action-queue action")
+
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            if action == "reopen":
+                clear_action_queue_state(
+                    connection,
+                    owner_scope=owner_scope,
+                    fingerprint=fingerprint,
+                )
+                status = "open"
+            elif action == "snooze":
+                set_action_queue_state(
+                    connection,
+                    owner_scope=owner_scope,
+                    fingerprint=fingerprint,
+                    project_key=project_key,
+                    issue_kind=issue_kind,
+                    status="snoozed",
+                    snoozed_until=default_snoozed_until(),
+                )
+                status = "snoozed"
+            elif action == "ignore":
+                set_action_queue_state(
+                    connection,
+                    owner_scope=owner_scope,
+                    fingerprint=fingerprint,
+                    project_key=project_key,
+                    issue_kind=issue_kind,
+                    status="ignored",
+                )
+                status = "ignored"
+            else:
+                set_action_queue_state(
+                    connection,
+                    owner_scope=owner_scope,
+                    fingerprint=fingerprint,
+                    project_key=project_key,
+                    issue_kind=issue_kind,
+                    status="resolved",
+                )
+                status = "resolved"
+
+    return action_queue_state_response(
+        request,
+        action=action,
+        fingerprint=fingerprint,
+        status=status,
+        return_to=return_to,
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
 def index(
     request: Request,
@@ -955,6 +1047,7 @@ def index(
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     hot_window_start = (now - timedelta(days=7)).isoformat()
     with connect(context.settings.database_path) as connection:
+        owner_scope = owner_scope_from_request(request)
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -983,6 +1076,7 @@ def index(
             connection,
             rows,
             repo_groups,
+            owner_scope=owner_scope,
         )
 
     active_host_count, active_hosts, active_hosts_from_agents = build_active_hosts_panel(

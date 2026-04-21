@@ -1419,6 +1419,9 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
     replace_session_turn_activity_daily(connection, parsed.session_id, parsed.events)
     replace_session_turns(connection, parsed.session_id, parsed.events)
     replace_session_turn_search(connection, parsed.session_id, parsed.events)
+    from .action_queue import replace_session_action_queue_rollups
+
+    replace_session_action_queue_rollups(connection, parsed.session_id, parsed.events)
 
 
 def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -> list[dict[str, object]]:

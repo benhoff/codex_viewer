@@ -322,9 +322,14 @@ Those are still useful signals, but they belong in telemetry or session detail v
 
 ## Recommended Implementation Order
 
+Implemented:
+
 1. Add a root-cause fingerprint and dedupe queue items by fingerprint.
 2. Replace homepage session attention with the eligibility gate above.
 3. Score only surviving items with this function.
 4. Add `resolve`, `snooze`, and `ignore fingerprint` controls.
-5. Auto-clear queue items when later successful verification matches the same fingerprint.
-6. Move import warnings and usage pressure into a separate telemetry panel.
+5. Auto-clear verification-backed queue items when later successful verification is recorded for the same repo/host.
+
+Remaining follow-up:
+
+1. Move import warnings and usage pressure into a separate telemetry panel.

@@ -108,9 +108,9 @@
               </div>
               <div class="divide-y divide-amber-200/70">
                 {% for item in action_queue %}
-                  <a href="{{ item.session_href }}" class="block min-w-0 px-4 py-3 transition hover:bg-white/50">
+                  <article class="min-w-0 px-4 py-3 transition hover:bg-white/50">
                     <div class="flex min-w-0 items-center justify-between gap-3">
-                      <p class="min-w-0 truncate text-sm font-semibold text-amber-950">{{ item.title }}</p>
+                      <a href="{{ item.session_href }}" class="min-w-0 flex-1 truncate text-sm font-semibold text-amber-950 transition hover:text-stone-900">{{ item.title }}</a>
                       <span class="shrink-0 rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
                         {{ item.status_label }}
                       </span>
@@ -128,7 +128,42 @@
                         </span>
                       {% endfor %}
                     </div>
-                  </a>
+                    <div class="mt-3 flex flex-wrap gap-2">
+                      <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-stone-700 transition hover:bg-stone-50">
+                        Open audit
+                      </a>
+                      <form method="post" action="/action-queue/actions" class="inline-flex">
+                        <input type="hidden" name="action" value="resolve" />
+                        <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
+                        <input type="hidden" name="project_key" value="{{ item.project_key }}" />
+                        <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
+                        <input type="hidden" name="return_to" value="{{ return_to or '/' }}" />
+                        <button type="submit" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[0.72rem] font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100">
+                          Resolve
+                        </button>
+                      </form>
+                      <form method="post" action="/action-queue/actions" class="inline-flex">
+                        <input type="hidden" name="action" value="snooze" />
+                        <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
+                        <input type="hidden" name="project_key" value="{{ item.project_key }}" />
+                        <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
+                        <input type="hidden" name="return_to" value="{{ return_to or '/' }}" />
+                        <button type="submit" class="inline-flex items-center rounded-full border border-amber-200 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-50">
+                          Snooze 1d
+                        </button>
+                      </form>
+                      <form method="post" action="/action-queue/actions" class="inline-flex">
+                        <input type="hidden" name="action" value="ignore" />
+                        <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
+                        <input type="hidden" name="project_key" value="{{ item.project_key }}" />
+                        <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
+                        <input type="hidden" name="return_to" value="{{ return_to or '/' }}" />
+                        <button type="submit" class="inline-flex items-center rounded-full border border-stone-300 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50">
+                          Ignore fingerprint
+                        </button>
+                      </form>
+                    </div>
+                  </article>
                 {% endfor %}
               </div>
             </section>
