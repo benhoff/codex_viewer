@@ -63,6 +63,7 @@ from ...session_insights import session_agent_snapshot, usage_pressure_snapshot
 from ...saved_turns import (
     count_saved_turns_by_status,
     fetch_turn_snapshot,
+    list_saved_turn_projects,
     list_saved_turns,
     normalize_saved_turn_sort,
     owner_scope_from_request,
@@ -93,6 +94,11 @@ from ..forms import parse_form_fields
 
 
 router = APIRouter()
+
+
+def normalize_queue_group_mode(value: str | None) -> str:
+    group_mode = str(value or "").strip().lower()
+    return group_mode if group_mode in {"flat", "project"} else "flat"
 
 
 def guided_setup_required(
@@ -168,10 +174,12 @@ def render_queue_page(
     status: str = "open",
     sort: str = "newest",
     project_key: str | None = None,
+    group_mode: str = "flat",
 ) -> HTMLResponse:
     context = get_app_context(request)
     owner_scope = owner_scope_from_request(request)
     queue_sort = normalize_saved_turn_sort(sort)
+    queue_group_mode = normalize_queue_group_mode(group_mode)
     queue_project = None
     with connect(context.settings.database_path) as connection:
         project_access = build_project_access_context(
@@ -198,7 +206,44 @@ def render_queue_page(
             project_key=project_key,
             project_access=project_access,
         )
-    queue_scope_suffix = f"&project={quote(project_key, safe='')}" if project_key else ""
+        queue_projects = list_saved_turn_projects(
+            connection,
+            owner_scope,
+            status=status,
+            project_access=project_access,
+        )
+
+    queue_item_groups: list[dict[str, object]] = []
+    if not queue_project and not project_key and queue_group_mode == "project":
+        grouped_items: dict[str, dict[str, object]] = {}
+        for item in items:
+            project_group_key = str(item.get("project_key") or "").strip()
+            group = grouped_items.setdefault(
+                project_group_key,
+                {
+                    "project_key": project_group_key,
+                    "project_label": str(item.get("project_label") or "Project"),
+                    "project_href": str(item.get("project_href") or ""),
+                    "count": 0,
+                    "items": [],
+                },
+            )
+            group["count"] = int(group["count"]) + 1
+            group["items"].append(item)
+        queue_item_groups = list(grouped_items.values())
+        queue_item_groups.sort(
+            key=lambda item: (
+                -int(item.get("count") or 0),
+                str(item.get("project_label") or "").lower(),
+            )
+        )
+
+    queue_scope_suffix = ""
+    if project_key:
+        queue_scope_suffix += f"&project={quote(project_key, safe='')}"
+    if queue_group_mode != "flat" and not project_key:
+        queue_scope_suffix += f"&group={quote(queue_group_mode, safe='')}"
+
     return context.templates.TemplateResponse(
         request,
         name="queue.html",
@@ -208,7 +253,10 @@ def render_queue_page(
             "queue_sort": queue_sort,
             "queue_counts": counts,
             "queue_items": items,
+            "queue_item_groups": queue_item_groups,
+            "queue_group_mode": queue_group_mode,
             "queue_project": queue_project,
+            "queue_projects": queue_projects,
             "queue_scope_suffix": queue_scope_suffix,
             "queue_return_to": f"/queue?status={status}&sort={queue_sort}{queue_scope_suffix}",
             "queue_global_href": f"/queue?status={status}&sort={queue_sort}",
@@ -846,6 +894,7 @@ def review_queue(
     status: str = Query(default="open"),
     sort: str = Query(default="newest"),
     project: str | None = Query(default=None),
+    group: str | None = Query(default=None),
 ) -> HTMLResponse:
     queue_status = status.strip().lower()
     if queue_status not in {"open", "resolved"}:
@@ -856,6 +905,7 @@ def review_queue(
         status=queue_status,
         sort=normalize_saved_turn_sort(sort),
         project_key=project_key,
+        group_mode=normalize_queue_group_mode(group),
     )
 
 

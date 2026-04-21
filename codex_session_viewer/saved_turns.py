@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import Request
 
@@ -10,6 +11,7 @@ from .projects import (
     ProjectAccessContext,
     effective_project_fields,
     filter_rows_for_project_access,
+    resolve_project_detail_hrefs,
 )
 from .session_view import build_turns
 from .text_utils import shorten
@@ -359,9 +361,21 @@ def list_saved_turns(
         params,
     ).fetchall()
 
+    visible_rows = filter_rows_for_project_access(rows, project_access)
+    project_keys = [
+        str(effective_project_fields(row)["effective_group_key"] or "").strip()
+        for row in visible_rows
+    ]
+    project_href_by_key = resolve_project_detail_hrefs(
+        connection,
+        project_keys,
+        project_access=project_access,
+    )
+
     items: list[dict[str, Any]] = []
-    for row in filter_rows_for_project_access(rows, project_access):
+    for row in visible_rows:
         project = effective_project_fields(row)
+        project_key_value = str(project["effective_group_key"] or "").strip()
         activity_timestamp = (
             str(row["resolved_at"] or "").strip()
             or str(row["created_at"] or "").strip()
@@ -379,9 +393,126 @@ def list_saved_turns(
                 "resolved_at": str(row["resolved_at"] or "").strip(),
                 "updated_at": str(row["updated_at"] or "").strip(),
                 "activity_timestamp": activity_timestamp,
+                "project_key": project_key_value,
                 "project_label": str(project["display_label"]),
+                "project_href": (
+                    project_href_by_key.get(project_key_value)
+                    or (f"/groups?key={quote(project_key_value, safe='')}" if project_key_value else "")
+                ),
                 "source_host": str(project["source_host"] or ""),
                 "session_href": f"/sessions/{row['session_id']}?turn={int(row['turn_number'] or 0)}",
             }
         )
+    return items
+
+
+def list_saved_turn_projects(
+    connection: sqlite3.Connection,
+    owner_scope: str,
+    *,
+    status: str | None = None,
+    project_access: ProjectAccessContext | None = None,
+) -> list[dict[str, Any]]:
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in SAVED_TURN_STATUSES:
+        normalized_status = ""
+
+    rows = connection.execute(
+        """
+        SELECT
+            st.status,
+            st.created_at,
+            st.resolved_at,
+            st.updated_at,
+            s.source_host,
+            s.cwd,
+            s.cwd_name,
+            s.git_repository_url,
+            s.github_remote_url,
+            s.github_org,
+            s.github_repo,
+            s.github_slug,
+            s.inferred_project_kind,
+            s.inferred_project_key,
+            s.inferred_project_label,
+            p.id AS project_id,
+            p.visibility AS project_visibility,
+            o.override_group_key,
+            o.override_organization,
+            o.override_repository,
+            o.override_remote_url,
+            o.override_display_label
+        FROM saved_turns AS st
+        INNER JOIN sessions AS s
+            ON s.id = st.session_id
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
+        WHERE st.owner_scope = ?
+        """,
+        (owner_scope,),
+    ).fetchall()
+
+    visible_rows = filter_rows_for_project_access(rows, project_access)
+    project_keys = [
+        str(effective_project_fields(row)["effective_group_key"] or "").strip()
+        for row in visible_rows
+    ]
+    project_href_by_key = resolve_project_detail_hrefs(
+        connection,
+        project_keys,
+        project_access=project_access,
+    )
+
+    summaries: dict[str, dict[str, Any]] = {}
+    for row in visible_rows:
+        project = effective_project_fields(row)
+        project_key_value = str(project["effective_group_key"] or "").strip()
+        if not project_key_value:
+            continue
+
+        row_status = str(row["status"] or "open").strip().lower()
+        summary = summaries.setdefault(
+            project_key_value,
+            {
+                "project_key": project_key_value,
+                "project_label": str(project["display_label"]),
+                "project_href": (
+                    project_href_by_key.get(project_key_value)
+                    or f"/groups?key={quote(project_key_value, safe='')}"
+                ),
+                "source_host": str(project["source_host"] or ""),
+                "open_count": 0,
+                "resolved_count": 0,
+                "visible_count": 0,
+                "latest_activity_timestamp": "",
+            },
+        )
+        if row_status == "open":
+            summary["open_count"] = int(summary["open_count"]) + 1
+        elif row_status == "resolved":
+            summary["resolved_count"] = int(summary["resolved_count"]) + 1
+
+        if not normalized_status or row_status == normalized_status:
+            summary["visible_count"] = int(summary["visible_count"]) + 1
+
+        activity_timestamp = (
+            str(row["resolved_at"] or "").strip()
+            or str(row["created_at"] or "").strip()
+            or str(row["updated_at"] or "").strip()
+        )
+        if activity_timestamp and activity_timestamp > str(summary["latest_activity_timestamp"] or ""):
+            summary["latest_activity_timestamp"] = activity_timestamp
+
+    items = [
+        item
+        for item in summaries.values()
+        if int(item.get("visible_count") or 0) > 0
+    ]
+    items.sort(key=lambda item: str(item.get("project_label") or "").lower())
+    items.sort(key=lambda item: str(item.get("latest_activity_timestamp") or ""), reverse=True)
+    items.sort(key=lambda item: int(item.get("visible_count") or 0), reverse=True)
     return items
