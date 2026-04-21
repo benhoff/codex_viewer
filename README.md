@@ -58,6 +58,12 @@ cp .env.server.example .env
 docker compose up --build -d
 ```
 
+`compose.yml` starts in `remote` sync mode and serves the UI on port `8000`.
+If the server will be reachable by anyone beyond your local machine, enable browser auth before exposing it:
+
+- set `CODEX_VIEWER_AUTH_MODE=password`, or
+- place the app behind a trusted auth proxy and use `CODEX_VIEWER_AUTH_MODE=proxy`
+
 Then open the viewer, finish `/setup`, create a sync token, and connect an agent host.
 
 Agent host setup:
@@ -157,7 +163,8 @@ Example env files:
 
 ## Auth
 
-Browser auth is optional.
+Browser auth is optional for a single-user local install.
+For any remote or shared server, enable `password` auth or put the app behind a trusted auth proxy before exposing it.
 
 Built-in password auth:
 
@@ -185,6 +192,7 @@ Defaults in [compose.yml](compose.yml):
 - `CODEX_VIEWER_SYNC_MODE=remote`
 - SQLite persisted in the `viewer-data` Docker volume
 - viewer served on port `8000`
+- browser auth defaults to `none` unless you set `CODEX_VIEWER_AUTH_MODE` in your `.env`
 
 The Docker build now compiles Tailwind inside the image, so the host does not need Node for the container path.
 
@@ -227,13 +235,25 @@ Wrapper scripts:
 
 ## Testing
 
-The project uses browser-level end-to-end tests for product flows rather than unit tests.
+The repo has both fast Python tests and browser-level end-to-end tests.
+
+Run the Python suite:
+
+```bash
+PYTHONPATH=.deps python3 -m unittest discover -s tests -v
+```
 
 Install the browser runner:
 
 ```bash
 npm install
 npm run test:e2e:install
+```
+
+On Linux, Playwright may also require system browser dependencies before Chromium can launch:
+
+```bash
+sudo npx playwright install-deps
 ```
 
 Run the suite:
@@ -266,6 +286,11 @@ Recommended workflow:
 2. Verify it with `backup verify`.
 3. Restore it into a fresh directory with `backup restore --data-dir ...`.
 4. Start the viewer against the restored directory.
+
+Implementation detail that matters for larger installs:
+
+- `backup create` first snapshots SQLite into a temporary file before writing the archive.
+- Plan for free temp space roughly equal to the database size, plus the output archive.
 
 `backup restore` is intentionally offline and conservative. It restores into a new or empty target directory only; it does not merge into an existing install.
 

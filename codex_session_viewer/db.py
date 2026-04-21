@@ -57,6 +57,7 @@ SESSION_COLUMN_DEFS = {
     "turn_index_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_search_version": "INTEGER NOT NULL DEFAULT 0",
     "action_queue_rollup_version": "INTEGER NOT NULL DEFAULT 0",
+    "environment_rollup_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_count": "INTEGER NOT NULL DEFAULT 0",
     "last_user_message": "TEXT NOT NULL DEFAULT ''",
     "last_turn_timestamp": "TEXT",
@@ -261,6 +262,45 @@ ACTION_QUEUE_SUCCESS_COLUMN_DEFS = {
     "files_json": "TEXT NOT NULL DEFAULT '[]'",
 }
 
+ENVIRONMENT_COMMAND_OBSERVATION_COLUMN_DEFS = {
+    "session_id": "TEXT NOT NULL",
+    "event_index": "INTEGER NOT NULL",
+    "timestamp": "TEXT",
+    "source_host": "TEXT NOT NULL DEFAULT ''",
+    "inferred_project_key": "TEXT NOT NULL DEFAULT ''",
+    "project_label": "TEXT NOT NULL DEFAULT ''",
+    "title": "TEXT NOT NULL DEFAULT ''",
+    "command_text": "TEXT NOT NULL DEFAULT ''",
+    "exit_code": "INTEGER NOT NULL DEFAULT 0",
+    "binary": "TEXT NOT NULL DEFAULT 'unknown'",
+    "command_family": "TEXT NOT NULL DEFAULT 'unknown'",
+    "display_command": "TEXT NOT NULL DEFAULT ''",
+    "wrapper_label": "TEXT",
+    "failure_capability_key": "TEXT NOT NULL DEFAULT ''",
+    "failure_subject_label": "TEXT NOT NULL DEFAULT ''",
+    "failure_status": "TEXT NOT NULL DEFAULT ''",
+    "failure_guidance_kind": "TEXT NOT NULL DEFAULT ''",
+    "failure_class_key": "TEXT NOT NULL DEFAULT ''",
+    "failure_class_label": "TEXT NOT NULL DEFAULT ''",
+    "failure_tone": "TEXT NOT NULL DEFAULT 'stone'",
+    "is_success": "INTEGER NOT NULL DEFAULT 0",
+}
+
+ENVIRONMENT_HOST_CAPABILITY_COLUMN_DEFS = {
+    "source_host": "TEXT NOT NULL",
+    "capability_key": "TEXT NOT NULL",
+    "subject_label": "TEXT NOT NULL DEFAULT ''",
+    "status": "TEXT NOT NULL DEFAULT 'unknown'",
+    "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+    "success_count": "INTEGER NOT NULL DEFAULT 0",
+    "failure_count": "INTEGER NOT NULL DEFAULT 0",
+    "missing_count": "INTEGER NOT NULL DEFAULT 0",
+    "blocked_count": "INTEGER NOT NULL DEFAULT 0",
+    "unknown_count": "INTEGER NOT NULL DEFAULT 0",
+    "latest_timestamp": "TEXT",
+    "updated_at": "TEXT NOT NULL",
+}
+
 SESSION_TURN_COLUMN_DEFS = {
     "session_id": "TEXT NOT NULL",
     "turn_number": "INTEGER NOT NULL",
@@ -344,6 +384,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     turn_index_version INTEGER NOT NULL DEFAULT 0,
     turn_search_version INTEGER NOT NULL DEFAULT 0,
     action_queue_rollup_version INTEGER NOT NULL DEFAULT 0,
+    environment_rollup_version INTEGER NOT NULL DEFAULT 0,
     turn_count INTEGER NOT NULL DEFAULT 0,
     last_user_message TEXT NOT NULL DEFAULT '',
     last_turn_timestamp TEXT,
@@ -602,6 +643,47 @@ CREATE TABLE IF NOT EXISTS action_queue_verification_successes (
     PRIMARY KEY (session_id, turn_number)
 );
 
+CREATE TABLE IF NOT EXISTS environment_command_observations (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    event_index INTEGER NOT NULL,
+    timestamp TEXT,
+    source_host TEXT NOT NULL DEFAULT '',
+    inferred_project_key TEXT NOT NULL DEFAULT '',
+    project_label TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    command_text TEXT NOT NULL DEFAULT '',
+    exit_code INTEGER NOT NULL DEFAULT 0,
+    binary TEXT NOT NULL DEFAULT 'unknown',
+    command_family TEXT NOT NULL DEFAULT 'unknown',
+    display_command TEXT NOT NULL DEFAULT '',
+    wrapper_label TEXT,
+    failure_capability_key TEXT NOT NULL DEFAULT '',
+    failure_subject_label TEXT NOT NULL DEFAULT '',
+    failure_status TEXT NOT NULL DEFAULT '',
+    failure_guidance_kind TEXT NOT NULL DEFAULT '',
+    failure_class_key TEXT NOT NULL DEFAULT '',
+    failure_class_label TEXT NOT NULL DEFAULT '',
+    failure_tone TEXT NOT NULL DEFAULT 'stone',
+    is_success INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_id, event_index)
+);
+
+CREATE TABLE IF NOT EXISTS environment_host_capabilities (
+    source_host TEXT NOT NULL,
+    capability_key TEXT NOT NULL,
+    subject_label TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'unknown',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    success_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    missing_count INTEGER NOT NULL DEFAULT 0,
+    blocked_count INTEGER NOT NULL DEFAULT 0,
+    unknown_count INTEGER NOT NULL DEFAULT 0,
+    latest_timestamp TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (source_host, capability_key)
+);
+
 CREATE TABLE IF NOT EXISTS session_turn_activity_daily (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     activity_date TEXT NOT NULL,
@@ -665,6 +747,15 @@ ON session_turn_activity_daily(activity_date DESC);
 
 CREATE INDEX IF NOT EXISTS idx_session_turns_latest
 ON session_turns(latest_timestamp DESC, session_id DESC, turn_number DESC);
+
+CREATE INDEX IF NOT EXISTS idx_environment_observations_project
+ON environment_command_observations(inferred_project_key, timestamp DESC, session_id DESC, event_index DESC);
+
+CREATE INDEX IF NOT EXISTS idx_environment_observations_host
+ON environment_command_observations(source_host, timestamp DESC, session_id DESC, event_index DESC);
+
+CREATE INDEX IF NOT EXISTS idx_environment_host_capabilities_host
+ON environment_host_capabilities(source_host, status, capability_key);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_session_index
 ON events(session_id, event_index);
@@ -905,6 +996,7 @@ def default_select(column_name: str) -> str:
         "turn_index_version",
         "turn_search_version",
         "action_queue_rollup_version",
+        "environment_rollup_version",
         "turn_count",
         "command_failure_count",
         "aborted_turn_count",
@@ -1197,6 +1289,28 @@ def ensure_action_queue_success_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_environment_observation_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "environment_command_observations"):
+        return
+    observation_columns = table_columns(connection, "environment_command_observations")
+    for column_name, column_def in ENVIRONMENT_COMMAND_OBSERVATION_COLUMN_DEFS.items():
+        if column_name not in observation_columns:
+            connection.execute(
+                f"ALTER TABLE environment_command_observations ADD COLUMN {column_name} {column_def}"
+            )
+
+
+def ensure_environment_host_capability_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "environment_host_capabilities"):
+        return
+    capability_columns = table_columns(connection, "environment_host_capabilities")
+    for column_name, column_def in ENVIRONMENT_HOST_CAPABILITY_COLUMN_DEFS.items():
+        if column_name not in capability_columns:
+            connection.execute(
+                f"ALTER TABLE environment_host_capabilities ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def ensure_session_turn_columns(connection: sqlite3.Connection) -> None:
     if not table_exists(connection, "session_turns"):
         return
@@ -1244,6 +1358,8 @@ def init_db(database_path: Path) -> None:
             ensure_action_queue_state_columns(connection)
             ensure_action_queue_signal_columns(connection)
             ensure_action_queue_success_columns(connection)
+            ensure_environment_observation_columns(connection)
+            ensure_environment_host_capability_columns(connection)
             ensure_session_turn_columns(connection)
             recover_legacy_sessions(connection)
             recover_legacy_events(connection)
@@ -1264,6 +1380,9 @@ def init_db(database_path: Path) -> None:
             from .action_queue import backfill_action_queue_rollups
 
             backfill_action_queue_rollups(connection)
+            from .environment_audit import backfill_environment_rollups
+
+            backfill_environment_rollups(connection)
             from .projects import sync_project_registry
 
             sync_project_registry(connection)

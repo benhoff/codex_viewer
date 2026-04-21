@@ -62,6 +62,7 @@ GROUP_ROW_SELECT = f"""
     s.latest_secondary_limit_resets_at,
     s.latest_rate_limit_name,
     s.latest_rate_limit_reached_type,
+    s.environment_rollup_version,
     s.source_host,
     s.cwd,
     s.cwd_name,
@@ -2279,9 +2280,23 @@ def delete_sessions_for_project_keys(
         keys,
     ).fetchone()
     count = int(row["count"] or 0) if row is not None else 0
+    host_rows = connection.execute(
+        f"""
+        SELECT DISTINCT source_host
+        FROM sessions
+        WHERE inferred_project_key IN ({placeholders})
+        """,
+        keys,
+    ).fetchall()
     connection.execute(
         f"DELETE FROM sessions WHERE inferred_project_key IN ({placeholders})",
         keys,
+    )
+    from .environment_audit import _rebuild_host_capability_rollups
+
+    _rebuild_host_capability_rollups(
+        connection,
+        [str(row["source_host"] or "").strip() for row in host_rows if str(row["source_host"] or "").strip()],
     )
     return count
 

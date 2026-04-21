@@ -37,15 +37,33 @@
         {% else %}
           {% set open_review_count = review_queue_open_count(request) %}
           <div class="flex flex-wrap items-center gap-3">
-            <div class="flex shrink-0 items-center gap-3">
-              <a href="/" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path == '/' or current_path.startswith('/projects') or current_path.startswith('/groups') or current_path.startswith('/sessions') or current_path == '/search' %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Projects</a>
-              <a href="/remotes" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/remotes') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Machines</a>
-              <a href="/queue" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/queue') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">
-                Queue
-                <span data-review-queue-count class="ml-2 {% if not open_review_count %}hidden {% endif %}rounded-full {% if current_path.startswith('/queue') %}bg-white/20 text-white{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ open_review_count }}</span>
-              </a>
+            <div class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+              <div class="flex min-w-0 items-center gap-3">
+                <a
+                  href="/"
+                  aria-label="Projects"
+                  class="inline-flex h-10 w-10 items-center justify-center rounded-full border transition {% if current_path == '/' or current_path.startswith('/projects') or current_path.startswith('/groups') or current_path.startswith('/sessions') or current_path == '/search' %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}"
+                >
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" class="h-4 w-4" aria-hidden="true">
+                    <rect x="3" y="3" width="5.5" height="5.5" rx="1.2"></rect>
+                    <rect x="11.5" y="3" width="5.5" height="5.5" rx="1.2"></rect>
+                    <rect x="3" y="11.5" width="5.5" height="5.5" rx="1.2"></rect>
+                    <rect x="11.5" y="11.5" width="5.5" height="5.5" rx="1.2"></rect>
+                  </svg>
+                </a>
+                <a href="/" class="min-w-0 truncate text-sm font-semibold uppercase tracking-[0.22em] text-[#1F2937]">
+                  Codex Session Viewer
+                </a>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <a href="/machines" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/machines') or current_path.startswith('/remotes') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Machines</a>
+                <a href="/queue" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/queue') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">
+                  Queue
+                  <span data-review-queue-count class="ml-2 {% if not open_review_count %}hidden {% endif %}rounded-full {% if current_path.startswith('/queue') %}bg-white/20 text-white{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ open_review_count }}</span>
+                </a>
+              </div>
             </div>
-            <form action="/search" method="get" class="order-3 basis-full min-w-0 flex-1 sm:order-none sm:ml-auto sm:basis-auto sm:max-w-md">
+            <form action="/search" method="get" class="order-3 basis-full min-w-0 flex-1 sm:order-none sm:basis-auto sm:max-w-md">
               <label class="sr-only" for="nav-search">Search</label>
               <input
                 id="nav-search"
@@ -56,19 +74,39 @@
                 class="w-full rounded-2xl border border-[#E5E7EB] bg-white px-4 py-2.5 text-sm text-[#1F2937] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-200/70"
               />
             </form>
-            {% if request.state.auth_user %}
-              <span class="rounded-full border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-semibold text-[#6B7280]">
-                {{ request.state.auth_user.display_name }}
-              </span>
-            {% endif %}
-            <a href="/settings" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/settings') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Settings</a>
-            {% if request.state.auth_enabled %}
-              <form action="/logout" method="post">
-                <button type="submit" class="rounded-full border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-semibold text-[#6B7280] transition hover:bg-[#F9FAFB] hover:text-[#1F2937]">
-                  Log out
-                </button>
-              </form>
-            {% endif %}
+            <div class="ml-auto flex items-center gap-3">
+              {% if request.state.auth_user %}
+                <details class="relative">
+                  <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-semibold text-[#6B7280] transition hover:bg-[#F9FAFB] hover:text-[#1F2937]">
+                    <span>{{ request.state.auth_user.display_name }}</span>
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" class="h-4 w-4" aria-hidden="true">
+                      <path d="m5 7.5 5 5 5-5" stroke-linecap="round" stroke-linejoin="round"></path>
+                    </svg>
+                  </summary>
+                  <div class="absolute right-0 z-40 mt-2 w-44 rounded-[1.1rem] border border-[#E5E7EB] bg-white p-2 shadow-[0_18px_45px_-28px_rgba(31,41,55,0.22)]">
+                    <a href="/settings" class="block rounded-[0.85rem] px-3 py-2 text-sm font-semibold text-[#1F2937] transition hover:bg-[#F9FAFB]">
+                      Settings
+                    </a>
+                    {% if request.state.auth_enabled %}
+                      <form action="/logout" method="post">
+                        <button type="submit" class="block w-full rounded-[0.85rem] px-3 py-2 text-left text-sm font-semibold text-[#1F2937] transition hover:bg-[#F9FAFB]">
+                          Log out
+                        </button>
+                      </form>
+                    {% endif %}
+                  </div>
+                </details>
+              {% else %}
+                <a href="/settings" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/settings') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Settings</a>
+              {% endif %}
+              {% if not request.state.auth_user and request.state.auth_enabled %}
+                <form action="/logout" method="post">
+                  <button type="submit" class="rounded-full border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-semibold text-[#6B7280] transition hover:bg-[#F9FAFB] hover:text-[#1F2937]">
+                    Log out
+                  </button>
+                </form>
+              {% endif %}
+            </div>
           </div>
         {% endif %}
       </nav>

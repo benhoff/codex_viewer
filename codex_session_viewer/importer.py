@@ -1420,8 +1420,10 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
     replace_session_turns(connection, parsed.session_id, parsed.events)
     replace_session_turn_search(connection, parsed.session_id, parsed.events)
     from .action_queue import replace_session_action_queue_rollups
+    from .environment_audit import replace_session_environment_rollups
 
     replace_session_action_queue_rollups(connection, parsed.session_id, parsed.events)
+    replace_session_environment_rollups(connection, parsed.session_id, parsed.events)
 
 
 def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -> list[dict[str, object]]:
@@ -1501,6 +1503,8 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
             if force:
                 connection.execute("DELETE FROM events")
                 connection.execute("DELETE FROM sessions")
+                connection.execute("DELETE FROM environment_command_observations")
+                connection.execute("DELETE FROM environment_host_capabilities")
                 project_registry_changed = True
 
             restored_source_keys: set[tuple[str, str]] = set()

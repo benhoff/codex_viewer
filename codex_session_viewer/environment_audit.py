@@ -6,7 +6,9 @@ import re
 import shlex
 import sqlite3
 from collections import Counter, OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -119,6 +121,7 @@ PROJECT_ENVIRONMENT_AUDIT_CACHE: OrderedDict[
     tuple[str, str],
     tuple[str, dict[str, Any]],
 ] = OrderedDict()
+ENVIRONMENT_ROLLUP_VERSION = 1
 
 
 @dataclass(slots=True)
@@ -127,6 +130,43 @@ class ParsedCommand:
     command_family: str
     display_command: str
     wrapper_label: str | None = None
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _row_value(row: sqlite3.Row | dict[str, Any] | object, key: str) -> Any:
+    if isinstance(row, sqlite3.Row):
+        try:
+            return row[key]
+        except (IndexError, KeyError):
+            return None
+    if isinstance(row, dict):
+        return row.get(key)
+    return getattr(row, key, None)
+
+
+def _normalized_string(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_environment_events(
+    events: Sequence[sqlite3.Row | dict[str, Any] | object],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for event in events:
+        normalized.append(
+            {
+                "session_id": _row_value(event, "session_id"),
+                "event_index": _row_value(event, "event_index"),
+                "timestamp": _row_value(event, "timestamp"),
+                "command_text": _row_value(event, "command_text"),
+                "exit_code": _row_value(event, "exit_code"),
+                "detail_text": _row_value(event, "detail_text"),
+            }
+        )
+    return normalized
 
 
 def _is_env_assignment(token: str) -> bool:
@@ -352,43 +392,7 @@ def _database_cache_key(connection: sqlite3.Connection) -> str:
     return ":memory:"
 
 
-def _host_cache_fingerprints(connection: sqlite3.Connection, hosts: list[str]) -> list[str]:
-    normalized_hosts = sorted({trimmed(host) for host in hosts if trimmed(host)})
-    if not normalized_hosts:
-        return []
-    placeholders = ", ".join("?" for _ in normalized_hosts)
-    rows = connection.execute(
-        f"""
-        SELECT
-            s.source_host,
-            COUNT(*) AS session_count,
-            MAX(s.updated_at) AS latest_updated_at
-        FROM sessions AS s
-        WHERE s.source_host IN ({placeholders})
-          AND NOT EXISTS (
-            SELECT 1
-            FROM ignored_project_sources AS i
-            WHERE i.match_project_key = s.inferred_project_key
-          )
-        GROUP BY s.source_host
-        ORDER BY s.source_host ASC
-        """,
-        normalized_hosts,
-    ).fetchall()
-    return [
-        "|".join(
-            (
-                str(row["source_host"] or ""),
-                str(row["session_count"] or 0),
-                str(row["latest_updated_at"] or ""),
-            )
-        )
-        for row in rows
-    ]
-
-
 def _project_audit_fingerprint(
-    connection: sqlite3.Connection,
     group_key: str,
     session_rows: list[sqlite3.Row],
 ) -> str:
@@ -400,6 +404,7 @@ def _project_audit_fingerprint(
                 (
                     str(row["id"] or ""),
                     str(row["updated_at"] or ""),
+                    str(_row_value(row, "environment_rollup_version") or 0),
                     str(row["source_host"] or ""),
                     str(row["inferred_project_key"] or ""),
                     str(row["override_updated_at"] or ""),
@@ -411,9 +416,6 @@ def _project_audit_fingerprint(
                 )
             ).encode("utf-8")
         )
-    hosts = [str(row["source_host"] or "") for row in session_rows]
-    for host_fingerprint in _host_cache_fingerprints(connection, hosts):
-        hasher.update(host_fingerprint.encode("utf-8"))
     return hasher.hexdigest()
 
 
@@ -443,6 +445,440 @@ def _store_cached_project_environment_audit(
     while len(PROJECT_ENVIRONMENT_AUDIT_CACHE) > PROJECT_ENVIRONMENT_AUDIT_CACHE_MAXSIZE:
         PROJECT_ENVIRONMENT_AUDIT_CACHE.popitem(last=False)
     return copy.deepcopy(cached_audit)
+
+
+def _fetch_environment_session_rows(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+) -> dict[str, sqlite3.Row]:
+    normalized_ids = [session_id for session_id in session_ids if _normalized_string(session_id)]
+    if not normalized_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in normalized_ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            id,
+            source_host,
+            inferred_project_key,
+            inferred_project_label,
+            cwd_name,
+            last_user_message,
+            latest_turn_summary,
+            last_turn_timestamp,
+            session_timestamp,
+            started_at,
+            imported_at
+        FROM sessions
+        WHERE id IN ({placeholders})
+        """,
+        normalized_ids,
+    ).fetchall()
+    return {str(row["id"] or ""): row for row in rows if _normalized_string(row["id"])}
+
+
+def _fetch_environment_events(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+) -> dict[str, list[sqlite3.Row]]:
+    normalized_ids = [session_id for session_id in session_ids if _normalized_string(session_id)]
+    if not normalized_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in normalized_ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            session_id,
+            event_index,
+            timestamp,
+            command_text,
+            exit_code,
+            detail_text
+        FROM events
+        WHERE session_id IN ({placeholders})
+        ORDER BY session_id ASC, event_index ASC
+        """,
+        normalized_ids,
+    ).fetchall()
+    events_by_session: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        session_id = _normalized_string(row["session_id"])
+        if not session_id:
+            continue
+        events_by_session.setdefault(session_id, []).append(row)
+    return events_by_session
+
+
+def _delete_environment_rollups(connection: sqlite3.Connection, session_ids: list[str]) -> None:
+    normalized_ids = [session_id for session_id in session_ids if _normalized_string(session_id)]
+    if not normalized_ids:
+        return
+    placeholders = ", ".join("?" for _ in normalized_ids)
+    connection.execute(
+        f"DELETE FROM environment_command_observations WHERE session_id IN ({placeholders})",
+        normalized_ids,
+    )
+
+
+def _fetch_materialized_observation_rows(
+    connection: sqlite3.Connection,
+    *,
+    source_host: str | None = None,
+    source_project_keys: list[str] | None = None,
+) -> list[sqlite3.Row]:
+    conditions = [
+        """
+        NOT EXISTS (
+            SELECT 1
+            FROM ignored_project_sources AS i
+            WHERE i.match_project_key = o.inferred_project_key
+        )
+        """,
+    ]
+    params: list[Any] = []
+    if source_host is not None:
+        conditions.append("o.source_host = ?")
+        params.append(source_host)
+    if source_project_keys:
+        placeholders = ", ".join("?" for _ in source_project_keys)
+        conditions.append(f"o.inferred_project_key IN ({placeholders})")
+        params.extend(source_project_keys)
+    return connection.execute(
+        f"""
+        SELECT
+            o.session_id,
+            o.event_index,
+            o.timestamp,
+            o.source_host,
+            o.inferred_project_key,
+            o.project_label,
+            o.title,
+            o.command_text,
+            o.exit_code,
+            o.binary,
+            o.command_family,
+            o.display_command,
+            o.wrapper_label,
+            o.failure_capability_key,
+            o.failure_subject_label,
+            o.failure_status,
+            o.failure_guidance_kind,
+            o.failure_class_key,
+            o.failure_class_label,
+            o.failure_tone,
+            o.is_success
+        FROM environment_command_observations AS o
+        WHERE {' AND '.join(conditions)}
+        ORDER BY COALESCE(o.timestamp, '') DESC,
+                 o.session_id DESC,
+                 o.event_index DESC
+        """,
+        params,
+    ).fetchall()
+
+
+def _fetch_host_capability_rows(
+    connection: sqlite3.Connection,
+    hosts: list[str],
+) -> dict[str, dict[str, sqlite3.Row]]:
+    normalized_hosts = sorted({trimmed(host) for host in hosts if trimmed(host)})
+    if not normalized_hosts:
+        return {}
+    placeholders = ", ".join("?" for _ in normalized_hosts)
+    rows = connection.execute(
+        f"""
+        SELECT
+            source_host,
+            capability_key,
+            subject_label,
+            status,
+            attempt_count,
+            success_count,
+            failure_count,
+            missing_count,
+            blocked_count,
+            unknown_count,
+            latest_timestamp,
+            updated_at
+        FROM environment_host_capabilities
+        WHERE source_host IN ({placeholders})
+        ORDER BY source_host ASC, capability_key ASC
+        """,
+        normalized_hosts,
+    ).fetchall()
+    by_host: dict[str, dict[str, sqlite3.Row]] = {host: {} for host in normalized_hosts}
+    for row in rows:
+        host = _normalized_string(row["source_host"])
+        capability_key = _normalized_string(row["capability_key"])
+        if not host or not capability_key:
+            continue
+        by_host.setdefault(host, {})[capability_key] = row
+    return by_host
+
+
+def _materialized_project_label(session_row: sqlite3.Row) -> str:
+    return (
+        trimmed(session_row["inferred_project_label"])
+        or trimmed(session_row["cwd_name"])
+        or trimmed(session_row["inferred_project_key"])
+        or "Unknown project"
+    )
+
+
+def _materialized_session_title(session_row: sqlite3.Row) -> str:
+    return trimmed(session_row["last_user_message"]) or trimmed(session_row["latest_turn_summary"]) or "Session activity"
+
+
+def _materialized_observation_inserts(
+    session_row: sqlite3.Row,
+    events: Sequence[dict[str, Any]],
+) -> list[tuple[Any, ...]]:
+    session_id = _normalized_string(session_row["id"])
+    if not session_id:
+        return []
+    source_host = trimmed(session_row["source_host"]) or "unknown-host"
+    project_key = trimmed(session_row["inferred_project_key"]) or ""
+    project_label = _materialized_project_label(session_row)
+    title = _materialized_session_title(session_row)
+
+    inserts: list[tuple[Any, ...]] = []
+    for event in events:
+        command_text = _normalized_string(event.get("command_text"))
+        if not command_text:
+            continue
+        event_index = int(event.get("event_index") or 0)
+        timestamp = _normalized_string(event.get("timestamp"))
+        exit_code = int(event.get("exit_code") or 0)
+        detail_text = _normalized_string(event.get("detail_text"))
+        parsed = parse_command(command_text)
+        failure = classify_failure(command_text, exit_code, detail_text)
+        inserts.append(
+            (
+                session_id,
+                event_index,
+                timestamp or None,
+                source_host,
+                project_key,
+                project_label,
+                title,
+                command_text,
+                exit_code,
+                parsed.binary,
+                parsed.command_family,
+                parsed.display_command or command_text,
+                parsed.wrapper_label,
+                str(failure["capability_key"]) if failure else "",
+                str(failure["subject_label"]) if failure else "",
+                str(failure["status"]) if failure else "",
+                str(failure["guidance_kind"]) if failure else "",
+                str(failure["class_key"]) if failure else "",
+                str(failure["class_label"]) if failure else "",
+                str(failure["tone"]) if failure else "stone",
+                1 if exit_code == 0 else 0,
+            )
+        )
+    return inserts
+
+
+def _materialized_observation_columns() -> str:
+    return """
+        session_id,
+        event_index,
+        timestamp,
+        source_host,
+        inferred_project_key,
+        project_label,
+        title,
+        command_text,
+        exit_code,
+        binary,
+        command_family,
+        display_command,
+        wrapper_label,
+        failure_capability_key,
+        failure_subject_label,
+        failure_status,
+        failure_guidance_kind,
+        failure_class_key,
+        failure_class_label,
+        failure_tone,
+        is_success
+    """
+
+
+def _rebuild_host_capability_rollups(
+    connection: sqlite3.Connection,
+    hosts: Sequence[str],
+) -> None:
+    normalized_hosts = sorted({trimmed(host) for host in hosts if trimmed(host)})
+    if not normalized_hosts:
+        return
+
+    placeholders = ", ".join("?" for _ in normalized_hosts)
+    connection.execute(
+        f"DELETE FROM environment_host_capabilities WHERE source_host IN ({placeholders})",
+        normalized_hosts,
+    )
+
+    updated_at = _utc_now_iso()
+    inserts: list[tuple[Any, ...]] = []
+    for host in normalized_hosts:
+        observation_rows = _fetch_materialized_observation_rows(connection, source_host=host)
+        binary_map, signals, _recent_evidence, _failure_rows = _build_observations_from_materialized(
+            observation_rows,
+            {},
+        )
+        for binary, item in binary_map.items():
+            if binary == "unknown":
+                continue
+            status = str(item["status"])
+            inserts.append(
+                (
+                    host,
+                    f"binary:{binary}",
+                    binary,
+                    status,
+                    int(item["attempt_count"]),
+                    int(item["success_count"]),
+                    int(item["failure_count"]),
+                    int(item["failure_count"]) if status == "missing" else 0,
+                    int(item["failure_count"]) if status == "blocked" else 0,
+                    int(item["attempt_count"]) if status == "unknown" else 0,
+                    item["last_timestamp"] or None,
+                    updated_at,
+                )
+            )
+        for signal in signals:
+            signal_key = str(signal["key"])
+            if signal_key.startswith("binary:"):
+                continue
+            signal_status = str(signal["status"])
+            normalized_status = "missing" if signal_status == "missing" else ("blocked" if signal_status else "unknown")
+            inserts.append(
+                (
+                    host,
+                    signal_key,
+                    str(signal["subject_label"]),
+                    normalized_status,
+                    int(signal["count"]),
+                    0,
+                    int(signal["count"]),
+                    int(signal["count"]) if normalized_status == "missing" else 0,
+                    int(signal["count"]) if normalized_status == "blocked" else 0,
+                    int(signal["count"]) if normalized_status == "unknown" else 0,
+                    (signal.get("examples") or [{}])[0].get("timestamp") or None,
+                    updated_at,
+                )
+            )
+
+    if inserts:
+        connection.executemany(
+            f"""
+            INSERT INTO environment_host_capabilities (
+                source_host,
+                capability_key,
+                subject_label,
+                status,
+                attempt_count,
+                success_count,
+                failure_count,
+                missing_count,
+                blocked_count,
+                unknown_count,
+                latest_timestamp,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            inserts,
+        )
+
+
+def replace_session_environment_rollups(
+    connection: sqlite3.Connection,
+    session_id: str,
+    events: Sequence[sqlite3.Row | dict[str, Any] | object] | None = None,
+) -> None:
+    normalized_session_id = _normalized_string(session_id)
+    if not normalized_session_id:
+        return
+
+    session_row = _fetch_environment_session_rows(connection, [normalized_session_id]).get(normalized_session_id)
+    _delete_environment_rollups(connection, [normalized_session_id])
+    if session_row is None:
+        return
+
+    normalized_events = _normalize_environment_events(
+        events if events is not None else _fetch_environment_events(connection, [normalized_session_id]).get(normalized_session_id, [])
+    )
+    observation_inserts = _materialized_observation_inserts(session_row, normalized_events)
+    if observation_inserts:
+        connection.executemany(
+            f"""
+            INSERT INTO environment_command_observations (
+                {_materialized_observation_columns()}
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            observation_inserts,
+        )
+
+    _rebuild_host_capability_rollups(
+        connection,
+        [trimmed(session_row["source_host"]) or "unknown-host"],
+    )
+    connection.execute(
+        "UPDATE sessions SET environment_rollup_version = ? WHERE id = ?",
+        (ENVIRONMENT_ROLLUP_VERSION, normalized_session_id),
+    )
+
+
+def backfill_environment_rollups(connection: sqlite3.Connection) -> int:
+    stale_rows = connection.execute(
+        """
+        SELECT id, source_host
+        FROM sessions
+        WHERE COALESCE(environment_rollup_version, 0) < ?
+        ORDER BY id ASC
+        """,
+        (ENVIRONMENT_ROLLUP_VERSION,),
+    ).fetchall()
+    session_ids = [_normalized_string(row["id"]) for row in stale_rows if _normalized_string(row["id"])]
+    if not session_ids:
+        return 0
+
+    session_rows = _fetch_environment_session_rows(connection, session_ids)
+    events_by_session = _fetch_environment_events(connection, session_ids)
+    _delete_environment_rollups(connection, session_ids)
+
+    observation_inserts: list[tuple[Any, ...]] = []
+    affected_hosts: set[str] = set()
+    for session_id in session_ids:
+        session_row = session_rows.get(session_id)
+        if session_row is None:
+            continue
+        affected_hosts.add(trimmed(session_row["source_host"]) or "unknown-host")
+        observation_inserts.extend(
+            _materialized_observation_inserts(
+                session_row,
+                _normalize_environment_events(events_by_session.get(session_id, [])),
+            )
+        )
+
+    if observation_inserts:
+        connection.executemany(
+            f"""
+            INSERT INTO environment_command_observations (
+                {_materialized_observation_columns()}
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            observation_inserts,
+        )
+
+    _rebuild_host_capability_rollups(connection, sorted(affected_hosts))
+    connection.executemany(
+        "UPDATE sessions SET environment_rollup_version = ? WHERE id = ?",
+        [(ENVIRONMENT_ROLLUP_VERSION, session_id) for session_id in session_ids],
+    )
+    return len(session_ids)
 
 
 def _command_rows_for_sessions(
@@ -676,6 +1112,146 @@ def _build_observations(
     return {item["binary"]: item for item in binary_list}, signal_list, recent_evidence, failures
 
 
+def _build_observations_from_materialized(
+    observation_rows: list[sqlite3.Row],
+    project_labels_by_key: dict[str, str],
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    binaries: dict[str, dict[str, Any]] = {}
+    signals: dict[str, dict[str, Any]] = {}
+    failures: list[dict[str, Any]] = []
+    recent_evidence: list[dict[str, Any]] = []
+
+    for row in observation_rows:
+        binary = _normalized_string(row["binary"]) or "unknown"
+        project_key = trimmed(row["inferred_project_key"]) or ""
+        project_label = (
+            project_labels_by_key.get(project_key)
+            or trimmed(row["project_label"])
+            or project_key
+            or "Unknown project"
+        )
+        observation = binaries.setdefault(
+            binary,
+            {
+                "binary": binary,
+                "command_family": _normalized_string(row["command_family"]) or binary,
+                "display_command": _normalized_string(row["display_command"]) or _normalized_string(row["command_text"]),
+                "wrapper_label": trimmed(row["wrapper_label"]) or None,
+                "attempt_count": 0,
+                "success_count": 0,
+                "failure_count": 0,
+                "project_labels": set(),
+                "example_session_id": _normalized_string(row["session_id"]),
+                "example_command": _normalized_string(row["command_text"]),
+                "last_timestamp": trimmed(row["timestamp"]) or "",
+                "last_failure_class": None,
+            },
+        )
+        observation["attempt_count"] += 1
+        observation["project_labels"].add(project_label)
+        if int(row["is_success"] or 0) == 1:
+            observation["success_count"] += 1
+        else:
+            observation["failure_count"] += 1
+            failure_key = _normalized_string(row["failure_class_key"])
+            if failure_key:
+                observation["last_failure_class"] = failure_key
+                signal_key = _normalized_string(row["failure_capability_key"])
+                signal = signals.setdefault(
+                    signal_key,
+                    {
+                        "key": signal_key,
+                        "status": _normalized_string(row["failure_status"]),
+                        "subject_label": _normalized_string(row["failure_subject_label"]),
+                        "guidance_kind": _normalized_string(row["failure_guidance_kind"]),
+                        "tone": _normalized_string(row["failure_tone"]) or "stone",
+                        "count": 0,
+                        "binaries": set(),
+                        "project_labels": set(),
+                        "examples": [],
+                    },
+                )
+                signal["count"] += 1
+                signal["binaries"].add(binary)
+                signal["project_labels"].add(project_label)
+                if len(signal["examples"]) < 3:
+                    signal["examples"].append(
+                        {
+                            "command": _normalized_string(row["command_text"]),
+                            "session_href": f"/sessions/{quote(_normalized_string(row['session_id']), safe='')}",
+                            "session_id": _normalized_string(row["session_id"]),
+                            "timestamp": trimmed(row["timestamp"]) or "",
+                            "project_label": project_label,
+                        }
+                    )
+                failures.append(
+                    {
+                        "binary": binary,
+                        "command": _normalized_string(row["command_text"]),
+                        "class_key": failure_key,
+                        "class_label": _normalized_string(row["failure_class_label"]),
+                        "guidance_kind": _normalized_string(row["failure_guidance_kind"]),
+                        "tone": _normalized_string(row["failure_tone"]) or "stone",
+                        "project_label": project_label,
+                        "session_href": f"/sessions/{quote(_normalized_string(row['session_id']), safe='')}",
+                        "session_id": _normalized_string(row["session_id"]),
+                        "timestamp": trimmed(row["timestamp"]) or "",
+                    }
+                )
+
+        if len(recent_evidence) < 12:
+            recent_evidence.append(
+                {
+                    "session_id": _normalized_string(row["session_id"]),
+                    "session_href": f"/sessions/{quote(_normalized_string(row['session_id']), safe='')}",
+                    "title": _normalized_string(row["title"]) or "Session activity",
+                    "timestamp": trimmed(row["timestamp"]) or "",
+                    "project_label": project_label,
+                    "command": _normalized_string(row["command_text"]),
+                    "binary": binary,
+                    "exit_code": int(row["exit_code"] or 0),
+                }
+            )
+
+    binary_list: list[dict[str, Any]] = []
+    for binary, item in binaries.items():
+        status = "available" if item["success_count"] > 0 else "unknown"
+        guidance_summary = None
+        signal = signals.get(f"binary:{binary}")
+        if signal and item["success_count"] == 0:
+            status = "missing" if signal["status"] == "missing" else "blocked"
+            guidance_summary = signal["guidance_kind"]
+        binary_list.append(
+            {
+                **item,
+                "status": status,
+                "status_label": "Available" if status == "available" else ("Missing" if status == "missing" else ("Blocked" if status == "blocked" else "Unknown")),
+                "project_labels": sorted(item["project_labels"]),
+                "guidance_summary": guidance_summary,
+            }
+        )
+    binary_list.sort(
+        key=lambda item: (
+            0 if item["status"] == "missing" else 1 if item["status"] == "blocked" else 2 if item["status"] == "unknown" else 3,
+            1 if item["binary"] in BASELINE_BINARIES else 0,
+            -int(item["failure_count"]),
+            -int(item["attempt_count"]),
+            item["binary"],
+        )
+    )
+    failures.sort(key=lambda item: (item["class_label"], item["binary"], item["timestamp"]), reverse=True)
+    signal_list = [
+        {
+            **signal,
+            "binaries": sorted(signal["binaries"]),
+            "project_labels": sorted(signal["project_labels"]),
+        }
+        for signal in signals.values()
+    ]
+    signal_list.sort(key=lambda item: (-int(item["count"]), item["subject_label"]))
+    return {item["binary"]: item for item in binary_list}, signal_list, recent_evidence, failures
+
+
 def _tool_surface_summary(tool_rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
     return [
         {"tool_name": str(row["tool_name"]), "count": int(row["count"] or 0)}
@@ -693,6 +1269,23 @@ def _status_for_requirement(binary_map: dict[str, dict[str, Any]], signals: list
     for signal in signals:
         if signal["key"] == requirement_key:
             return "missing" if signal["status"] == "missing" else "blocked"
+    return "unknown"
+
+
+def _capability_status_for_requirement(
+    capability_rows: dict[str, sqlite3.Row],
+    requirement_key: str,
+) -> str:
+    row = capability_rows.get(requirement_key)
+    if row is None:
+        return "unknown"
+    status = _normalized_string(row["status"])
+    if status == "available":
+        return "available"
+    if status == "missing":
+        return "missing"
+    if status in {"blocked", "setup", "warning"}:
+        return "blocked"
     return "unknown"
 
 
@@ -874,7 +1467,7 @@ def fetch_host_environment_audit(
         effective_project_fields(row)["inferred_project_key"]: effective_project_fields(row)["display_label"]
         for row in session_rows
     }
-    command_rows = _command_rows_for_sessions(
+    observation_rows = _fetch_materialized_observation_rows(
         connection,
         source_host=source_host,
         source_project_keys=visible_source_project_keys,
@@ -884,7 +1477,10 @@ def fetch_host_environment_audit(
         source_host=source_host,
         source_project_keys=visible_source_project_keys,
     )
-    binary_map, signals, recent_evidence, failure_rows = _build_observations(command_rows, project_labels_by_key)
+    binary_map, signals, recent_evidence, failure_rows = _build_observations_from_materialized(
+        observation_rows,
+        project_labels_by_key,
+    )
     remote_snapshot = next(
         (item for item in fetch_remote_agent_health(connection, settings) if str(item["source_host"]) == source_host),
         None,
@@ -986,13 +1582,7 @@ def _host_fit_for_project(
     *,
     project_access: ProjectAccessContext | None = None,
 ) -> dict[str, Any]:
-    host_commands = _command_rows_for_sessions(connection, source_host=host)
-    host_project_rows = _visible_session_rows_for_host(connection, host, project_access=project_access)
-    project_labels_by_key = {
-        effective_project_fields(row)["inferred_project_key"]: effective_project_fields(row)["display_label"]
-        for row in host_project_rows
-    }
-    binary_map, signals, _recent_evidence, _failure_rows = _build_observations(host_commands, project_labels_by_key)
+    capability_rows = _fetch_host_capability_rows(connection, [host]).get(host, {})
     required = [item for item in requirements if item["strength"] == "required"]
     if not required:
         return {
@@ -1006,14 +1596,14 @@ def _host_fit_for_project(
             "missing": [],
             "blocked": [],
             "unknown": [],
-            "audit_href": f"/remotes/{quote(host, safe='')}/audit",
+            "audit_href": f"/machines/{quote(host, safe='')}/audit",
         }
     met: list[str] = []
     missing: list[str] = []
     blocked: list[str] = []
     unknown: list[str] = []
     for requirement in required:
-        status = _status_for_requirement(binary_map, signals, requirement["key"])
+        status = _capability_status_for_requirement(capability_rows, requirement["key"])
         if status == "available":
             met.append(requirement["label"])
         elif status == "missing":
@@ -1047,7 +1637,7 @@ def _host_fit_for_project(
         "missing": missing[:4],
         "blocked": blocked[:4],
         "unknown": unknown[:4],
-        "audit_href": f"/remotes/{quote(host, safe='')}/audit",
+        "audit_href": f"/machines/{quote(host, safe='')}/audit",
     }
 
 
@@ -1060,15 +1650,7 @@ def fetch_project_environment_audit(
     session_rows = _visible_session_rows_for_project(connection, group_key, project_access=project_access)
     if not session_rows:
         return None
-    fingerprint = _project_audit_fingerprint(connection, group_key, session_rows)
-    cached = _get_cached_project_environment_audit(connection, group_key, fingerprint)
-    if cached is not None:
-        return cached
-    grouped = build_grouped_projects(session_rows)
-    group = next((item for item in grouped if item.key == group_key), None)
-    if group is None:
-        return None
-    group.detail_href = project_detail_href_for_route(*project_route_segments(group))
+    fingerprint = _project_audit_fingerprint(group_key, session_rows)
     source_project_keys = sorted(
         {
             str(effective_project_fields(row)["inferred_project_key"])
@@ -1080,12 +1662,41 @@ def fetch_project_environment_audit(
         effective_project_fields(row)["inferred_project_key"]: effective_project_fields(row)["display_label"]
         for row in session_rows
     }
-    command_rows = _command_rows_for_sessions(connection, source_project_keys=source_project_keys)
-    tool_rows = _tool_rows_for_sessions(connection, source_project_keys=source_project_keys)
-    binary_map, signals, recent_evidence, failure_rows = _build_observations(command_rows, project_labels_by_key)
-    failure_groups = _group_failures(failure_rows)
-    requirements = _infer_project_requirements(binary_map, signals)
-    profiles = _score_profiles(binary_map, signals)
+    core = _get_cached_project_environment_audit(connection, group_key, fingerprint)
+    if core is None:
+        grouped = build_grouped_projects(session_rows)
+        group = next((item for item in grouped if item.key == group_key), None)
+        if group is None:
+            return None
+        group.detail_href = project_detail_href_for_route(*project_route_segments(group))
+        observation_rows = _fetch_materialized_observation_rows(
+            connection,
+            source_project_keys=source_project_keys,
+        )
+        tool_rows = _tool_rows_for_sessions(connection, source_project_keys=source_project_keys)
+        binary_map, signals, recent_evidence, failure_rows = _build_observations_from_materialized(
+            observation_rows,
+            project_labels_by_key,
+        )
+        failure_groups = _group_failures(failure_rows)
+        requirements = _infer_project_requirements(binary_map, signals)
+        profiles = _score_profiles(binary_map, signals)
+        core = _store_cached_project_environment_audit(
+            connection,
+            group_key,
+            fingerprint,
+            {
+                "group": group,
+                "summary": _project_summary(session_rows, failure_groups, profiles),
+                "tool_surface": _tool_surface_summary(tool_rows),
+                "requirements": requirements,
+                "profiles": profiles,
+                "failure_groups": failure_groups,
+                "recent_evidence": recent_evidence[:10],
+            },
+        )
+
+    requirements = list(core["requirements"])
     hosts = sorted({trimmed(row["source_host"]) or "unknown-host" for row in session_rows})
     host_fit = [
         _host_fit_for_project(connection, host, requirements, project_access=project_access)
@@ -1108,14 +1719,8 @@ def fetch_project_environment_audit(
                 }
             )
     audit = {
-        "group": group,
-        "summary": _project_summary(session_rows, failure_groups, profiles),
-        "tool_surface": _tool_surface_summary(tool_rows),
-        "requirements": requirements,
-        "profiles": profiles,
-        "failure_groups": failure_groups,
+        **core,
         "host_fit": host_fit,
         "setup_guidance": guidance[:10],
-        "recent_evidence": recent_evidence[:10],
     }
-    return _store_cached_project_environment_audit(connection, group_key, fingerprint, audit)
+    return audit

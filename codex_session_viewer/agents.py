@@ -799,7 +799,7 @@ def fetch_agents_dashboard(
             "last_failure_detail": trimmed(remote.get("last_failure_detail")) or "",
             "primary_href": primary["href"] if primary else "",
             "primary_label": primary_label,
-            "audit_href": f"/remotes/{quote(source_host, safe='')}/audit",
+            "audit_href": f"/machines/{quote(source_host, safe='')}/audit",
             "toggle_id": f"agent-details-{quote(source_host, safe='')}",
         }
         agent_rows.append(row_item)

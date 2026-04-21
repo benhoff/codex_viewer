@@ -64,7 +64,7 @@
             <h2 class="text-lg font-semibold text-stone-900">Needs Attention</h2>
             <p class="text-sm text-stone-600">Start here when a machine is unhealthy or a recent session still needs follow-up.</p>
           </div>
-          <a href="/remotes" class="text-sm font-semibold text-stone-600 transition hover:text-stone-900">View machines</a>
+          <a href="/machines" class="text-sm font-semibold text-stone-600 transition hover:text-stone-900">View machines</a>
         </div>
 
         {% if failed_agents or action_queue %}
@@ -78,7 +78,7 @@
               </div>
               <div class="divide-y divide-[#E5E7EB]">
                 {% for remote in failed_agents %}
-                  <a href="/remotes" class="block min-w-0 px-4 py-3 transition hover:bg-[#F9FAFB]">
+                  <a href="/machines" class="block min-w-0 px-4 py-3 transition hover:bg-[#F9FAFB]">
                     <div class="flex min-w-0 items-center justify-between gap-3">
                       <p class="min-w-0 truncate text-sm font-semibold text-[#1F2937]">{{ remote.source_host }}</p>
                       <span class="shrink-0 rounded-full bg-[#FEE2E2] px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-[#DC2626]">

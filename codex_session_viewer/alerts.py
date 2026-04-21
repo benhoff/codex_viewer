@@ -88,7 +88,7 @@ def _build_delivery_payload(
 ) -> dict[str, object]:
     source_host = str(incident["source_host"])
     issue_kind = str(incident["issue_kind"])
-    audit_path = f"/remotes/{quote(source_host, safe='')}/audit"
+    audit_path = f"/machines/{quote(source_host, safe='')}/audit"
     audit_url = None
     if settings.server_base_url:
         audit_url = f"{settings.server_base_url.rstrip('/')}{audit_path}"

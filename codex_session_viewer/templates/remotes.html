@@ -115,7 +115,7 @@
                 </a>
               {% else %}
                 <div class="rounded-[0.95rem] border border-dashed border-stone-900/15 bg-white/80 p-3 text-sm text-stone-500">
-                  No recent sessions imported for this host.
+                  No recent sessions imported for this machine.
                 </div>
               {% endfor %}
             </div>
@@ -144,7 +144,7 @@
           {% endif %}
 
           <div class="rounded-[1.1rem] border border-stone-200 bg-stone-50/80 p-4">
-            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Host Health</p>
+            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Machine Health</p>
             <div class="mt-3 grid gap-3">
               <div class="rounded-[0.95rem] bg-white/90 p-3">
                 <p class="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Last sync pass</p>
@@ -227,22 +227,31 @@
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Fleet Overview</p>
           <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">Machines</h1>
           <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
-            Host activity, stale machines, sync trouble, and the fastest route back to the affected repo or session.
+            Machine activity, stale machines, sync trouble, and the fastest route back to the affected repo or session.
           </p>
         </div>
 
-        <div class="grid w-full grid-cols-3 gap-3 lg:w-[24rem]">
-          <div class="rounded-[1.15rem] bg-rose-50 p-4">
-            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-rose-600">Needs Attention</p>
-            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ agents_dashboard.counts.attention }}</p>
+        <div class="grid w-full gap-3 sm:grid-cols-3 lg:w-[24rem]">
+          <div class="rounded-[1.15rem] border border-[#E5E7EB] bg-white px-4 py-3">
+            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-[#DC2626]">Machines Needing Attention</p>
+            <div class="mt-2 flex items-end justify-between gap-3">
+              <p class="text-3xl font-semibold text-[#1F2937]">{{ agents_dashboard.counts.attention }}</p>
+              <p class="text-xs text-[#6B7280]">operator follow-up</p>
+            </div>
           </div>
-          <div class="rounded-[1.15rem] bg-emerald-50 p-4">
-            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-emerald-600">Active</p>
-            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ agents_dashboard.counts.active }}</p>
+          <div class="rounded-[1.15rem] border border-[#E5E7EB] bg-white px-4 py-3">
+            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-[#16A34A]">Active Machines</p>
+            <div class="mt-2 flex items-end justify-between gap-3">
+              <p class="text-3xl font-semibold text-[#1F2937]">{{ agents_dashboard.counts.active }}</p>
+              <p class="text-xs text-[#6B7280]">fresh heartbeat or work</p>
+            </div>
           </div>
-          <div class="rounded-[1.15rem] bg-stone-100 p-4">
-            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-600">Dormant / Offline</p>
-            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ agents_dashboard.counts.dormant }}</p>
+          <div class="rounded-[1.15rem] border border-[#E5E7EB] bg-white px-4 py-3">
+            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-[#6B7280]">Dormant / Offline</p>
+            <div class="mt-2 flex items-end justify-between gap-3">
+              <p class="text-3xl font-semibold text-[#1F2937]">{{ agents_dashboard.counts.dormant }}</p>
+              <p class="text-xs text-[#6B7280]">stale or idle</p>
+            </div>
           </div>
         </div>
       </div>
@@ -257,10 +266,10 @@
     <section data-agents-section="attention" class="mb-8">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Needs Attention</h2>
-          <p class="mt-1 text-sm text-stone-600">Hosts with sync trouble that likely need operator attention.</p>
+          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Machines Needing Attention</h2>
+          <p class="mt-1 text-sm text-stone-600">Machines with sync trouble that likely need operator attention.</p>
         </div>
-        <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">{{ agents_dashboard.counts.attention }} hosts</span>
+        <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">{{ agents_dashboard.counts.attention }} machines</span>
       </div>
       <div class="space-y-4">
         {% for agent in agents_dashboard.attention %}
@@ -276,17 +285,17 @@
     <section data-agents-section="active" class="mb-8">
       <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Active Hosts</h2>
+          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Active Machines</h2>
           <p class="mt-1 text-sm text-stone-600">Machines with fresh heartbeats or recent work, plus quick drill-ins.</p>
         </div>
-        <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">{{ agents_dashboard.counts.active }} hosts</span>
+        <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">{{ agents_dashboard.counts.active }} machines</span>
       </div>
       <div class="space-y-4">
         {% for agent in agents_dashboard.active %}
           {{ agent_row(agent, return_to) }}
         {% else %}
           <div class="rounded-[1.4rem] border border-dashed border-stone-900/15 bg-white/70 p-5 text-sm text-stone-600">
-            No active hosts are currently surfaced.
+            No active machines are currently surfaced.
           </div>
         {% endfor %}
       </div>
@@ -297,9 +306,9 @@
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Dormant / Offline</h2>
-            <p class="mt-1 text-sm text-stone-600">Lower-priority hosts that are currently stale or have no recent activity.</p>
+            <p class="mt-1 text-sm text-stone-600">Lower-priority machines that are currently stale or have no recent activity.</p>
           </div>
-          <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">{{ agents_dashboard.counts.dormant }} hosts</span>
+          <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-50">{{ agents_dashboard.counts.dormant }} machines</span>
         </div>
       </summary>
       <div class="mt-5 space-y-4">
@@ -307,7 +316,7 @@
           {{ agent_row(agent, return_to) }}
         {% else %}
           <div class="rounded-[1.4rem] border border-emerald-200 bg-emerald-50/85 p-5 text-sm text-emerald-900">
-            No dormant or offline hosts are currently surfaced.
+            No dormant or offline machines are currently surfaced.
           </div>
         {% endfor %}
       </div>

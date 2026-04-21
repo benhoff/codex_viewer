@@ -1284,7 +1284,12 @@ def search_results(
 
 
 @router.get("/remotes", response_class=HTMLResponse)
-def remotes_health(request: Request) -> HTMLResponse:
+def remotes_health_legacy(request: Request) -> RedirectResponse:
+    return RedirectResponse(url="/machines", status_code=303)
+
+
+@router.get("/machines", response_class=HTMLResponse)
+def machines_health(request: Request) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
         with write_transaction(connection):
@@ -1314,7 +1319,12 @@ def remotes_health(request: Request) -> HTMLResponse:
 
 
 @router.get("/remotes/{source_host}/audit", response_class=HTMLResponse)
-def remote_environment_audit(request: Request, source_host: str) -> HTMLResponse:
+def remote_environment_audit_legacy(request: Request, source_host: str) -> RedirectResponse:
+    return RedirectResponse(url=f"/machines/{quote(source_host, safe='')}/audit", status_code=303)
+
+
+@router.get("/machines/{source_host}/audit", response_class=HTMLResponse)
+def machine_environment_audit(request: Request, source_host: str) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
         project_access = build_project_access_context(
@@ -1528,6 +1538,7 @@ async def settings_api_token_action(request: Request) -> RedirectResponse:
 
 
 @router.post("/remotes/actions")
+@router.post("/machines/actions")
 async def remote_action(request: Request) -> RedirectResponse:
     require_admin_user(request)
     context = get_app_context(request)
@@ -1544,10 +1555,10 @@ async def remote_action(request: Request) -> RedirectResponse:
             request_remote_raw_resend(
                 connection,
                 source_host,
-                note="Requested from agents view",
+                note="Requested from machines view",
             )
 
-    return RedirectResponse(url=fields.get("return_to") or "/remotes", status_code=303)
+    return RedirectResponse(url=fields.get("return_to") or "/machines", status_code=303)
 
 
 @router.post("/refresh")
