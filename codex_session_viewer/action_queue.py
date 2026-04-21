@@ -261,14 +261,177 @@ def build_homepage_action_queue(
         issue_candidates.append(issue)
 
     ranked_items = _dedupe_and_rank_issue_candidates(issue_candidates, limit=max(limit * 4, limit))
-    if owner_scope:
-        state_by_fingerprint = fetch_action_queue_states(
-            connection,
-            owner_scope,
-            [str(item.get("fingerprint") or "") for item in ranked_items],
-        )
-        ranked_items = filter_action_queue_items(ranked_items, state_by_fingerprint)
+    ranked_items = _filter_ranked_items_for_owner(
+        connection,
+        ranked_items,
+        owner_scope=owner_scope,
+    )
     return ranked_items[:limit]
+
+
+def build_project_action_queue(
+    connection: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+    *,
+    owner_scope: str | None = None,
+    project_href: str = "/",
+    limit: int = 12,
+) -> list[dict[str, object]]:
+    candidate_rows = [row for row in rows if str(row["id"] or "").strip()]
+    if not candidate_rows:
+        return []
+
+    row_by_session = {str(row["id"]): row for row in candidate_rows}
+    signal_rows = _fetch_materialized_signal_rows(connection, list(row_by_session))
+    if not signal_rows:
+        return []
+
+    verification_successes = _collect_materialized_verification_successes(
+        connection,
+        candidate_rows,
+    )
+    issue_candidates: list[dict[str, object]] = []
+    for signal_row in signal_rows:
+        session_id = str(signal_row["session_id"] or "").strip()
+        row = row_by_session.get(session_id)
+        if row is None:
+            continue
+        project = effective_project_fields(row)
+        issue = _hydrate_materialized_issue(
+            signal_row=signal_row,
+            row=row,
+            project=project,
+            project_href=project_href,
+        )
+        if _issue_cleared_by_later_verification(
+            issue,
+            repo_key=str(project["effective_group_key"] or ""),
+            host=str(project["source_host"] or ""),
+            issue_timestamp=parse_timestamp(str(issue.get("timestamp") or "")),
+            verification_successes=verification_successes,
+        ):
+            continue
+        issue_candidates.append(issue)
+
+    ranked_items = _dedupe_and_rank_issue_candidates(issue_candidates, limit=max(limit * 4, limit))
+    ranked_items = _filter_ranked_items_for_owner(
+        connection,
+        ranked_items,
+        owner_scope=owner_scope,
+    )
+    return ranked_items[:limit]
+
+
+def build_repo_action_signal_map(
+    connection: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+    *,
+    owner_scope: str | None = None,
+) -> dict[str, dict[str, object]]:
+    candidate_rows = [row for row in rows if str(row["id"] or "").strip()]
+    if not candidate_rows:
+        return {}
+
+    row_by_session = {str(row["id"]): row for row in candidate_rows}
+    signal_rows = _fetch_materialized_signal_rows(connection, list(row_by_session))
+    if not signal_rows:
+        return {}
+
+    verification_successes = _collect_materialized_verification_successes(
+        connection,
+        candidate_rows,
+    )
+    issue_candidates: list[dict[str, object]] = []
+    for signal_row in signal_rows:
+        session_id = str(signal_row["session_id"] or "").strip()
+        row = row_by_session.get(session_id)
+        if row is None:
+            continue
+        project = effective_project_fields(row)
+        issue = _hydrate_materialized_issue(
+            signal_row=signal_row,
+            row=row,
+            project=project,
+            project_href="/",
+        )
+        if _issue_cleared_by_later_verification(
+            issue,
+            repo_key=str(project["effective_group_key"] or ""),
+            host=str(project["source_host"] or ""),
+            issue_timestamp=parse_timestamp(str(issue.get("timestamp") or "")),
+            verification_successes=verification_successes,
+        ):
+            continue
+        issue_candidates.append(issue)
+
+    if not issue_candidates:
+        return {}
+
+    ranked_items = _dedupe_and_rank_issue_candidates(
+        issue_candidates,
+        limit=max(len(issue_candidates), 1),
+    )
+    ranked_items = _filter_ranked_items_for_owner(
+        connection,
+        ranked_items,
+        owner_scope=owner_scope,
+    )
+    if not ranked_items:
+        return {}
+
+    by_project: dict[str, list[dict[str, object]]] = {}
+    for item in ranked_items:
+        by_project.setdefault(str(item.get("project_key") or ""), []).append(item)
+
+    result: dict[str, dict[str, object]] = {}
+    for project_key, issues in by_project.items():
+        if not project_key or not issues:
+            continue
+        issues.sort(
+            key=lambda item: (
+                int(item.get("attention_score") or 0),
+                _issue_sort_key(item),
+            ),
+            reverse=True,
+        )
+        primary = dict(issues[0])
+        blocker_count = len(issues)
+        detail_parts = [str(primary.get("title") or "").strip()]
+        status_title = str(primary.get("status_title") or "").strip()
+        if status_title:
+            detail_parts.append(status_title)
+        if blocker_count > 1:
+            detail_parts.append(f"{blocker_count} unresolved repo blockers")
+        result[project_key] = {
+            "status_tone": str(primary.get("status_tone") or "amber"),
+            "status_label": str(primary.get("status_label") or "Action needed"),
+            "status_title": " · ".join(part for part in detail_parts if part),
+            "has_attention": True,
+            "attention_count": blocker_count,
+            "attention_score": int(primary.get("attention_score") or 0),
+            "action_title": str(primary.get("title") or "").strip(),
+            "action_detail": status_title,
+            "action_next_action": str(primary.get("next_action") or "").strip(),
+            "action_session_href": str(primary.get("session_href") or "").strip(),
+            "action_badges": list(primary.get("signal_badges") or []),
+        }
+    return result
+
+
+def _filter_ranked_items_for_owner(
+    connection: sqlite3.Connection,
+    ranked_items: list[dict[str, object]],
+    *,
+    owner_scope: str | None = None,
+) -> list[dict[str, object]]:
+    if not owner_scope or not ranked_items:
+        return ranked_items
+    state_by_fingerprint = fetch_action_queue_states(
+        connection,
+        owner_scope,
+        [str(item.get("fingerprint") or "") for item in ranked_items],
+    )
+    return filter_action_queue_items(ranked_items, state_by_fingerprint)
 
 
 def _row_value(row: sqlite3.Row | dict[str, Any] | object, key: str) -> Any:
@@ -508,6 +671,34 @@ def _fetch_recent_materialized_signal_rows(
         ORDER BY s.timestamp DESC, s.session_id ASC, s.turn_number DESC, s.issue_kind ASC
         """,
         (*session_ids, max(int(turns_per_session or 1), 1)),
+    ).fetchall()
+    return list(rows)
+
+
+def _fetch_materialized_signal_rows(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+) -> list[sqlite3.Row]:
+    if not session_ids:
+        return []
+
+    placeholders = ", ".join("?" for _ in session_ids)
+    rows = connection.execute(
+        f"""
+        SELECT
+            session_id,
+            turn_number,
+            issue_kind,
+            signature,
+            timestamp,
+            severity,
+            noise_penalty,
+            payload_json
+        FROM action_queue_signals
+        WHERE session_id IN ({placeholders})
+        ORDER BY timestamp DESC, session_id ASC, turn_number DESC, issue_kind ASC
+        """,
+        session_ids,
     ).fetchall()
     return list(rows)
 

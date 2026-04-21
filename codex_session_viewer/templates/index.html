@@ -218,8 +218,16 @@
                         {% endfor %}
                       </div>
                     {% endif %}
-                    {% if item.summary %}
+                    {% if item.detail_summary %}
+                      <p class="mt-1 break-words text-xs leading-5 text-stone-700">{{ item.detail_summary }}</p>
+                    {% elif item.summary %}
                       <p class="mt-1 truncate text-xs leading-5 text-stone-600">{{ item.summary }}</p>
+                    {% endif %}
+                    {% if item.next_action_summary %}
+                      <p class="mt-1 break-words text-xs leading-5 font-medium text-stone-900">Next: {{ item.next_action_summary }}</p>
+                    {% endif %}
+                    {% if item.capacity_summary %}
+                      <p class="mt-1 break-words text-[0.68rem] leading-5 text-stone-500">Capacity: {{ item.capacity_summary }}</p>
                     {% endif %}
                   </div>
                   <div class="text-xs text-stone-600" title="{{ item.latest_timestamp|full_timestamp if item.latest_timestamp else '' }}">

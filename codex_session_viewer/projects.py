@@ -1927,6 +1927,8 @@ def fetch_group_detail(
     sessions_page: int = 1,
     sessions_page_size: int = 24,
     project_access: ProjectAccessContext | None = None,
+    owner_scope: str | None = None,
+    detail_href: str | None = None,
 ) -> dict[str, Any] | None:
     matching_rows = query_group_rows_for_key(connection, group_key, project_access=project_access)
     if not matching_rows:
@@ -2125,13 +2127,38 @@ def fetch_group_detail(
         page=sessions_page,
         page_size=sessions_page_size,
     )
-    health_summary = summarize_attention_status(
-        recent_turn_count=sum(int(item.get("turn_count", 0) or 0) for item in recent_turn_activity.values()),
-        usage=usage_pressure_snapshot(latest_status_source) if latest_status_source is not None else None,
-        command_failure_count=int(latest_status_source["command_failure_count"] or 0) if latest_status_source is not None else 0,
-        aborted_turn_count=int(latest_status_source["aborted_turn_count"] or 0) if latest_status_source is not None else 0,
-        viewer_warning=trimmed(latest_status_source["import_warning"]) if latest_status_source is not None else None,
+    from .action_queue import build_project_action_queue
+
+    project_action_queue = build_project_action_queue(
+        connection,
+        matching_rows,
+        owner_scope=owner_scope,
+        project_href=detail_href or str(group.detail_href or "/"),
+        limit=12,
     )
+    if project_action_queue:
+        primary_action = project_action_queue[0]
+        health_title_parts = [str(primary_action.get("title") or "").strip()]
+        status_title = str(primary_action.get("status_title") or "").strip()
+        if status_title:
+            health_title_parts.append(status_title)
+        if len(project_action_queue) > 1:
+            health_title_parts.append(
+                f"{len(project_action_queue)} unresolved repo blockers"
+            )
+        health_summary = {
+            "status_tone": str(primary_action.get("status_tone") or "amber"),
+            "status_label": str(primary_action.get("status_label") or "Action needed"),
+            "status_title": " · ".join(part for part in health_title_parts if part),
+        }
+    else:
+        health_summary = summarize_attention_status(
+            recent_turn_count=sum(int(item.get("turn_count", 0) or 0) for item in recent_turn_activity.values()),
+            usage=usage_pressure_snapshot(latest_status_source) if latest_status_source is not None else None,
+            command_failure_count=int(latest_status_source["command_failure_count"] or 0) if latest_status_source is not None else 0,
+            aborted_turn_count=int(latest_status_source["aborted_turn_count"] or 0) if latest_status_source is not None else 0,
+            viewer_warning=trimmed(latest_status_source["import_warning"]) if latest_status_source is not None else None,
+        )
     latest_session = all_sessions[0] if all_sessions else None
     host_rows = sorted(
         host_summaries.values(),
@@ -2147,6 +2174,7 @@ def fetch_group_detail(
         "group": group,
         "source_groups": source_groups,
         "signal_summary": signal_summary,
+        "project_action_queue": project_action_queue,
         "attention_sessions": attention_sessions,
         "recent_sessions": recent_sessions,
         "all_sessions_page": all_sessions_page,

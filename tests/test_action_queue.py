@@ -6,12 +6,12 @@ import tempfile
 import unittest
 
 from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.action_queue import build_homepage_action_queue
+from codex_session_viewer.action_queue import build_homepage_action_queue, build_repo_action_signal_map
 from codex_session_viewer.action_queue_state import set_action_queue_state
 from codex_session_viewer.config import Settings
 from codex_session_viewer.db import connect, init_db, write_transaction
 from codex_session_viewer.importer import parse_session_text, upsert_parsed_session
-from codex_session_viewer.projects import build_grouped_projects, query_group_rows
+from codex_session_viewer.projects import build_grouped_projects, fetch_group_detail, query_group_rows
 from codex_session_viewer.session_view import build_turns
 
 
@@ -262,6 +262,20 @@ class ActionQueueTests(unittest.TestCase):
                 owner_scope=owner_scope,
             )
 
+    def _load_repo_action_signals(
+        self,
+        settings: Settings,
+        *,
+        owner_scope: str | None = None,
+    ) -> dict[str, dict[str, object]]:
+        with connect(settings.database_path) as connection:
+            rows = query_group_rows(connection)
+            return build_repo_action_signal_map(
+                connection,
+                rows,
+                owner_scope=owner_scope,
+            )
+
     def _load_turns_for_session(
         self,
         settings: Settings,
@@ -278,6 +292,23 @@ class ActionQueueTests(unittest.TestCase):
                 (session_id,),
             ).fetchall()
         return build_turns(events, cwd=str(session_row["cwd"] or "").strip() or None)
+
+    def _load_group_detail(
+        self,
+        settings: Settings,
+        *,
+        owner_scope: str | None = None,
+    ) -> dict[str, object]:
+        with connect(settings.database_path) as connection:
+            rows = query_group_rows(connection)
+            groups = build_grouped_projects(rows, route_rows=rows)
+            self.assertEqual(len(groups), 1)
+            return fetch_group_detail(
+                connection,
+                groups[0].key,
+                owner_scope=owner_scope,
+                detail_href=groups[0].detail_href,
+            )
 
     def _build_action_queue(self, raw_jsonl: str, *, source_host: str = "queue-host") -> list[dict[str, object]]:
         settings = self._ingest_sessions([(raw_jsonl, source_host)])
@@ -411,6 +442,228 @@ class ActionQueueTests(unittest.TestCase):
 
         self.assertEqual(self._load_action_queue(settings, owner_scope="viewer:a"), [])
         self.assertEqual(len(self._load_action_queue(settings, owner_scope="viewer:b")), 1)
+
+    def test_repo_action_signal_uses_actionable_label_and_next_step(self) -> None:
+        raw_jsonl = raw_session_jsonl(
+            "repo-verification-failed-session",
+            cwd="/workspace/codex",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Update the TUI styling and make sure tests still pass.",
+                    },
+                    timestamp="2026-04-20T03:19:15Z",
+                ),
+                *patch_records(
+                    "codex-rs/tui/src/lib.rs",
+                    timestamp_call="2026-04-20T03:19:16Z",
+                    timestamp_result="2026-04-20T03:19:17Z",
+                ),
+                *command_records(
+                    ["cargo", "test", "-p", "codex-tui"],
+                    timestamp_call="2026-04-20T03:19:18Z",
+                    timestamp_result="2026-04-20T03:19:19Z",
+                    exit_code=1,
+                    status="failed",
+                    stderr="test failure",
+                    aggregated_output="test suite failed",
+                    formatted_output="test suite failed",
+                ),
+                turn_complete_record(
+                    "Tests failed after the patch.",
+                    timestamp="2026-04-20T03:19:20Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions([(raw_jsonl, "queue-host")])
+        repo_signals = self._load_repo_action_signals(settings)
+
+        self.assertEqual(len(repo_signals), 1)
+        signal = next(iter(repo_signals.values()))
+        self.assertEqual(signal["status_label"], "Verification failed")
+        self.assertIn("exited non-zero", str(signal["status_title"]))
+        self.assertIn("rerun cargo test -p codex-tui", str(signal["action_next_action"]).lower())
+
+    def test_repo_action_signal_honors_owner_scoped_ignore_state(self) -> None:
+        raw_jsonl = raw_session_jsonl(
+            "repo-ignored-queue-session",
+            cwd="/workspace/codex",
+            session_timestamp="2026-04-21T05:00:14Z",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Start the dev server.",
+                    },
+                    timestamp="2026-04-21T05:00:15Z",
+                ),
+                *command_records(
+                    ["uv", "run", "uvicorn", "app.main:app"],
+                    timestamp_call="2026-04-21T05:00:16Z",
+                    timestamp_result="2026-04-21T05:00:17Z",
+                    exit_code=127,
+                    status="failed",
+                    stderr="uv: command not found",
+                    aggregated_output="uv: command not found",
+                    formatted_output="uv: command not found",
+                ),
+                turn_complete_record(
+                    "The environment is missing uv.",
+                    timestamp="2026-04-21T05:00:18Z",
+                ),
+            ],
+        )
+        settings = self._ingest_sessions([(raw_jsonl, "queue-host")])
+        action_queue = self._load_action_queue(settings)
+        self.assertEqual(len(action_queue), 1)
+        item = action_queue[0]
+
+        with connect(settings.database_path) as connection:
+            with write_transaction(connection):
+                set_action_queue_state(
+                    connection,
+                    owner_scope="viewer:a",
+                    fingerprint=str(item["fingerprint"]),
+                    project_key=str(item["project_key"]),
+                    issue_kind=str(item["issue_kind"]),
+                    status="ignored",
+                )
+
+        self.assertEqual(self._load_repo_action_signals(settings, owner_scope="viewer:a"), {})
+        self.assertEqual(len(self._load_repo_action_signals(settings, owner_scope="viewer:b")), 1)
+
+    def test_repo_action_signal_suppresses_exploratory_search_failures(self) -> None:
+        raw_jsonl = raw_session_jsonl(
+            "repo-search-noise-session",
+            cwd="/workspace/codex",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Check whether TODO markers are still present.",
+                    },
+                    timestamp="2026-04-20T04:00:15Z",
+                ),
+                *command_records(
+                    ["rg", "TODO", "codex-rs/tui/src"],
+                    timestamp_call="2026-04-20T04:00:16Z",
+                    timestamp_result="2026-04-20T04:00:17Z",
+                    parsed_cmd=[
+                        {
+                            "type": "search",
+                            "cmd": "rg TODO codex-rs/tui/src",
+                            "query": "TODO",
+                            "path": "codex-rs/tui/src",
+                        }
+                    ],
+                    exit_code=1,
+                    status="failed",
+                ),
+                turn_complete_record(
+                    "No TODO markers were found.",
+                    timestamp="2026-04-20T04:00:18Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions([(raw_jsonl, "queue-host")])
+        self.assertEqual(self._load_repo_action_signals(settings), {})
+
+    def test_group_detail_surfaces_repo_blockers_and_health_status(self) -> None:
+        raw_jsonl = raw_session_jsonl(
+            "group-verification-failed-session",
+            cwd="/workspace/codex",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Update the TUI styling and make sure tests still pass.",
+                    },
+                    timestamp="2026-04-20T03:19:15Z",
+                ),
+                *patch_records(
+                    "codex-rs/tui/src/lib.rs",
+                    timestamp_call="2026-04-20T03:19:16Z",
+                    timestamp_result="2026-04-20T03:19:17Z",
+                ),
+                *command_records(
+                    ["cargo", "test", "-p", "codex-tui"],
+                    timestamp_call="2026-04-20T03:19:18Z",
+                    timestamp_result="2026-04-20T03:19:19Z",
+                    exit_code=1,
+                    status="failed",
+                    stderr="test failure",
+                    aggregated_output="test suite failed",
+                    formatted_output="test suite failed",
+                ),
+                turn_complete_record(
+                    "Tests failed after the patch.",
+                    timestamp="2026-04-20T03:19:20Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions([(raw_jsonl, "queue-host")])
+        detail = self._load_group_detail(settings)
+
+        repo_blockers = detail["project_action_queue"]
+        self.assertEqual(len(repo_blockers), 1)
+        self.assertEqual(repo_blockers[0]["status_label"], "Verification failed")
+        self.assertIn("rerun cargo test -p codex-tui", str(repo_blockers[0]["next_action"]).lower())
+        self.assertEqual(detail["status_strip"]["health_label"], "Verification failed")
+        self.assertIn("Verification failed after code changes", str(detail["status_strip"]["health_title"]))
+
+    def test_group_detail_repo_blockers_honor_owner_scoped_ignore_state(self) -> None:
+        raw_jsonl = raw_session_jsonl(
+            "group-ignored-queue-session",
+            cwd="/workspace/codex",
+            session_timestamp="2026-04-21T05:00:14Z",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Start the dev server.",
+                    },
+                    timestamp="2026-04-21T05:00:15Z",
+                ),
+                *command_records(
+                    ["uv", "run", "uvicorn", "app.main:app"],
+                    timestamp_call="2026-04-21T05:00:16Z",
+                    timestamp_result="2026-04-21T05:00:17Z",
+                    exit_code=127,
+                    status="failed",
+                    stderr="uv: command not found",
+                    aggregated_output="uv: command not found",
+                    formatted_output="uv: command not found",
+                ),
+                turn_complete_record(
+                    "The environment is missing uv.",
+                    timestamp="2026-04-21T05:00:18Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions([(raw_jsonl, "queue-host")])
+        detail = self._load_group_detail(settings)
+        repo_blockers = detail["project_action_queue"]
+        self.assertEqual(len(repo_blockers), 1)
+
+        item = repo_blockers[0]
+        with connect(settings.database_path) as connection:
+            with write_transaction(connection):
+                set_action_queue_state(
+                    connection,
+                    owner_scope="viewer:a",
+                    fingerprint=str(item["fingerprint"]),
+                    project_key=str(item["project_key"]),
+                    issue_kind=str(item["issue_kind"]),
+                    status="ignored",
+                )
+
+        self.assertEqual(self._load_group_detail(settings, owner_scope="viewer:a")["project_action_queue"], [])
+        self.assertEqual(len(self._load_group_detail(settings, owner_scope="viewer:b")["project_action_queue"]), 1)
 
     def test_action_queue_auto_clears_verification_failure_after_later_success(self) -> None:
         failing_session = raw_session_jsonl(

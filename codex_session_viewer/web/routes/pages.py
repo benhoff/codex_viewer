@@ -19,7 +19,7 @@ from ...api_tokens import (
     list_api_tokens,
     revoke_api_token,
 )
-from ...action_queue import build_homepage_action_queue
+from ...action_queue import build_homepage_action_queue, build_repo_action_signal_map
 from ...action_queue_state import (
     clear_action_queue_state,
     default_snoozed_until,
@@ -411,9 +411,17 @@ def build_active_hosts_panel(
 
 
 def build_group_signal_map(
+    connection: sqlite3.Connection,
     rows: list[sqlite3.Row],
     recent_turn_activity: dict[str, dict[str, str | int]],
+    *,
+    owner_scope: str | None = None,
 ) -> dict[str, dict[str, object]]:
+    repo_action_signals = build_repo_action_signal_map(
+        connection,
+        rows,
+        owner_scope=owner_scope,
+    )
     signals: dict[str, dict[str, object]] = {}
     for row in rows:
         project = effective_project_fields(row)
@@ -430,12 +438,17 @@ def build_group_signal_map(
                 "attention_count": 0,
                 "attention_score": 0,
                 "signal_badges": [],
+                "action_title": "",
+                "action_detail": "",
+                "action_next_action": "",
+                "action_session_href": "",
+                "capacity_summary": "",
                 "spawned_agent_count": 0,
                 "worker_count": 0,
                 "explorer_count": 0,
-                "_status_timestamp": "",
                 "_pressure_score": 0,
                 "_pressure_badges": [],
+                "_pressure_summary": "",
             },
         )
 
@@ -446,10 +459,12 @@ def build_group_signal_map(
             latest_recent_timestamp = str(recent.get("latest_timestamp") or "")
             if latest_recent_timestamp and latest_recent_timestamp > str(signal["latest_recent_timestamp"] or ""):
                 signal["latest_recent_timestamp"] = latest_recent_timestamp
-        usage = usage_pressure_snapshot(row)
-        if bool(usage["has_pressure"]) and int(usage["score"] or 0) >= int(signal["_pressure_score"] or 0):
-            signal["_pressure_score"] = int(usage["score"] or 0)
-            signal["_pressure_badges"] = list(usage["badges"])[:2]
+        if recent_turn_count > 0:
+            usage = usage_pressure_snapshot(row)
+            if bool(usage["has_pressure"]) and int(usage["score"] or 0) >= int(signal["_pressure_score"] or 0):
+                signal["_pressure_score"] = int(usage["score"] or 0)
+                signal["_pressure_badges"] = list(usage["badges"])[:2]
+                signal["_pressure_summary"] = str(usage["summary"] or "").strip()
 
         agent = session_agent_snapshot(row)
         role = str(agent["agent_role"] or "").strip().lower()
@@ -460,37 +475,29 @@ def build_group_signal_map(
         elif role == "explorer":
             signal["explorer_count"] = int(signal["explorer_count"]) + 1
 
-        status = summarize_attention_status(
-            recent_turn_count=recent_turn_count,
-            usage=usage,
-            command_failure_count=int(row["command_failure_count"] or 0),
-            aborted_turn_count=int(row["aborted_turn_count"] or 0),
-            viewer_warning=str(row["import_warning"] or ""),
-        )
-        status_timestamp = (
-            str(row["last_turn_timestamp"] or "")
-            or str(row["session_timestamp"] or "")
-            or str(row["started_at"] or "")
-            or str(row["imported_at"] or "")
-        )
-        if bool(status["has_attention"]) and (
-            int(status["attention_score"] or 0) > int(signal["attention_score"] or 0)
-            or (
-                int(status["attention_score"] or 0) == int(signal["attention_score"] or 0)
-                and status_timestamp > str(signal["_status_timestamp"] or "")
-            )
-        ):
-            signal.update(status)
-            signal["_status_timestamp"] = status_timestamp
-
-    for signal in signals.values():
-        if not bool(signal["has_attention"]):
+    for group_key, signal in signals.items():
+        repo_action = repo_action_signals.get(group_key)
+        if repo_action:
+            signal.update(repo_action)
+        else:
             signal.update(
                 summarize_attention_status(
                     recent_turn_count=int(signal["recent_turn_count"]),
                 )
             )
-        badges: list[dict[str, str]] = list(signal["_pressure_badges"])
+        signal["capacity_summary"] = str(signal.get("_pressure_summary") or "").strip()
+
+        badges: list[dict[str, str]] = []
+        if bool(signal["has_attention"]) and int(signal["attention_count"] or 0) > 1:
+            count = int(signal["attention_count"])
+            badges.append(
+                {
+                    "tone": str(signal.get("status_tone") or "amber"),
+                    "label": f"{count} blockers" if count != 1 else "1 blocker",
+                }
+            )
+        badges.extend(list(signal.get("action_badges") or []))
+        badges.extend(list(signal["_pressure_badges"]))
         if int(signal["worker_count"] or 0) > 0:
             badges.append({"tone": "sky", "label": f"{int(signal['worker_count'])} workers" if int(signal["worker_count"]) != 1 else "1 worker"})
         if int(signal["explorer_count"] or 0) > 0:
@@ -502,10 +509,20 @@ def build_group_signal_map(
         ):
             count = int(signal["spawned_agent_count"])
             badges.append({"tone": "stone", "label": f"{count} spawned agents" if count != 1 else "Spawned agent"})
-        signal["signal_badges"] = badges[:3]
-        signal.pop("_status_timestamp", None)
+        deduped_badges: list[dict[str, str]] = []
+        seen_badges: set[tuple[str, str]] = set()
+        for badge in badges:
+            tone = str(badge.get("tone") or "stone")
+            label = str(badge.get("label") or "").strip()
+            key = (tone, label)
+            if not label or key in seen_badges:
+                continue
+            seen_badges.add(key)
+            deduped_badges.append({"tone": tone, "label": label})
+        signal["signal_badges"] = deduped_badges[:4]
         signal.pop("_pressure_score", None)
         signal.pop("_pressure_badges", None)
+        signal.pop("_pressure_summary", None)
     return signals
 
 
@@ -562,6 +579,10 @@ def build_active_repos_panel(
                 "host_label": f"{group.host_count} host" + ("" if group.host_count == 1 else "s"),
                 "session_count": group.session_count,
                 "summary": group.latest_summary or "",
+                "detail_summary": str(signal.get("action_detail") or group.latest_summary or ""),
+                "next_action_summary": str(signal.get("action_next_action") or ""),
+                "capacity_summary": str(signal.get("capacity_summary") or ""),
+                "action_session_href": str(signal.get("action_session_href") or ""),
                 "signal_badges": list(signal.get("signal_badges") or []),
                 "status_tone": str(signal.get("status_tone") or "stone"),
                 "status_label": str(signal.get("status_label") or "Idle"),
@@ -1078,22 +1099,27 @@ def index(
             repo_groups,
             owner_scope=owner_scope,
         )
+        group_signals = build_group_signal_map(
+            connection,
+            rows,
+            hot_turn_activity,
+            owner_scope=owner_scope,
+        )
+        active_repos = build_active_repos_panel(
+            repo_groups,
+            group_signals,
+            limit=context.settings.page_size,
+        )
+        repo_nav_items = build_repo_nav_items(
+            repo_groups,
+            group_signals,
+        )
 
     active_host_count, active_hosts, active_hosts_from_agents = build_active_hosts_panel(
         rows,
         remotes,
     )
     failed_agents = [remote for remote in remotes if agent_has_failure(remote)][:5]
-    group_signals = build_group_signal_map(rows, hot_turn_activity)
-    active_repos = build_active_repos_panel(
-        repo_groups,
-        group_signals,
-        limit=context.settings.page_size,
-    )
-    repo_nav_items = build_repo_nav_items(
-        repo_groups,
-        group_signals,
-    )
     stats["active_hosts"] = active_host_count
     stats["failed_agents"] = len([remote for remote in remotes if agent_has_failure(remote)])
     stats["turns_today"] = sum(int(item.get("secondary_turn_count", 0) or 0) for item in hot_turn_activity.values())

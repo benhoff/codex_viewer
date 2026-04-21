@@ -54,6 +54,8 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
             sessions_page=sessions_page,
             sessions_page_size=context.settings.page_size,
             project_access=project_access,
+            owner_scope=owner_scope,
+            detail_href=detail_path,
         )
         if detail is None:
             raise HTTPException(status_code=404, detail="Project group not found")
@@ -78,6 +80,7 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
             "request": request,
             "group": detail["group"],
             "signal_summary": detail["signal_summary"],
+            "project_action_queue": detail["project_action_queue"],
             "attention_sessions": detail["attention_sessions"],
             "recent_sessions": detail["recent_sessions"],
             "all_sessions_page": detail["all_sessions_page"],
@@ -90,6 +93,7 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
             "stream_href": f"{detail_path}/stream",
             "stream_preview": stream_preview,
             "environment_href": f"{detail_path}/environment",
+            "detail_return_to": detail_path,
         },
     )
 
