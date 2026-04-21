@@ -870,6 +870,50 @@ class ActionQueueTests(unittest.TestCase):
         grouped_again = build_project_action_groups(repo_blockers)
         self.assertEqual([item["issue_kind"] for item in grouped_again], [item["issue_kind"] for item in action_groups])
 
+    def test_group_detail_limits_attention_sessions_preview(self) -> None:
+        raw_sessions = []
+        for index in range(4):
+            raw_sessions.append(
+                (
+                    raw_session_jsonl(
+                        f"group-attention-session-{index}",
+                        cwd="/workspace/codex-viewer",
+                        session_timestamp=f"2026-04-21T05:1{index}:14Z",
+                        records=[
+                            event_msg(
+                                {
+                                    "type": "user_message",
+                                    "message": f"Run failing setup check {index}.",
+                                },
+                                timestamp=f"2026-04-21T05:1{index}:15Z",
+                            ),
+                            *command_records(
+                                ["uv", "--version"],
+                                timestamp_call=f"2026-04-21T05:1{index}:16Z",
+                                timestamp_result=f"2026-04-21T05:1{index}:17Z",
+                                exit_code=127,
+                                status="failed",
+                                stderr="uv: command not found",
+                                aggregated_output="uv: command not found",
+                                formatted_output="uv: command not found",
+                            ),
+                            turn_complete_record(
+                                f"uv is missing for run {index}.",
+                                timestamp=f"2026-04-21T05:1{index}:18Z",
+                            ),
+                        ],
+                    ),
+                    "queue-host",
+                )
+            )
+
+        settings = self._ingest_sessions(raw_sessions)
+        detail = self._load_group_detail(settings)
+
+        self.assertEqual(len(detail["attention_sessions"]), 4)
+        self.assertEqual(len(detail["attention_sessions_preview"]), 3)
+        self.assertEqual(len(detail["attention_sessions_remaining"]), 1)
+
     def test_group_detail_repo_blockers_honor_owner_scoped_ignore_state(self) -> None:
         raw_jsonl = raw_session_jsonl(
             "group-ignored-queue-session",

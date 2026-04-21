@@ -2116,6 +2116,9 @@ def fetch_group_detail(
         ),
         reverse=True,
     )
+    attention_sessions_preview_limit = 3
+    attention_sessions_preview = attention_sessions[:attention_sessions_preview_limit]
+    attention_sessions_remaining = attention_sessions[attention_sessions_preview_limit:]
     all_sessions.sort(
         key=lambda item: item["last_turn_timestamp"] or item["session_timestamp"] or "",
         reverse=True,
@@ -2179,6 +2182,8 @@ def fetch_group_detail(
         "project_action_queue": project_action_queue,
         "project_action_groups": project_action_groups,
         "attention_sessions": attention_sessions,
+        "attention_sessions_preview": attention_sessions_preview,
+        "attention_sessions_remaining": attention_sessions_remaining,
         "recent_sessions": recent_sessions,
         "all_sessions_page": all_sessions_page,
         "host_summaries": host_rows,

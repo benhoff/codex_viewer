@@ -6,22 +6,22 @@
     <title>{% block title %}Codex Session Viewer{% endblock %}</title>
     <link rel="stylesheet" href="{{ static_asset_url(request, 'app.css') }}" />
   </head>
-  <body class="min-h-screen bg-[#f5efe4] text-stone-900 antialiased selection:bg-amber-300/70">
+  <body class="min-h-screen antialiased selection:bg-blue-200/70">
     <div class="fixed inset-0 -z-10 overflow-hidden">
-      <div class="absolute left-[-10%] top-[-15%] h-80 w-80 rounded-full bg-rose-300/40 blur-3xl"></div>
-      <div class="absolute right-[-5%] top-[10%] h-96 w-96 rounded-full bg-sky-300/30 blur-3xl"></div>
-      <div class="absolute bottom-[-10%] left-[20%] h-96 w-96 rounded-full bg-amber-200/60 blur-3xl"></div>
-      <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.85),_transparent_45%),linear-gradient(180deg,_rgba(255,255,255,0.82),_rgba(245,239,228,0.96))]"></div>
+      <div class="absolute left-[-10%] top-[-15%] h-80 w-80 rounded-full bg-blue-200/35 blur-3xl"></div>
+      <div class="absolute right-[-5%] top-[10%] h-96 w-96 rounded-full bg-slate-200/45 blur-3xl"></div>
+      <div class="absolute bottom-[-10%] left-[20%] h-96 w-96 rounded-full bg-white/80 blur-3xl"></div>
+      <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.08),_transparent_38%),linear-gradient(180deg,_rgba(255,255,255,0.88),_rgba(245,246,248,0.98))]"></div>
     </div>
 
     <main class="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-6 sm:px-6 lg:px-8">
-      <nav class="sticky top-3 z-30 mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/72 px-4 py-3 shadow-[0_18px_45px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:px-5">
+      <nav class="sticky top-3 z-30 mb-6 rounded-[1.75rem] border border-[#E5E7EB] bg-white/90 px-4 py-3 shadow-[0_18px_45px_-28px_rgba(31,41,55,0.16)] backdrop-blur sm:px-5">
         {% set current_path = request.url.path %}
         {% if current_path in ('/login', '/setup') %}
           <div class="flex items-center justify-between gap-3">
-            <a href="/" class="text-sm font-semibold uppercase tracking-[0.22em] text-stone-700">Codex Session Viewer</a>
+            <a href="/" class="text-sm font-semibold uppercase tracking-[0.22em] text-[#1F2937]">Codex Session Viewer</a>
             {% if request.state.auth_enabled %}
-              <span class="rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-600">
+              <span class="rounded-full border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-semibold text-[#6B7280]">
                 {% if current_path == '/setup' %}
                   Setup Wizard
                 {% elif request.state.auth_mode == 'proxy' %}
@@ -38,11 +38,11 @@
           {% set open_review_count = review_queue_open_count(request) %}
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex shrink-0 items-center gap-3">
-              <a href="/" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path == '/' or current_path.startswith('/projects') or current_path.startswith('/groups') or current_path.startswith('/sessions') or current_path == '/search' %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">Projects</a>
-              <a href="/remotes" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/remotes') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">Machines</a>
-              <a href="/queue" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/queue') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">
+              <a href="/" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path == '/' or current_path.startswith('/projects') or current_path.startswith('/groups') or current_path.startswith('/sessions') or current_path == '/search' %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Projects</a>
+              <a href="/remotes" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/remotes') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Machines</a>
+              <a href="/queue" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/queue') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">
                 Queue
-                <span data-review-queue-count class="ml-2 {% if not open_review_count %}hidden {% endif %}rounded-full {% if current_path.startswith('/queue') %}bg-white/20 text-white{% else %}bg-amber-100 text-amber-800{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ open_review_count }}</span>
+                <span data-review-queue-count class="ml-2 {% if not open_review_count %}hidden {% endif %}rounded-full {% if current_path.startswith('/queue') %}bg-white/20 text-white{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ open_review_count }}</span>
               </a>
             </div>
             <form action="/search" method="get" class="order-3 basis-full min-w-0 flex-1 sm:order-none sm:ml-auto sm:basis-auto sm:max-w-md">
@@ -53,18 +53,18 @@
                 name="q"
                 value="{{ search_query|default('', true) }}"
                 placeholder="Search projects, prompts, commands"
-                class="w-full rounded-2xl border border-stone-900/10 bg-white px-4 py-2.5 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+                class="w-full rounded-2xl border border-[#E5E7EB] bg-white px-4 py-2.5 text-sm text-[#1F2937] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-200/70"
               />
             </form>
             {% if request.state.auth_user %}
-              <span class="rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700">
+              <span class="rounded-full border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-semibold text-[#6B7280]">
                 {{ request.state.auth_user.display_name }}
               </span>
             {% endif %}
-            <a href="/settings" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/settings') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white/90 text-stone-700 hover:bg-white{% endif %}">Settings</a>
+            <a href="/settings" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/settings') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Settings</a>
             {% if request.state.auth_enabled %}
               <form action="/logout" method="post">
-                <button type="submit" class="rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+                <button type="submit" class="rounded-full border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-semibold text-[#6B7280] transition hover:bg-[#F9FAFB] hover:text-[#1F2937]">
                   Log out
                 </button>
               </form>

@@ -35,30 +35,30 @@
       </details>
 
       <section class="mb-5 grid gap-2 sm:grid-cols-3">
-        <div class="rounded-[1.15rem] border border-sky-200 bg-sky-50/90 px-4 py-3">
-          <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-sky-700">Active Hosts</p>
+        <div class="rounded-[1.15rem] border border-[#E5E7EB] bg-white px-4 py-3">
+          <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-[#2563EB]">Active Hosts</p>
           <div class="mt-2 flex items-end justify-between gap-3">
-            <p class="text-3xl font-semibold text-sky-950">{{ stats.active_hosts }}</p>
-            <p class="text-xs text-sky-800">{{ "machine heartbeat" if active_hosts_from_agents else "recent session activity" }}</p>
+            <p class="text-3xl font-semibold text-[#1F2937]">{{ stats.active_hosts }}</p>
+            <p class="text-xs text-[#6B7280]">{{ "machine heartbeat" if active_hosts_from_agents else "recent session activity" }}</p>
           </div>
         </div>
-        <div class="rounded-[1.15rem] border border-rose-200 bg-rose-50/90 px-4 py-3">
-          <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-rose-700">Machines Needing Attention</p>
+        <div class="rounded-[1.15rem] border border-[#E5E7EB] bg-white px-4 py-3">
+          <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-[#DC2626]">Machines Needing Attention</p>
           <div class="mt-2 flex items-end justify-between gap-3">
-            <p class="text-3xl font-semibold text-rose-950">{{ stats.failed_agents }}</p>
-            <p class="text-xs text-rose-800">needs operator attention</p>
+            <p class="text-3xl font-semibold text-[#1F2937]">{{ stats.failed_agents }}</p>
+            <p class="text-xs text-[#6B7280]">needs operator attention</p>
           </div>
         </div>
-        <div class="rounded-[1.15rem] border border-amber-200 bg-amber-50/90 px-4 py-3">
-          <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-amber-700">Today’s Turns</p>
+        <div class="rounded-[1.15rem] border border-[#E5E7EB] bg-white px-4 py-3">
+          <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-[#D97706]">Today’s Turns</p>
           <div class="mt-2 flex items-end justify-between gap-3">
-            <p class="text-3xl font-semibold text-amber-950">{{ stats.turns_today }}</p>
-            <p class="text-xs text-amber-800">user prompts seen since midnight</p>
+            <p class="text-3xl font-semibold text-[#1F2937]">{{ stats.turns_today }}</p>
+            <p class="text-xs text-[#6B7280]">user prompts seen since midnight</p>
           </div>
         </div>
       </section>
 
-      <section class="mb-5 rounded-[1.45rem] border border-stone-900/10 bg-white/80 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.24)] backdrop-blur">
+      <section class="mb-5 rounded-[1.45rem] border border-[#E5E7EB] bg-white/92 p-4 shadow-[0_20px_60px_-28px_rgba(31,41,55,0.12)] backdrop-blur">
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="text-lg font-semibold text-stone-900">Needs Attention</h2>
@@ -69,61 +69,73 @@
 
         {% if failed_agents or action_queue %}
           <div class="mt-4 grid min-w-0 gap-4 {% if failed_agents and action_queue %}xl:grid-cols-2{% endif %}">
-            <section class="min-w-0 rounded-[1.15rem] border border-rose-200 bg-rose-50/60">
-              <div class="flex items-center justify-between gap-3 border-b border-rose-200/80 px-4 py-3">
-                <h3 class="text-sm font-semibold text-rose-950">Machines Needing Attention</h3>
-                <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
+            <section class="min-w-0 rounded-[1.15rem] border border-[#E5E7EB] bg-white">
+              <div class="flex items-center justify-between gap-3 border-b border-[#E5E7EB] px-4 py-3">
+                <h3 class="text-sm font-semibold text-[#1F2937]">Machines Needing Attention</h3>
+                <span class="rounded-full bg-[#FEE2E2] px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[#DC2626]">
                   {{ failed_agents|length }}
                 </span>
               </div>
-              <div class="divide-y divide-rose-200/70">
+              <div class="divide-y divide-[#E5E7EB]">
                 {% for remote in failed_agents %}
-                  <a href="/remotes" class="block min-w-0 px-4 py-3 transition hover:bg-white/50">
+                  <a href="/remotes" class="block min-w-0 px-4 py-3 transition hover:bg-[#F9FAFB]">
                     <div class="flex min-w-0 items-center justify-between gap-3">
-                      <p class="min-w-0 truncate text-sm font-semibold text-rose-950">{{ remote.source_host }}</p>
-                      <span class="shrink-0 rounded-full bg-rose-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-rose-800">
+                      <p class="min-w-0 truncate text-sm font-semibold text-[#1F2937]">{{ remote.source_host }}</p>
+                      <span class="shrink-0 rounded-full bg-[#FEE2E2] px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-[#DC2626]">
                         {{ remote.update_state|replace('_', ' ') }}
                       </span>
                     </div>
-                    <p class="mt-1 break-words text-xs leading-5 text-rose-900">
+                    <p class="mt-1 break-words text-xs leading-5 text-[#6B7280]">
                       {{ remote.last_error or remote.update_message or (remote.last_fail_count ~ " failed operations") }}
                     </p>
-                    <p class="mt-1 text-xs text-rose-700" title="{{ remote.last_seen_at|full_timestamp if remote.last_seen_at else '' }}">
+                    <p class="mt-1 text-xs text-[#6B7280]" title="{{ remote.last_seen_at|full_timestamp if remote.last_seen_at else '' }}">
                       {{ remote.last_seen_at|humanize_timestamp if remote.last_seen_at else "No check-in recorded" }}
                     </p>
                   </a>
                 {% else %}
-                  <div class="px-4 py-5 text-sm text-emerald-900">No machines needing attention are currently reported.</div>
+                  <div class="px-4 py-5 text-sm text-[#6B7280]">No machines needing attention are currently reported.</div>
                 {% endfor %}
               </div>
             </section>
 
             {% if action_queue %}
-            <section class="min-w-0 rounded-[1.15rem] border border-amber-200 bg-amber-50/55">
-              <div class="flex items-center justify-between gap-3 border-b border-amber-200/80 px-4 py-3">
-                <h3 class="text-sm font-semibold text-amber-950">Action Queue</h3>
-                <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">
-                  {{ action_queue|length }}
-                </span>
+            {% set action_queue_preview_limit = 3 %}
+            {% set action_queue_remaining_count = action_queue|length - action_queue_preview_limit %}
+            <section class="min-w-0 rounded-[1.15rem] border border-[#E5E7EB] bg-white">
+              <div class="flex items-center justify-between gap-3 border-b border-[#E5E7EB] px-4 py-3">
+                <div>
+                  <h3 class="text-sm font-semibold text-[#1F2937]">Action Queue</h3>
+                  <p class="mt-0.5 text-xs text-[#6B7280]">Showing the highest-priority unresolved items first.</p>
+                </div>
+                <div class="flex flex-wrap justify-end gap-2">
+                  {% if action_queue_remaining_count > 0 %}
+                    <span class="rounded-full bg-[#EFF6FF] px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[#2563EB]">
+                      Top {{ action_queue_preview_limit }}
+                    </span>
+                  {% endif %}
+                  <span class="rounded-full bg-[#FEF3C7] px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[#D97706]">
+                    {{ action_queue|length }}
+                  </span>
+                </div>
               </div>
-              <div class="divide-y divide-amber-200/70">
-                {% for item in action_queue %}
-                  <article class="min-w-0 px-4 py-3 transition hover:bg-white/50">
+              <div class="divide-y divide-[#E5E7EB]">
+                {% for item in action_queue[:action_queue_preview_limit] %}
+                  <article class="min-w-0 px-4 py-3 transition hover:bg-[#F9FAFB]">
                     <div class="flex min-w-0 items-center justify-between gap-3">
-                      <a href="{{ item.session_href }}" class="min-w-0 flex-1 truncate text-sm font-semibold text-amber-950 transition hover:text-stone-900">{{ item.title }}</a>
-                      <span class="shrink-0 rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                      <a href="{{ item.session_href }}" class="min-w-0 flex-1 truncate text-sm font-semibold text-[#1F2937] transition hover:text-[#2563EB]">{{ item.title }}</a>
+                      <span class="shrink-0 rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'rose' %}bg-[#FEE2E2] text-[#DC2626]{% elif item.status_tone == 'amber' %}bg-[#FEF3C7] text-[#D97706]{% elif item.status_tone == 'emerald' %}bg-[#DCFCE7] text-[#16A34A]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}">
                         {{ item.status_label }}
                       </span>
                     </div>
-                    <p class="mt-1 text-xs leading-5 text-amber-900">{{ item.project_label }}</p>
-                    <p class="mt-1 break-words text-xs leading-5 text-amber-900">{{ item.status_title }}</p>
-                    <p class="mt-1 break-words text-xs leading-5 font-medium text-amber-950">{{ item.next_action }}</p>
-                    <p class="mt-1 text-xs text-amber-800">
+                    <p class="mt-1 text-xs leading-5 text-[#6B7280]">{{ item.project_label }}</p>
+                    <p class="mt-1 break-words text-xs leading-5 text-[#6B7280]">{{ item.status_title }}</p>
+                    <p class="mt-1 break-words text-xs leading-5 font-medium text-[#1F2937]">{{ item.next_action }}</p>
+                    <p class="mt-1 text-xs text-[#6B7280]">
                       {{ item.host }}{% if item.timestamp %} • <span title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>{% endif %}
                     </p>
                     <div class="mt-2 flex flex-wrap gap-2">
-                      {% for badge in item.signal_badges %}
-                        <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                      {% for badge in item.signal_badges[:3] %}
+                        <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-[#FEE2E2] text-[#DC2626]{% elif badge.tone == 'amber' %}bg-[#FEF3C7] text-[#D97706]{% elif badge.tone == 'sky' %}bg-[#DBEAFE] text-[#2563EB]{% elif badge.tone == 'emerald' %}bg-[#DCFCE7] text-[#16A34A]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}">
                           {{ badge.label }}
                         </span>
                       {% endfor %}
@@ -165,117 +177,154 @@
                     </div>
                   </article>
                 {% endfor %}
+                {% if action_queue_remaining_count > 0 %}
+                  <details class="bg-[#F9FAFB]">
+                    <summary class="cursor-pointer list-none px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6B7280]">
+                      Show remaining {{ action_queue_remaining_count }} queue item{% if action_queue_remaining_count != 1 %}s{% endif %}
+                    </summary>
+                    <div class="divide-y divide-[#E5E7EB] border-t border-[#E5E7EB]">
+                      {% for item in action_queue[action_queue_preview_limit:] %}
+                        <article class="min-w-0 px-4 py-3 transition hover:bg-white">
+                          <div class="flex min-w-0 items-center justify-between gap-3">
+                            <a href="{{ item.session_href }}" class="min-w-0 flex-1 truncate text-sm font-semibold text-[#1F2937] transition hover:text-[#2563EB]">{{ item.title }}</a>
+                            <span class="shrink-0 rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'rose' %}bg-[#FEE2E2] text-[#DC2626]{% elif item.status_tone == 'amber' %}bg-[#FEF3C7] text-[#D97706]{% elif item.status_tone == 'emerald' %}bg-[#DCFCE7] text-[#16A34A]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}">
+                              {{ item.status_label }}
+                            </span>
+                          </div>
+                          <p class="mt-1 text-xs leading-5 text-[#6B7280]">{{ item.project_label }}</p>
+                          <p class="mt-1 break-words text-xs leading-5 text-[#6B7280]">{{ item.status_title }}</p>
+                          <p class="mt-1 text-xs text-[#6B7280]">
+                            {{ item.host }}{% if item.timestamp %} • <span title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>{% endif %}
+                          </p>
+                          <div class="mt-2 flex flex-wrap gap-2">
+                            <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-stone-700 transition hover:bg-stone-50">
+                              Open audit
+                            </a>
+                          </div>
+                        </article>
+                      {% endfor %}
+                    </div>
+                  </details>
+                {% endif %}
               </div>
             </section>
             {% endif %}
           </div>
         {% else %}
-          <div class="mt-4 rounded-[1.15rem] border border-emerald-200 bg-emerald-50/80 px-4 py-4 text-sm text-emerald-900">
+          <div class="mt-4 rounded-[1.15rem] border border-[#E5E7EB] bg-white px-4 py-4 text-sm text-[#6B7280]">
             All clear right now. No machines or unresolved session actions are currently surfaced.
           </div>
         {% endif %}
       </section>
 
       <section class="grid gap-5 xl:grid-cols-[minmax(0,1fr),18rem]">
-        <section class="rounded-[1.45rem] border border-stone-900/10 bg-white/82 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.24)] backdrop-blur">
+        <section class="rounded-[1.45rem] border border-[#E5E7EB] bg-white/94 p-4 shadow-[0_20px_60px_-28px_rgba(31,41,55,0.10)] backdrop-blur">
           <div class="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 class="text-lg font-semibold text-stone-900">Active Repos</h2>
               <p class="text-sm text-stone-600">Recent activity across your repos.</p>
             </div>
             <p class="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
-              Showing {{ active_repos|length }} of {{ group_total }}
+              {% if active_repo_total %}
+                Showing {{ active_repos|length }} of {{ active_repo_total }} active
+              {% else %}
+                No recent activity
+              {% endif %}
             </p>
           </div>
 
-          <div class="mt-4 overflow-hidden rounded-[1.15rem] border border-stone-900/10 bg-stone-50/70">
-            <div class="hidden grid-cols-[minmax(0,1.7fr),8rem,6rem,6rem,auto] gap-3 border-b border-stone-900/10 bg-white/75 px-4 py-2 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500 md:grid">
-              <span>Repo</span>
-              <span>Last Activity</span>
-              <span>7d Turns</span>
-              <span>Hosts</span>
-              <span class="text-right">Status</span>
-            </div>
-
-            <div class="divide-y divide-stone-900/10">
+          <div class="mt-4 overflow-hidden rounded-[1.15rem] border border-[#E5E7EB] bg-[#F9FAFB]">
+            <div class="divide-y divide-[#E5E7EB]">
               {% for item in active_repos %}
-                <a href="{{ item.detail_href }}" class="grid gap-3 px-4 py-3 transition hover:bg-white/85 md:grid-cols-[minmax(0,1.7fr),8rem,6rem,6rem,auto] md:items-center">
-                  <div class="min-w-0">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <div class="min-w-0 flex-1">
-                        <p class="min-w-0 truncate text-sm font-semibold text-stone-900" title="{{ item.display_label }}">{{ item.primary_label or item.display_label }}</p>
-                        {% if item.secondary_label %}
-                          <p class="mt-0.5 min-w-0 truncate text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">{{ item.secondary_label }}</p>
-                        {% endif %}
-                      </div>
+                <a href="{{ item.detail_href }}" class="block px-4 py-4 transition hover:bg-white">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0 flex-1">
+                      <p class="min-w-0 truncate text-sm font-semibold text-stone-900" title="{{ item.display_label }}">{{ item.primary_label or item.display_label }}</p>
+                      {% if item.secondary_label %}
+                        <p class="mt-0.5 min-w-0 truncate text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">{{ item.secondary_label }}</p>
+                      {% endif %}
                     </div>
-                    {% if item.signal_badges %}
-                      <div class="mt-2 flex flex-wrap gap-2">
-                        {% for badge in item.signal_badges %}
-                          <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
-                            {{ badge.label }}
-                          </span>
-                        {% endfor %}
-                      </div>
-                    {% endif %}
-                    {% if item.detail_summary %}
-                      <p class="mt-1 break-words text-xs leading-5 text-stone-700">{{ item.detail_summary }}</p>
-                    {% elif item.summary %}
-                      <p class="mt-1 truncate text-xs leading-5 text-stone-600">{{ item.summary }}</p>
-                    {% endif %}
-                    {% if item.next_action_summary %}
-                      <p class="mt-1 break-words text-xs leading-5 font-medium text-stone-900">Next: {{ item.next_action_summary }}</p>
-                    {% endif %}
-                    {% if item.capacity_summary %}
-                      <p class="mt-1 break-words text-[0.68rem] leading-5 text-stone-500">Capacity: {{ item.capacity_summary }}</p>
-                    {% endif %}
+                    <div class="flex shrink-0 items-center gap-2">
+                      <span class="rounded-full bg-white px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-[#6B7280]" title="{{ item.latest_timestamp|full_timestamp if item.latest_timestamp else '' }}">
+                        {{ item.latest_timestamp|humanize_timestamp if item.latest_timestamp else "No recent activity" }}
+                      </span>
+                      <span
+                        class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if item.status_tone == 'rose' %}bg-[#FEE2E2] text-[#DC2626]{% elif item.status_tone == 'amber' %}bg-[#FEF3C7] text-[#D97706]{% elif item.status_tone == 'emerald' %}bg-[#DCFCE7] text-[#16A34A]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}"
+                        title="{{ item.status_title }}"
+                      >
+                        {{ item.status_label }}
+                      </span>
+                    </div>
                   </div>
-                  <div class="text-xs text-stone-600" title="{{ item.latest_timestamp|full_timestamp if item.latest_timestamp else '' }}">
-                    {{ item.latest_timestamp|humanize_timestamp if item.latest_timestamp else "No recent activity" }}
-                  </div>
-                  <div class="text-sm font-semibold text-stone-900">{{ item.recent_turn_count }}</div>
-                  <div class="text-sm text-stone-700">{{ item.host_label }}</div>
-                  <div class="flex items-center gap-2 md:justify-end">
-                    <span
-                      class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if item.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% elif item.status_tone == 'emerald' %}bg-emerald-100 text-emerald-800{% else %}bg-stone-200 text-stone-700{% endif %}"
-                      title="{{ item.status_title }}"
-                    >
-                      {{ item.status_label }}
+
+                  <div class="mt-3 flex flex-wrap gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-[#6B7280]">
+                    <span class="rounded-full bg-white px-2.5 py-1 text-stone-900">
+                      {{ item.recent_turn_count }} turns
                     </span>
+                    <span class="rounded-full bg-white px-2.5 py-1">
+                      {{ item.host_label }}
+                    </span>
+                    {% if item.session_count %}
+                      <span class="rounded-full bg-white px-2.5 py-1">
+                        {{ item.session_count }} sessions
+                      </span>
+                    {% endif %}
                   </div>
+
+                  {% if item.signal_badges %}
+                    <div class="mt-3 flex flex-wrap gap-2">
+                      {% for badge in item.signal_badges %}
+                        <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-[#FEE2E2] text-[#DC2626]{% elif badge.tone == 'amber' %}bg-[#FEF3C7] text-[#D97706]{% elif badge.tone == 'sky' %}bg-[#DBEAFE] text-[#2563EB]{% elif badge.tone == 'emerald' %}bg-[#DCFCE7] text-[#16A34A]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}">
+                          {{ badge.label }}
+                        </span>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+
+                  {% if item.detail_summary %}
+                    <p class="mt-3 max-w-3xl text-sm leading-6 text-stone-700">{{ item.detail_summary }}</p>
+                  {% elif item.summary %}
+                    <p class="mt-3 max-w-3xl text-sm leading-6 text-stone-600">{{ item.summary }}</p>
+                  {% endif %}
+                  {% if item.next_action_summary %}
+                    <p class="mt-2 max-w-3xl text-sm leading-6 text-stone-900"><span class="font-semibold">Next:</span> {{ item.next_action_summary }}</p>
+                  {% endif %}
+                  {% if item.capacity_summary %}
+                    <p class="mt-2 text-xs leading-5 text-[#6B7280]">Capacity: {{ item.capacity_summary }}</p>
+                  {% endif %}
                 </a>
               {% else %}
                 <div class="px-4 py-6 text-sm text-stone-600">
-                  No grouped projects matched the current filters.
+                  No repos had recent activity for the current filters.
                 </div>
               {% endfor %}
             </div>
           </div>
         </section>
 
-        <aside class="rounded-[1.45rem] border border-stone-900/10 bg-white/82 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.24)] backdrop-blur">
+        <aside class="rounded-[1.45rem] border border-[#E5E7EB] bg-white/94 p-4 shadow-[0_20px_60px_-28px_rgba(31,41,55,0.10)] backdrop-blur">
           <div class="flex items-end justify-between gap-3">
             <div>
               <h2 class="text-lg font-semibold text-stone-900">Active Hosts</h2>
               <p class="text-sm text-stone-600">Who is checking in right now.</p>
             </div>
-            <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">
+            <span class="rounded-full bg-[#F3F4F6] px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[#6B7280]">
               {{ active_hosts|length }}
             </span>
           </div>
 
-          <div class="mt-4 overflow-hidden rounded-[1.15rem] border border-stone-900/10 bg-stone-50/70">
-            <div class="divide-y divide-stone-900/10">
+          <div class="mt-4 overflow-hidden rounded-[1.15rem] border border-[#E5E7EB] bg-[#F9FAFB]">
+            <div class="divide-y divide-[#E5E7EB]">
               {% for item in active_hosts %}
                 <div class="px-4 py-3">
                   <div class="flex items-center justify-between gap-3">
                     <p class="min-w-0 truncate text-sm font-semibold text-stone-900">{{ item.source_host }}</p>
-                    <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if item.status_tone == 'sky' %}bg-sky-100 text-sky-800{% else %}bg-stone-200 text-stone-700{% endif %}">
+                    <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if item.status_tone == 'sky' %}bg-[#DBEAFE] text-[#2563EB]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}">
                       {{ item.status }}
                     </span>
                   </div>
-                  <p class="mt-1 text-xs leading-5 text-stone-600">{{ item.detail }}</p>
-                  <p class="mt-1 text-xs text-stone-500" title="{{ item.timestamp|full_timestamp if item.timestamp else '' }}">
+                  <p class="mt-1 text-xs leading-5 text-[#6B7280]">{{ item.detail }}</p>
+                  <p class="mt-1 text-xs text-[#6B7280]" title="{{ item.timestamp|full_timestamp if item.timestamp else '' }}">
                     {{ item.timestamp|humanize_timestamp if item.timestamp else "No recent activity" }}
                   </p>
                 </div>

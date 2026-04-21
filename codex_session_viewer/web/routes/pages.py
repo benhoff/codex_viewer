@@ -544,7 +544,12 @@ def build_group_signal_map(
                     "label": f"{count} blockers" if count != 1 else "1 blocker",
                 }
             )
-        badges.extend(list(signal.get("action_badges") or []))
+        for badge in list(signal.get("action_badges") or []):
+            label = str(badge.get("label") or "").strip().lower()
+            parts = label.split()
+            if len(parts) == 2 and parts[0].isdigit() and parts[1] in {"blocker", "blockers"}:
+                continue
+            badges.append(badge)
         badges.extend(list(signal["_pressure_badges"]))
         if int(signal["worker_count"] or 0) > 0:
             badges.append({"tone": "sky", "label": f"{int(signal['worker_count'])} workers" if int(signal["worker_count"]) != 1 else "1 worker"})
@@ -599,7 +604,7 @@ def build_active_repos_panel(
     group_signals: dict[str, dict[str, object]],
     *,
     limit: int = 12,
-) -> list[dict[str, object]]:
+) -> tuple[list[dict[str, object]], int]:
     items: list[dict[str, object]] = []
     for group in repo_groups:
         signal = group_signals.get(group.key, {})
@@ -615,12 +620,33 @@ def build_active_repos_panel(
         else:
             primary_label = str(group.display_label)
             secondary_label = owner_name if owner_name and owner_name not in primary_label else ""
+        panel_badges: list[dict[str, str]] = []
+        for badge in list(signal.get("signal_badges") or []):
+            label = str(badge.get("label") or "").strip()
+            lowered = label.lower()
+            parts = lowered.split()
+            if len(parts) == 2 and parts[0].isdigit() and parts[1] in {
+                "blocker",
+                "blockers",
+                "repeat",
+                "repeats",
+                "occurrence",
+                "occurrences",
+            }:
+                continue
+            panel_badges.append(
+                {
+                    "tone": str(badge.get("tone") or "stone"),
+                    "label": label,
+                }
+            )
         items.append(
             {
                 "display_label": group.display_label,
                 "primary_label": primary_label,
                 "secondary_label": secondary_label,
                 "detail_href": group.detail_href,
+                "latest_recent_timestamp": latest_recent_timestamp,
                 "latest_timestamp": latest_timestamp,
                 "recent_turn_count": recent_turn_count,
                 "host_count": group.host_count,
@@ -631,7 +657,7 @@ def build_active_repos_panel(
                 "next_action_summary": str(signal.get("action_next_action") or ""),
                 "capacity_summary": str(signal.get("capacity_summary") or ""),
                 "action_session_href": str(signal.get("action_session_href") or ""),
-                "signal_badges": list(signal.get("signal_badges") or []),
+                "signal_badges": panel_badges[:3],
                 "status_tone": str(signal.get("status_tone") or "stone"),
                 "status_label": str(signal.get("status_label") or "Idle"),
                 "status_title": str(signal.get("status_title") or "No recent turn activity"),
@@ -641,17 +667,34 @@ def build_active_repos_panel(
             }
         )
 
+    active_items = [
+        item
+        for item in items
+        if int(item["recent_turn_count"]) > 0 or str(item["latest_recent_timestamp"] or "").strip()
+    ]
+    if active_items:
+        active_items.sort(key=lambda item: str(item["display_label"]).lower())
+        active_items.sort(
+            key=lambda item: (
+                str(item["latest_recent_timestamp"] or item["latest_timestamp"] or ""),
+                int(item["recent_turn_count"]),
+                1 if item["has_attention"] else 0,
+                int(item["attention_score"]),
+            ),
+            reverse=True,
+        )
+        return active_items[:limit], len(active_items)
+
     items.sort(
         key=lambda item: (
+            str(item["latest_timestamp"] or ""),
+            int(item["recent_turn_count"]),
             1 if item["has_attention"] else 0,
             int(item["attention_score"]),
-            int(item["recent_turn_count"]),
-            str(item["latest_timestamp"] or ""),
-            int(item["attention_count"]),
         ),
         reverse=True,
     )
-    return items[:limit]
+    return items[:limit], 0
 
 
 def build_error_sessions_panel(
@@ -1155,7 +1198,7 @@ def index(
             hot_turn_activity,
             owner_scope=owner_scope,
         )
-        active_repos = build_active_repos_panel(
+        active_repos, active_repo_total = build_active_repos_panel(
             repo_groups,
             group_signals,
             limit=context.settings.page_size,
@@ -1181,6 +1224,7 @@ def index(
             "settings": context.settings,
             "repo_nav_items": repo_nav_items,
             "active_repos": active_repos,
+            "active_repo_total": active_repo_total,
             "group_total": len(repo_groups),
             "stats": stats,
             "q": q or "",

@@ -5,10 +5,21 @@
 @layer base {
   :root {
     color-scheme: light;
+    --cv-bg: #F5F6F8;
+    --cv-surface: #FFFFFF;
+    --cv-text: #1F2937;
+    --cv-text-muted: #6B7280;
+    --cv-accent: #2563EB;
+    --cv-border: #E5E7EB;
+    --cv-success: #16A34A;
+    --cv-warning: #D97706;
+    --cv-error: #DC2626;
   }
 
   body {
     font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+    background: var(--cv-bg);
+    color: var(--cv-text);
   }
 
   .font-display {

@@ -1,4 +1,107 @@
-# Access Policy
+# Agent Notes
+
+This file documents the local development environment for this repo first, then the app access model.
+
+If this file and an ad hoc shell state disagree, trust the repo scripts in `scripts/` over whatever happens to be active in your terminal.
+
+## Python Environment
+
+### Quick rules
+
+- `python` is not on `PATH` in this workspace. Use `python3` or an explicit interpreter path.
+- The runnable app environment is `/usr/bin/python3` with `PYTHONPATH=$PWD/.deps`.
+- The repo-local virtualenv is `./.venv/bin/python`, but it is not the source of truth for the web app.
+- Do not assume `./.venv` contains FastAPI or all app dependencies.
+
+### What is installed where
+
+Verified in this workspace on `2026-04-21`:
+
+- System interpreter: `/usr/bin/python3`
+- App dependency target dir: `/home/wulfuser/codex_viewer/.deps`
+- Local virtualenv interpreter: `/home/wulfuser/codex_viewer/.venv/bin/python`
+- Local virtualenv site-packages:
+  - `/home/wulfuser/codex_viewer/.venv/lib/python3.12/site-packages`
+  - `/home/wulfuser/codex_viewer/.venv/lib/python3.12/dist-packages`
+  - `/home/wulfuser/codex_viewer/.venv/local/lib/python3.12/dist-packages`
+- User site-packages exists at `/home/wulfuser/.local/lib/python3.12/site-packages`, but repo workflows should not depend on it.
+
+### Dependency split that matters
+
+The repo uses two different Python layouts:
+
+1. Runtime / app path
+
+- `scripts/bootstrap-local.sh` installs requirements into `.deps` with:
+  - `python3 -m pip install --target "$PROJECT_ROOT/.deps" -r requirements.txt`
+- `scripts/start-server.sh` runs:
+  - `/usr/bin/python3 -m codex_session_viewer serve`
+  - with `PYTHONPATH="$PROJECT_ROOT/.deps"`
+- `scripts/start-agent-daemon.sh` also uses `/usr/bin/python3` plus `PYTHONPATH=.deps`
+
+2. Local dev / ad hoc test path
+
+- `./.venv/bin/python` exists and works for some local commands
+- `./.venv` currently does **not** provide all app imports
+- `./.venv/bin/python -m pip` currently fails because `pip` is not installed in that venv
+
+### Imports confirmed in this workspace
+
+Using `PYTHONPATH=.deps python3`:
+
+- `fastapi` resolves from `/home/wulfuser/codex_viewer/.deps/fastapi/__init__.py`
+- `jinja2` resolves from `/home/wulfuser/codex_viewer/.deps/jinja2/__init__.py`
+- `itsdangerous` resolves from `/home/wulfuser/codex_viewer/.deps/itsdangerous/__init__.py`
+- `uvicorn` resolves from `/home/wulfuser/codex_viewer/.deps/uvicorn/__init__.py`
+- `httpx` is not installed there right now
+
+Using `./.venv/bin/python`:
+
+- `fastapi` is missing
+- `jinja2` is missing
+- `httpx` is missing
+- `itsdangerous` is missing
+- stdlib modules like `sqlite3` come from `/usr/lib/python3.12/...`
+
+### What to use for common tasks
+
+Run the app the same way the repo expects:
+
+```bash
+./scripts/bootstrap-local.sh
+./scripts/start-server.sh
+```
+
+Run CLI commands against the app dependency set:
+
+```bash
+PYTHONPATH=.deps python3 -m codex_session_viewer sync
+PYTHONPATH=.deps python3 -m codex_session_viewer export SESSION_ID --format markdown
+```
+
+Run the remote daemon the same way the scripts do:
+
+```bash
+./scripts/start-agent-daemon.sh
+```
+
+Run focused local Python checks against the existing venv only when they do not need the web stack:
+
+```bash
+./.venv/bin/python -m unittest tests.test_action_queue tests.test_action_queue_state tests.test_agents_dashboard
+```
+
+If a command imports `codex_session_viewer.web.*`, `fastapi`, or template code, prefer the `.deps` path unless you have explicitly repaired the venv.
+
+### Known footguns
+
+- `python` fails because only `python3` is installed on `PATH`.
+- `./.venv/bin/python` is usable, but incomplete for FastAPI-backed code paths.
+- `./.venv/bin/python -m pip` does not work in the current venv.
+- A command succeeding under `.venv` does not mean it matches the deployed app environment.
+- The deployed app path is script-driven and `.deps`-driven, not venv-activation-driven.
+
+## Access Policy
 
 This document describes the current access model for the Codex Session Viewer.
 

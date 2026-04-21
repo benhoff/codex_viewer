@@ -159,7 +159,7 @@
                 <p class="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">{{ group.count }} saved turn{% if group.count != 1 %}s{% endif %}</p>
               </div>
             </div>
-            {% for item in group.items %}
+            {% for item in group["items"] %}
               {{ render_queue_item(item, queue_return_to) }}
             {% endfor %}
           </section>
