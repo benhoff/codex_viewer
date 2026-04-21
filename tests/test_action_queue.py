@@ -6,7 +6,11 @@ import tempfile
 import unittest
 
 from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.action_queue import build_homepage_action_queue, build_repo_action_signal_map
+from codex_session_viewer.action_queue import (
+    build_homepage_action_queue,
+    build_project_action_groups,
+    build_repo_action_signal_map,
+)
 from codex_session_viewer.action_queue_state import set_action_queue_state
 from codex_session_viewer.config import Settings
 from codex_session_viewer.db import connect, init_db, write_transaction
@@ -208,6 +212,61 @@ def turn_aborted_record(reason: str, *, timestamp: str, turn_id: str = "turn-1")
             "type": "turn_aborted",
             "turn_id": turn_id,
             "reason": reason,
+        },
+        timestamp=timestamp,
+    )
+
+
+def mcp_tool_call_end_record(
+    *,
+    timestamp: str,
+    call_id: str = "mcp-1",
+    server: str = "codex_apps",
+    tool: str = "github_fetch",
+    arguments: dict[str, object] | None = None,
+    result: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return event_msg(
+        {
+            "type": "mcp_tool_call_end",
+            "call_id": call_id,
+            "invocation": {
+                "server": server,
+                "tool": tool,
+                "arguments": arguments or {"url": "https://github.com/openai/codex"},
+            },
+            "duration": {"secs": 1, "nanos": 0},
+            "result": result
+            or {
+                "Ok": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": 'Error code: NOT_FOUNDError: GitHub API error 404: {"message":"Not Found"}',
+                        }
+                    ],
+                    "isError": True,
+                }
+            },
+        },
+        timestamp=timestamp,
+    )
+
+
+def context_compacted_record(*, timestamp: str) -> dict[str, object]:
+    return event_msg(
+        {
+            "type": "context_compacted",
+        },
+        timestamp=timestamp,
+    )
+
+
+def thread_rolled_back_record(*, timestamp: str, num_turns: int) -> dict[str, object]:
+    return event_msg(
+        {
+            "type": "thread_rolled_back",
+            "num_turns": num_turns,
         },
         timestamp=timestamp,
     )
@@ -486,6 +545,99 @@ class ActionQueueTests(unittest.TestCase):
         self.assertIn("exited non-zero", str(signal["status_title"]))
         self.assertIn("rerun cargo test -p codex-tui", str(signal["action_next_action"]).lower())
 
+    def test_repo_action_signal_demotes_mismatch_only_repos_to_review_needed(self) -> None:
+        raw_jsonl = raw_session_jsonl(
+            "repo-mismatch-only-session",
+            cwd="/workspace/codex",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Update the TUI styling and tell me whether tests passed.",
+                    },
+                    timestamp="2026-04-20T03:19:15Z",
+                ),
+                turn_complete_record(
+                    "Updated the styling and tests passed.",
+                    timestamp="2026-04-20T03:19:18Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions([(raw_jsonl, "queue-host")])
+        repo_signals = self._load_repo_action_signals(settings)
+
+        self.assertEqual(len(repo_signals), 1)
+        signal = next(iter(repo_signals.values()))
+        self.assertEqual(signal["status_label"], "Review needed")
+        self.assertEqual(signal["status_tone"], "amber")
+        self.assertFalse(bool(signal["has_attention"]))
+        self.assertEqual(int(signal["attention_count"]), 0)
+        self.assertIn("Response claims do not match", str(signal["status_title"]))
+
+    def test_repo_action_signal_prefers_setup_blocker_over_mismatch(self) -> None:
+        mismatch_session = raw_session_jsonl(
+            "repo-mismatch-session",
+            cwd="/workspace/codex",
+            session_timestamp="2026-04-20T03:19:14Z",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Update the TUI styling and tell me whether tests passed.",
+                    },
+                    timestamp="2026-04-20T03:19:15Z",
+                ),
+                turn_complete_record(
+                    "Updated the styling and tests passed.",
+                    timestamp="2026-04-20T03:19:18Z",
+                ),
+            ],
+        )
+        setup_session = raw_session_jsonl(
+            "repo-setup-blocker-session",
+            cwd="/workspace/codex",
+            session_timestamp="2026-04-21T03:19:14Z",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Start the dev server.",
+                    },
+                    timestamp="2026-04-21T03:19:15Z",
+                ),
+                *command_records(
+                    ["uv", "run", "uvicorn", "app.main:app"],
+                    timestamp_call="2026-04-21T03:19:16Z",
+                    timestamp_result="2026-04-21T03:19:17Z",
+                    exit_code=127,
+                    status="failed",
+                    stderr="uv: command not found",
+                    aggregated_output="uv: command not found",
+                    formatted_output="uv: command not found",
+                ),
+                turn_complete_record(
+                    "The environment is missing uv.",
+                    timestamp="2026-04-21T03:19:18Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions(
+            [
+                (mismatch_session, "queue-host"),
+                (setup_session, "queue-host"),
+            ]
+        )
+        repo_signals = self._load_repo_action_signals(settings)
+
+        self.assertEqual(len(repo_signals), 1)
+        signal = next(iter(repo_signals.values()))
+        self.assertEqual(signal["status_label"], "Setup blocker")
+        self.assertEqual(signal["status_tone"], "rose")
+        self.assertTrue(bool(signal["has_attention"]))
+        self.assertIn("Environment setup blocked", str(signal["status_title"]))
+
     def test_repo_action_signal_honors_owner_scoped_ignore_state(self) -> None:
         raw_jsonl = raw_session_jsonl(
             "repo-ignored-queue-session",
@@ -614,6 +766,109 @@ class ActionQueueTests(unittest.TestCase):
         self.assertIn("rerun cargo test -p codex-tui", str(repo_blockers[0]["next_action"]).lower())
         self.assertEqual(detail["status_strip"]["health_label"], "Verification failed")
         self.assertIn("Verification failed after code changes", str(detail["status_strip"]["health_title"]))
+        self.assertEqual(len(detail["project_action_groups"]), 1)
+        self.assertEqual(detail["project_action_groups"][0]["count"], 1)
+
+    def test_group_detail_consolidates_repeated_repo_blockers_and_uses_repo_priority_health(self) -> None:
+        setup_fastapi = raw_session_jsonl(
+            "group-setup-blocker-1",
+            cwd="/workspace/codex-viewer",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Start the web app.",
+                    },
+                    timestamp="2026-04-21T05:10:15Z",
+                ),
+                *command_records(
+                    ["python3", "-c", "import fastapi"],
+                    timestamp_call="2026-04-21T05:10:16Z",
+                    timestamp_result="2026-04-21T05:10:17Z",
+                    exit_code=1,
+                    status="failed",
+                    stderr="ModuleNotFoundError: No module named 'fastapi'",
+                    aggregated_output="ModuleNotFoundError: No module named 'fastapi'",
+                    formatted_output="ModuleNotFoundError: No module named 'fastapi'",
+                ),
+                turn_complete_record(
+                    "The environment is missing fastapi.",
+                    timestamp="2026-04-21T05:10:18Z",
+                ),
+            ],
+        )
+        setup_httpx = raw_session_jsonl(
+            "group-setup-blocker-2",
+            cwd="/workspace/codex-viewer",
+            session_timestamp="2026-04-21T05:12:14Z",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Start the API server.",
+                    },
+                    timestamp="2026-04-21T05:12:15Z",
+                ),
+                *command_records(
+                    ["python3", "-c", "import httpx"],
+                    timestamp_call="2026-04-21T05:12:16Z",
+                    timestamp_result="2026-04-21T05:12:17Z",
+                    exit_code=1,
+                    status="failed",
+                    stderr="ModuleNotFoundError: No module named 'httpx'",
+                    aggregated_output="ModuleNotFoundError: No module named 'httpx'",
+                    formatted_output="ModuleNotFoundError: No module named 'httpx'",
+                ),
+                turn_complete_record(
+                    "The environment is missing httpx.",
+                    timestamp="2026-04-21T05:12:18Z",
+                ),
+            ],
+        )
+        mismatch_session = raw_session_jsonl(
+            "group-mismatch-session",
+            cwd="/workspace/codex-viewer",
+            session_timestamp="2026-04-21T05:14:14Z",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Update the app and confirm what changed.",
+                    },
+                    timestamp="2026-04-21T05:14:15Z",
+                ),
+                turn_complete_record(
+                    "I updated the app entrypoint and verified the change.",
+                    timestamp="2026-04-21T05:14:16Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions(
+            [
+                (setup_fastapi, "queue-host"),
+                (setup_httpx, "queue-host"),
+                (mismatch_session, "queue-host"),
+            ]
+        )
+        detail = self._load_group_detail(settings)
+
+        repo_blockers = detail["project_action_queue"]
+        self.assertEqual(len(repo_blockers), 3)
+        self.assertEqual(detail["status_strip"]["health_label"], "Setup blocker")
+        self.assertIn("unresolved repo blockers", str(detail["status_strip"]["health_title"]))
+
+        action_groups = detail["project_action_groups"]
+        self.assertEqual(len(action_groups), 2)
+        self.assertEqual(action_groups[0]["issue_kind"], "setup_blocker")
+        self.assertEqual(action_groups[0]["count"], 2)
+        self.assertEqual(action_groups[0]["status_label"], "Setup blocker")
+        self.assertIn("2 occurrences", str(action_groups[0]["summary"]))
+        self.assertEqual(action_groups[1]["issue_kind"], "claim_evidence_mismatch")
+        self.assertEqual(action_groups[1]["status_label"], "Review needed")
+
+        grouped_again = build_project_action_groups(repo_blockers)
+        self.assertEqual([item["issue_kind"] for item in grouped_again], [item["issue_kind"] for item in action_groups])
 
     def test_group_detail_repo_blockers_honor_owner_scoped_ignore_state(self) -> None:
         raw_jsonl = raw_session_jsonl(
@@ -860,6 +1115,84 @@ class ActionQueueTests(unittest.TestCase):
 
         self.assertEqual(len(action_queue), 1)
         self.assertEqual(action_queue[0]["issue_kind"], "verification_failed")
+
+    def test_build_turns_surfaces_failed_mcp_call_in_audit_view(self) -> None:
+        raw_jsonl = raw_session_jsonl(
+            "audit-mcp-call-session",
+            cwd="/workspace/codex",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Fetch the repo file through MCP.",
+                    },
+                    timestamp="2026-04-20T07:20:15Z",
+                ),
+                mcp_tool_call_end_record(
+                    timestamp="2026-04-20T07:20:16Z",
+                    tool="github_fetch",
+                    arguments={"url": "https://github.com/openai/codex/blob/main/README.md"},
+                ),
+                turn_complete_record(
+                    "The MCP fetch failed with a 404.",
+                    timestamp="2026-04-20T07:20:17Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions([(raw_jsonl, "queue-host")])
+        turns = self._load_turns_for_session(settings, "audit-mcp-call-session")
+
+        self.assertEqual(len(turns), 1)
+        turn = turns[0]
+        self.assertEqual(len(turn["audit_mcp_events"]), 1)
+        mcp_event = turn["audit_mcp_events"][0]
+        self.assertEqual(mcp_event["server"], "codex_apps")
+        self.assertEqual(mcp_event["tool"], "github_fetch")
+        self.assertEqual(mcp_event["status"], "failed")
+        self.assertIn("404", str(mcp_event["error_text"]))
+        audit_labels = {
+            str(signal.get("label") or "")
+            for signal in turn.get("audit_trust_signals", [])
+        }
+        self.assertIn("MCP call failed", audit_labels)
+
+    def test_build_turns_surfaces_context_compaction_and_rollback_markers(self) -> None:
+        raw_jsonl = raw_session_jsonl(
+            "audit-context-shift-session",
+            cwd="/workspace/codex",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Summarize what happened and continue.",
+                    },
+                    timestamp="2026-04-20T07:30:15Z",
+                ),
+                context_compacted_record(timestamp="2026-04-20T07:30:16Z"),
+                thread_rolled_back_record(timestamp="2026-04-20T07:30:17Z", num_turns=2),
+                turn_complete_record(
+                    "Context shifted before the summary completed.",
+                    timestamp="2026-04-20T07:30:18Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions([(raw_jsonl, "queue-host")])
+        turns = self._load_turns_for_session(settings, "audit-context-shift-session")
+
+        self.assertEqual(len(turns), 1)
+        turn = turns[0]
+        shift_titles = [str(item.get("title") or "") for item in turn["audit_context_shift_events"]]
+        self.assertEqual(
+            shift_titles,
+            ["Context compacted", "Thread rolled back"],
+        )
+        audit_labels = {
+            str(signal.get("label") or "")
+            for signal in turn.get("audit_trust_signals", [])
+        }
+        self.assertIn("Thread rolled back", audit_labels)
 
     def test_action_queue_labels_are_visible_in_the_audit_turn(self) -> None:
         cases = [
