@@ -382,6 +382,9 @@
                       {% if turn.audit_summary.research_count %}
                         <span class="rounded-full bg-cyan-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-800">{{ turn.audit_summary.research_count }} research</span>
                       {% endif %}
+                      {% if turn.audit_summary.mcp_count %}
+                        <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-sky-800">{{ turn.audit_summary.mcp_count }} MCP</span>
+                      {% endif %}
                       {% if turn.audit_summary.context_count %}
                         <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">{{ turn.audit_summary.context_count }} context</span>
                       {% endif %}
@@ -1062,6 +1065,57 @@
                   </div>
                 </details>
 
+                {% if turn.audit_mcp_events %}
+                  <details id="turn-{{ turn.number }}-mcp" class="rounded-[1.2rem] border border-sky-200 bg-sky-50/70 p-4">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-sky-800">MCP Calls</span>
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_mcp_events|length }} call{% if turn.audit_mcp_events|length != 1 %}s{% endif %}</span>
+                      </div>
+                      <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expand</span>
+                    </summary>
+                    <div class="mt-4 space-y-3">
+                      {% for event in turn.audit_mcp_events %}
+                        <article class="rounded-[1rem] border p-4 {% if event.status_tone == 'rose' %}border-rose-200 bg-rose-50/75{% elif event.status_tone == 'amber' %}border-amber-200 bg-amber-50/75{% else %}border-sky-200 bg-white/90{% endif %}">
+                          <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-sky-800">{{ event.server or 'MCP' }}</span>
+                              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">{{ event.tool or 'tool' }}</span>
+                              <span class="rounded-full px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] {% if event.status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif event.status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-emerald-100 text-emerald-800{% endif %}">
+                                {{ event.status_label }}
+                              </span>
+                              {% if event.duration_label %}
+                                <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ event.duration_label }}</span>
+                              {% endif %}
+                            </div>
+                            {% if event.timestamp %}
+                              <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ event.timestamp|full_timestamp }}">{{ event.timestamp|humanize_timestamp }}</span>
+                            {% endif %}
+                          </div>
+                          {% if event.resource_uri %}
+                            <p class="mt-3 text-[0.78rem] font-medium text-stone-500">resource <span class="font-mono text-[0.8rem] text-stone-600 break-all">{{ event.resource_uri }}</span></p>
+                          {% endif %}
+                          {% if event.result_preview %}
+                            <p class="mt-3 text-sm leading-6 {% if event.status_tone == 'rose' %}text-rose-900{% else %}text-stone-700{% endif %}">{{ event.result_preview }}</p>
+                          {% endif %}
+                          {% if event.arguments_text %}
+                            <details class="mt-3 rounded-[0.95rem] bg-white/80 p-3 text-sm text-stone-700">
+                              <summary class="cursor-pointer font-semibold text-stone-700">Show arguments</summary>
+                              <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.9rem] leading-6 text-stone-700">{{ event.arguments_text }}</pre>
+                            </details>
+                          {% endif %}
+                          {% if event.result_text %}
+                            <details class="mt-3 rounded-[0.95rem] bg-white/80 p-3 text-sm text-stone-700">
+                              <summary class="cursor-pointer font-semibold text-stone-700">{% if event.status == 'failed' %}Show failure payload{% else %}Show result{% endif %}</summary>
+                              <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[0.9rem] leading-6 text-stone-700">{{ event.result_text }}</pre>
+                            </details>
+                          {% endif %}
+                        </article>
+                      {% endfor %}
+                    </div>
+                  </details>
+                {% endif %}
+
                 {% if turn.audit_assistant_updates %}
                   <details class="rounded-[1.2rem] border border-stone-200 bg-white/85 p-4">
                     <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
@@ -1079,19 +1133,44 @@
                   </details>
                 {% endif %}
 
-                {% if turn.audit_context_events %}
+                {% if turn.audit_context_shift_events or turn.audit_context_other_events %}
                   <details id="turn-{{ turn.number }}-context" class="rounded-[1.2rem] border border-stone-200 bg-stone-50/80 p-4">
                     <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
                       <div class="flex flex-wrap items-center gap-2">
                         <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">Context Shifts</span>
-                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_context_events|length }} event{% if turn.audit_context_events|length != 1 %}s{% endif %}</span>
+                        <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">{{ turn.audit_summary.context_count }} event{% if turn.audit_summary.context_count != 1 %}s{% endif %}</span>
                       </div>
                       <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Expand</span>
                     </summary>
                     <div class="mt-4 space-y-3">
-                      {% for event in turn.audit_context_events %}
-                        {% include "_work_event.html" %}
+                      {% for event in turn.audit_context_shift_events %}
+                        <article class="rounded-[1rem] border border-amber-200 bg-white/90 p-4">
+                          <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">{{ event.title }}</span>
+                              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600">Evidence quality</span>
+                            </div>
+                            {% if event.timestamp %}
+                              <span class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ event.timestamp|full_timestamp }}">{{ event.timestamp|humanize_timestamp }}</span>
+                            {% endif %}
+                          </div>
+                          <p class="mt-3 text-sm leading-6 text-stone-800">{{ event.detail }}</p>
+                          <div class="mt-3 rounded-[0.95rem] border border-amber-200/80 bg-amber-50/80 p-3">
+                            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">Why it matters</p>
+                            <p class="mt-2 text-sm leading-6 text-amber-900">{{ event.impact }}</p>
+                          </div>
+                        </article>
                       {% endfor %}
+                      {% if turn.audit_context_other_events %}
+                        <div class="space-y-3">
+                          {% if turn.audit_context_shift_events %}
+                            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Other context events</p>
+                          {% endif %}
+                          {% for event in turn.audit_context_other_events %}
+                            {% include "_work_event.html" %}
+                          {% endfor %}
+                        </div>
+                      {% endif %}
                     </div>
                   </details>
                 {% endif %}
@@ -1126,6 +1205,12 @@
                       <a href="#turn-{{ turn.number }}-verification" class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ turn.audit_verification_verdict.label }}</a>
                     {% else %}
                       <span class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">No verification</span>
+                    {% endif %}
+                    {% if turn.audit_summary.mcp_count %}
+                      <a href="#turn-{{ turn.number }}-mcp" class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ turn.audit_summary.mcp_count }} MCP</a>
+                    {% endif %}
+                    {% if turn.audit_summary.context_shift_count %}
+                      <a href="#turn-{{ turn.number }}-context" class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ turn.audit_summary.context_shift_count }} history shifts</a>
                     {% endif %}
                     {% if turn.audit_summary.files_touched_count %}
                       <a href="#turn-{{ turn.number }}-files" class="rounded-full bg-white/85 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ turn.audit_summary.files_touched_count }} files</a>

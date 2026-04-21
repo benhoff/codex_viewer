@@ -897,7 +897,11 @@ def is_context_event(event: dict[str, object]) -> bool:
     record_type = str(event.get("record_type") or "").strip()
     payload_type = str(event.get("payload_type") or "").strip()
     return (
-        (record_type == "event_msg" and payload_type in {"context_compacted", "thread_rolled_back", "item_completed"})
+        (
+            record_type == "event_msg"
+            and payload_type in {"context_compacted", "thread_rolled_back", "item_completed"}
+        )
+        or (record_type == "response_item" and payload_type == "compaction")
         or record_type == "compacted"
     )
 
@@ -1157,6 +1161,253 @@ def _event_payloads_from_merged(
     return matches
 
 
+def _stringify_json(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    try:
+        return json.dumps(value, indent=2, sort_keys=True)
+    except TypeError:
+        return str(value).strip()
+
+
+def _truncate_block(value: str, *, max_chars: int) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 4].rstrip() + "\n..."
+
+
+def _mcp_content_items_text(
+    content: object,
+    *,
+    max_items: int = 3,
+    max_chars: int = 2000,
+) -> str:
+    if not isinstance(content, list):
+        return ""
+
+    snippets: list[str] = []
+    total_items = len(content)
+    for item in content[:max_items]:
+        if isinstance(item, dict):
+            content_type = str(item.get("type") or "").strip().lower()
+            if content_type == "text":
+                text = str(item.get("text") or "").strip()
+                if text:
+                    snippets.append(text)
+                    continue
+            if content_type in {"resource_link", "resource"}:
+                resource_uri = str(
+                    item.get("uri")
+                    or item.get("resource_uri")
+                    or item.get("url")
+                    or ""
+                ).strip()
+                if resource_uri:
+                    snippets.append(resource_uri)
+                    continue
+        rendered = _stringify_json(item)
+        if rendered:
+            snippets.append(rendered)
+
+    if not snippets:
+        return ""
+
+    joined = "\n\n".join(snippets)
+    if total_items > max_items:
+        joined = f"{joined}\n\n+{total_items - max_items} more content item{'s' if total_items - max_items != 1 else ''}"
+    return _truncate_block(joined, max_chars=max_chars)
+
+
+def build_mcp_audit_events(
+    merged_detail_events: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    mcp_events: list[dict[str, object]] = []
+    pending_by_call_id: dict[str, dict[str, object]] = {}
+
+    for event in merged_detail_events:
+        payload_type = str(event.get("payload_type") or "").strip().lower()
+        if payload_type not in {"mcp_tool_call_begin", "mcp_tool_call_end"}:
+            continue
+        payload = parse_record_payload(event.get("record_json"))
+        if not isinstance(payload, dict):
+            continue
+
+        call_id = str(payload.get("call_id") or event.get("call_id") or "").strip()
+        invocation = payload.get("invocation") if isinstance(payload.get("invocation"), dict) else {}
+        server = str(invocation.get("server") or "").strip()
+        tool = str(invocation.get("tool") or "").strip()
+        arguments = invocation.get("arguments")
+        resource_uri = str(payload.get("mcp_app_resource_uri") or "").strip()
+        timestamp = str(event.get("timestamp") or "").strip()
+
+        if payload_type == "mcp_tool_call_begin":
+            pending_by_call_id[call_id] = {
+                "call_id": call_id,
+                "server": server,
+                "tool": tool,
+                "arguments": arguments,
+                "resource_uri": resource_uri,
+                "started_at": timestamp,
+            }
+            continue
+
+        base_event = pending_by_call_id.pop(call_id, {})
+        duration_seconds = coerce_duration_seconds(payload.get("duration"))
+        result_payload = payload.get("result")
+        status = "completed"
+        status_label = "Completed"
+        status_tone = "emerald"
+        error_text = ""
+        result_preview = ""
+        result_details = ""
+
+        if isinstance(result_payload, dict) and "Err" in result_payload:
+            status = "failed"
+            status_label = "Failed"
+            status_tone = "rose"
+            error_text = str(result_payload.get("Err") or "").strip()
+            result_preview = shorten(error_text or "Tool call failed.", 220)
+            result_details = _truncate_block(error_text or "Tool call failed.", max_chars=2800)
+        elif isinstance(result_payload, dict) and "Ok" in result_payload:
+            ok_payload = result_payload.get("Ok")
+            if isinstance(ok_payload, dict):
+                content_text = _mcp_content_items_text(ok_payload.get("content"))
+                structured_text = _truncate_block(_stringify_json(ok_payload.get("structured_content")), max_chars=2000)
+                meta_text = _truncate_block(_stringify_json(ok_payload.get("meta")), max_chars=1200)
+                parts = [part for part in [content_text, structured_text, meta_text] if part]
+                result_details = "\n\n".join(parts)
+                result_preview = shorten(
+                    content_text.replace("\n", " ")
+                    if content_text
+                    else structured_text.replace("\n", " ")
+                    if structured_text
+                    else meta_text.replace("\n", " "),
+                    220,
+                )
+                if bool(ok_payload.get("isError")):
+                    status = "failed"
+                    status_label = "Failed"
+                    status_tone = "rose"
+                    error_text = content_text or structured_text or meta_text or "Tool returned an error response."
+
+        if not result_preview and result_details:
+            result_preview = shorten(result_details.replace("\n", " "), 220)
+
+        mcp_events.append(
+            {
+                "call_id": call_id,
+                "server": server or str(base_event.get("server") or "").strip(),
+                "tool": tool or str(base_event.get("tool") or "").strip(),
+                "summary_text": " / ".join(
+                    part
+                    for part in [
+                        server or str(base_event.get("server") or "").strip(),
+                        tool or str(base_event.get("tool") or "").strip(),
+                    ]
+                    if part
+                )
+                or "MCP tool call",
+                "arguments_text": _truncate_block(
+                    _stringify_json(arguments if arguments is not None else base_event.get("arguments")),
+                    max_chars=2200,
+                ),
+                "resource_uri": resource_uri or str(base_event.get("resource_uri") or "").strip(),
+                "timestamp": timestamp or str(base_event.get("started_at") or "").strip(),
+                "started_at": str(base_event.get("started_at") or "").strip(),
+                "duration_seconds": duration_seconds,
+                "duration_label": humanize_duration(duration_seconds) if duration_seconds is not None else "",
+                "status": status,
+                "status_label": status_label,
+                "status_tone": status_tone,
+                "result_preview": result_preview,
+                "result_text": result_details,
+                "error_text": error_text,
+            }
+        )
+
+    for base_event in pending_by_call_id.values():
+        mcp_events.append(
+            {
+                "call_id": str(base_event.get("call_id") or "").strip(),
+                "server": str(base_event.get("server") or "").strip(),
+                "tool": str(base_event.get("tool") or "").strip(),
+                "summary_text": " / ".join(
+                    part
+                    for part in [
+                        str(base_event.get("server") or "").strip(),
+                        str(base_event.get("tool") or "").strip(),
+                    ]
+                    if part
+                )
+                or "MCP tool call",
+                "arguments_text": _truncate_block(_stringify_json(base_event.get("arguments")), max_chars=2200),
+                "resource_uri": str(base_event.get("resource_uri") or "").strip(),
+                "timestamp": str(base_event.get("started_at") or "").strip(),
+                "started_at": str(base_event.get("started_at") or "").strip(),
+                "duration_seconds": None,
+                "duration_label": "",
+                "status": "in_progress",
+                "status_label": "In progress",
+                "status_tone": "amber",
+                "result_preview": "",
+                "result_text": "",
+                "error_text": "",
+            }
+        )
+
+    mcp_events.sort(key=lambda item: str(item.get("timestamp") or ""))
+    return mcp_events
+
+
+def build_context_shift_events(
+    context_events: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    context_shifts: list[dict[str, object]] = []
+    for event in context_events:
+        record_type = str(event.get("record_type") or "").strip().lower()
+        payload_type = str(event.get("payload_type") or "").strip().lower()
+        payload = parse_record_payload(event.get("record_json"))
+
+        if payload_type == "context_compacted" or payload_type == "compaction" or record_type == "compacted":
+            context_shifts.append(
+                {
+                    "kind": "context_compacted",
+                    "title": "Context compacted",
+                    "tone": "amber",
+                    "timestamp": str(event.get("timestamp") or "").strip(),
+                    "detail": "Earlier conversation history was compacted before the turn continued.",
+                    "impact": "Older turns may no longer be available verbatim in the model's active context.",
+                }
+            )
+            continue
+
+        if payload_type == "thread_rolled_back":
+            rolled_back_turns = payload.get("num_turns") if isinstance(payload, dict) else None
+            count = int(rolled_back_turns) if isinstance(rolled_back_turns, int) else None
+            detail = (
+                f"{count} earlier turn{'s were' if count != 1 else ' was'} removed from context before the turn continued."
+                if count is not None
+                else "Earlier turns were removed from context before the turn continued."
+            )
+            context_shifts.append(
+                {
+                    "kind": "thread_rolled_back",
+                    "title": "Thread rolled back",
+                    "tone": "amber",
+                    "timestamp": str(event.get("timestamp") or "").strip(),
+                    "detail": detail,
+                    "impact": "Later claims may no longer include the rolled-back turns in model context.",
+                }
+            )
+
+    return context_shifts
+
+
 def _describe_permission_shape(value: object) -> str:
     if not isinstance(value, dict):
         return "additional permissions"
@@ -1309,6 +1560,8 @@ def build_trust_signals(
     risky_files: list[dict[str, str]],
     command_events: list[dict[str, object]],
     merged_detail_events: list[dict[str, object]],
+    mcp_events: list[dict[str, object]],
+    context_shift_events: list[dict[str, object]],
     response_state: str,
     abort_reason: str | None,
     patch_count: int,
@@ -1475,6 +1728,43 @@ def build_trust_signals(
                 ),
                 "href": None,
                 "examples": [item["server"] for item in mcp_failures[:3]],
+            }
+        )
+
+    mcp_call_failures = [event for event in mcp_events if str(event.get("status") or "") == "failed"]
+    if mcp_call_failures:
+        first_failure = mcp_call_failures[0]
+        detail = str(first_failure.get("error_text") or first_failure.get("result_preview") or "").strip()
+        signals.append(
+            {
+                "key": "mcp_call_failed",
+                "tone": "rose",
+                "label": "MCP call failed",
+                "detail": (
+                    f"{str(first_failure.get('summary_text') or 'MCP tool call').strip()}: {shorten(detail, 100)}"
+                    if detail
+                    else f"{str(first_failure.get('summary_text') or 'MCP tool call').strip()} failed."
+                ),
+                "href": f"#turn-{turn_number}-mcp",
+                "examples": [
+                    str(event.get("summary_text") or "").strip()
+                    for event in mcp_call_failures[:3]
+                    if str(event.get("summary_text") or "").strip()
+                ],
+            }
+        )
+
+    if context_shift_events:
+        has_rollback = any(str(event.get("kind") or "") == "thread_rolled_back" for event in context_shift_events)
+        first_shift = context_shift_events[0]
+        signals.append(
+            {
+                "key": "context_shifted",
+                "tone": "amber",
+                "label": "Thread rolled back" if has_rollback else "Context compacted",
+                "detail": str(first_shift.get("impact") or first_shift.get("detail") or "Earlier history changed during the turn."),
+                "href": f"#turn-{turn_number}-context",
+                "examples": [],
             }
         )
 
@@ -2003,8 +2293,6 @@ def build_turns(
                 skip = True
             if event["record_type"] == "event_msg" and event["payload_type"] in {"task_started", "turn_started"}:
                 skip = True
-            if event["record_type"] == "compacted":
-                skip = True
             if event["kind"] == "message" and event["role"] == "user":
                 skip = True
             if completion_event is not None and event["event_index"] == completion_event["event_index"]:
@@ -2055,6 +2343,17 @@ def build_turns(
         patch_events = [event for event in merged_detail_events if str(event.get("group_key") or "") == "patch"]
         research_events = [event for event in merged_detail_events if is_research_event(event)]
         context_events = [event for event in merged_detail_events if is_context_event(event)]
+        mcp_events = build_mcp_audit_events(merged_detail_events)
+        context_shift_events = build_context_shift_events(context_events)
+        context_other_events = [
+            event
+            for event in context_events
+            if not (
+                str(event.get("payload_type") or "").strip().lower()
+                in {"context_compacted", "thread_rolled_back", "compaction"}
+                or str(event.get("record_type") or "").strip().lower() == "compacted"
+            )
+        ]
         assistant_updates = [
             event
             for event in merged_detail_events
@@ -2101,6 +2400,8 @@ def build_turns(
             risky_files=risky_files,
             command_events=command_events,
             merged_detail_events=merged_detail_events,
+            mcp_events=mcp_events,
+            context_shift_events=context_shift_events,
             response_state=response_state,
             abort_reason=abort_reason,
             patch_count=len(patch_events),
@@ -2135,6 +2436,9 @@ def build_turns(
             "audit_patch_events": patch_events,
             "audit_research_events": research_events,
             "audit_context_events": context_events,
+            "audit_context_shift_events": context_shift_events,
+            "audit_context_other_events": context_other_events,
+            "audit_mcp_events": mcp_events,
             "audit_assistant_updates": assistant_updates,
             "audit_verification_commands": verification_commands,
             "audit_verification_state": verification_state,
@@ -2152,6 +2456,8 @@ def build_turns(
                 "patch_count": len(patch_events),
                 "research_count": len(research_events),
                 "context_count": len(context_events),
+                "context_shift_count": len(context_shift_events),
+                "mcp_count": len(mcp_events),
                 "files_touched_count": len(files_touched),
                 "verification_count": len(verification_commands),
                 "verification_state": verification_state,
