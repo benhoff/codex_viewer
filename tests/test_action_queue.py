@@ -910,9 +910,9 @@ class ActionQueueTests(unittest.TestCase):
         settings = self._ingest_sessions(raw_sessions)
         detail = self._load_group_detail(settings)
 
-        self.assertEqual(len(detail["attention_sessions"]), 4)
-        self.assertEqual(len(detail["attention_sessions_preview"]), 3)
-        self.assertEqual(len(detail["attention_sessions_remaining"]), 1)
+        self.assertEqual(len(detail["attention_sessions"]), 1)
+        self.assertEqual(len(detail["attention_sessions_preview"]), 1)
+        self.assertEqual(len(detail["attention_sessions_remaining"]), 0)
 
     def test_group_detail_repo_blockers_honor_owner_scoped_ignore_state(self) -> None:
         raw_jsonl = raw_session_jsonl(

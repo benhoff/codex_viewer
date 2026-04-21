@@ -52,7 +52,7 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
             connection,
             key,
             sessions_page=sessions_page,
-            sessions_page_size=context.settings.page_size,
+            sessions_page_size=min(context.settings.page_size, 6),
             project_access=project_access,
             owner_scope=owner_scope,
             detail_href=detail_path,
@@ -68,7 +68,7 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
         stream_preview = fetch_turn_stream(
             connection,
             page=1,
-            page_size=6,
+            page_size=10,
             group_key=key,
             detail_href_override=detail_path,
         )

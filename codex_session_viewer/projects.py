@@ -310,6 +310,85 @@ def summarize_attention_status(
     }
 
 
+LOW_CONFIDENCE_PROJECT_SESSION_ISSUE_KINDS = {"claim_evidence_mismatch"}
+
+
+def _project_session_issue_label(issue: dict[str, Any] | None) -> tuple[str, str]:
+    if not issue:
+        return "", ""
+    issue_kind = trimmed(issue.get("issue_kind"))
+    if issue_kind in LOW_CONFIDENCE_PROJECT_SESSION_ISSUE_KINDS:
+        return "Review needed", "amber"
+    return trimmed(issue.get("status_label")) or "", trimmed(issue.get("status_tone")) or "stone"
+
+
+def _project_session_preview_title(summary: object, last_user_message: object) -> str:
+    preferred = trimmed(summary) or trimmed(last_user_message) or "Session"
+    return shorten(strip_codex_wrappers(preferred), 140)
+
+
+def _project_session_preview_detail(
+    *,
+    title: str,
+    last_user_message: object,
+    primary_issue: dict[str, Any] | None,
+) -> str:
+    if primary_issue:
+        issue_detail = (
+            trimmed(primary_issue.get("title"))
+            or trimmed(primary_issue.get("status_title"))
+            or trimmed(primary_issue.get("status_label"))
+            or ""
+        )
+        if issue_detail:
+            return shorten(issue_detail, 160)
+    ask = trimmed(last_user_message) or ""
+    if ask and ask != title and len(ask) >= 24:
+        return "Latest ask: " + shorten(strip_codex_wrappers(ask), 140)
+    return ""
+
+
+def _project_session_action_badges(
+    issues: list[dict[str, Any]],
+    *,
+    max_badges: int = 2,
+) -> list[dict[str, str]]:
+    badges: list[dict[str, str]] = []
+    seen_labels: set[str] = set()
+    primary_label = _project_session_issue_label(issues[0])[0] if issues else ""
+    for issue in issues:
+        label, tone = _project_session_issue_label(issue)
+        if not label or label == primary_label or label in seen_labels:
+            continue
+        badges.append({"label": label, "tone": tone or "stone"})
+        seen_labels.add(label)
+        if len(badges) >= max_badges:
+            break
+    return badges
+
+
+def apply_project_session_preview(
+    session_item: dict[str, Any],
+    issues: list[dict[str, Any]] | None = None,
+) -> None:
+    ordered_issues = list(issues or [])
+    primary_issue = ordered_issues[0] if ordered_issues else None
+    title = _project_session_preview_title(
+        session_item.get("summary"),
+        session_item.get("last_user_message"),
+    )
+    status_label, status_tone = _project_session_issue_label(primary_issue)
+    session_item["display_title"] = title
+    session_item["display_detail"] = _project_session_preview_detail(
+        title=title,
+        last_user_message=session_item.get("last_user_message"),
+        primary_issue=primary_issue,
+    )
+    session_item["action_status_label"] = status_label
+    session_item["action_status_tone"] = status_tone
+    session_item["action_badges"] = _project_session_action_badges(ordered_issues)
+
+
 def slugify_project_segment(value: str | None, fallback: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
     return normalized or fallback
@@ -1957,7 +2036,6 @@ def fetch_group_detail(
     }
     latest_status_source: sqlite3.Row | None = None
     latest_status_timestamp = ""
-    attention_sessions: list[dict[str, Any]] = []
     all_sessions: list[dict[str, Any]] = []
     for row in matching_rows:
         project = effective_project_fields(row)
@@ -1995,7 +2073,6 @@ def fetch_group_detail(
                 "sessions": [],
             },
         )
-        session_title = trimmed(row["last_user_message"]) or trimmed(row["latest_turn_summary"]) or row["summary"]
         session_timestamp = row["session_timestamp"] or row["started_at"] or row["imported_at"]
         session_when = trimmed(row["last_turn_timestamp"]) or session_timestamp or ""
         if session_when >= latest_status_timestamp:
@@ -2029,6 +2106,7 @@ def fetch_group_detail(
             "attention_score": int(session_status["attention_score"] or 0),
             "project_label": project["display_label"],
         }
+        apply_project_session_preview(session_item)
         source_group["sessions"].append(session_item)
         all_sessions.append(session_item)
 
@@ -2054,7 +2132,7 @@ def fetch_group_detail(
         if host_summary["latest_session"] is None or session_when > str(host_summary["latest_session"]["timestamp"] or ""):
             host_summary["latest_session"] = {
                 "href": session_item["href"],
-                "title": session_title or "Session",
+                "title": session_item["display_title"] or "Session",
                 "timestamp": session_when,
             }
         if session_item["needs_attention"] and (
@@ -2063,7 +2141,7 @@ def fetch_group_detail(
         ):
             host_summary["latest_failed_session"] = {
                 "href": session_item["href"],
-                "title": session_title or "Session needing attention",
+                "title": session_item["display_title"] or "Session needing attention",
                 "timestamp": session_when,
             }
 
@@ -2072,22 +2150,6 @@ def fetch_group_detail(
             signal_summary["viewer_warnings"] += 1
         if session_item["needs_attention"]:
             signal_summary["attention_sessions"] += 1
-            attention_sessions.append(
-                {
-                    "id": row["id"],
-                    "href": f"/sessions/{row['id']}",
-                    "title": session_title or "Session needing attention",
-                    "host": project["source_host"],
-                    "timestamp": session_when,
-                    "summary": trimmed(row["latest_turn_summary"]) or row["summary"] or "",
-                    "aborted_turn_count": aborted_turns,
-                    "viewer_warning": viewer_warning,
-                    "signal_badges": session_item["signal_badges"],
-                    "status_tone": session_item["status_tone"],
-                    "status_label": session_item["status_label"],
-                    "attention_score": session_item["attention_score"],
-                }
-            )
 
     for source_group in by_source.values():
         source_group["sessions"].sort(
@@ -2110,27 +2172,11 @@ def fetch_group_detail(
         ),
         reverse=True,
     )
-    attention_sessions.sort(
-        key=lambda item: (
-            int(item["attention_score"]),
-            str(item["timestamp"] or ""),
-        ),
-        reverse=True,
-    )
-    attention_sessions_preview_limit = 3
-    attention_sessions_preview = attention_sessions[:attention_sessions_preview_limit]
-    attention_sessions_remaining = attention_sessions[attention_sessions_preview_limit:]
     all_sessions.sort(
         key=lambda item: item["last_turn_timestamp"] or item["session_timestamp"] or "",
         reverse=True,
     )
 
-    recent_sessions = all_sessions[:8]
-    all_sessions_page = paginate_items(
-        all_sessions,
-        page=sessions_page,
-        page_size=sessions_page_size,
-    )
     from .action_queue import (
         build_project_action_groups,
         build_project_action_queue,
@@ -2143,6 +2189,47 @@ def fetch_group_detail(
         owner_scope=owner_scope,
         project_href=detail_href or str(group.detail_href or "/"),
         limit=48,
+    )
+    issues_by_session: dict[str, list[dict[str, Any]]] = {}
+    for issue in project_action_queue:
+        session_id = str(issue.get("session_id") or "").strip()
+        if not session_id:
+            continue
+        issues_by_session.setdefault(session_id, []).append(issue)
+    for session in all_sessions:
+        apply_project_session_preview(
+            session,
+            issues_by_session.get(str(session["id"]), []),
+        )
+
+    attention_sessions = [
+        {
+            "id": session["id"],
+            "href": session["href"],
+            "title": session["display_title"],
+            "detail": session["display_detail"],
+            "host": session["host"],
+            "timestamp": session["last_turn_timestamp"] or session["session_timestamp"] or "",
+            "signal_badges": list(session.get("action_badges") or []),
+            "status_tone": str(session.get("action_status_tone") or ""),
+            "status_label": str(session.get("action_status_label") or ""),
+            "attention_score": int(session.get("attention_score") or 0),
+        }
+        for session in all_sessions
+        if issues_by_session.get(str(session["id"]))
+    ]
+    attention_sessions.sort(
+        key=lambda item: str(item["timestamp"] or ""),
+        reverse=True,
+    )
+    attention_sessions_preview_limit = 3
+    attention_sessions_preview = attention_sessions[:attention_sessions_preview_limit]
+    attention_sessions_remaining = attention_sessions[attention_sessions_preview_limit:]
+    recent_sessions = all_sessions[:8]
+    all_sessions_page = paginate_items(
+        all_sessions,
+        page=sessions_page,
+        page_size=sessions_page_size,
     )
     project_action_groups = build_project_action_groups(project_action_queue)
     repo_action_signals = build_repo_action_signal_map(
