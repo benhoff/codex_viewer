@@ -42,11 +42,11 @@ test("project control pane renders recent activity and host summaries", async ({
     username: "admin",
     password: "Password123!",
   });
-  await page.goto(app.url("/projects/openai/codex-viewer"));
+  await page.goto(app.url("/openai/codex-viewer"));
 
-  await expect(page.getByRole("heading", { name: "Needs Attention" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recent Activity" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Hosts Working On This Repo" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "All Sessions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent Turns" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Repo Blockers" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Operational Context" })).toBeVisible();
   await expectNoServerError(page);
 });

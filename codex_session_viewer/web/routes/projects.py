@@ -21,6 +21,7 @@ from ...projects import (
     normalize_project_visibility,
     project_edit_href,
     remove_project_acl_member,
+    resolve_github_project_detail_href,
     resolve_group_key_from_detail_path,
     resolve_project_detail_href,
     sync_project_registry,
@@ -36,6 +37,17 @@ from ..forms import parse_form_fields
 
 
 router = APIRouter()
+
+
+def redirect_preserving_query(
+    request: Request,
+    path: str,
+    *,
+    status_code: int = 308,
+) -> RedirectResponse:
+    query = str(request.url.query or "").strip()
+    target = path if not query else f"{path}?{query}"
+    return RedirectResponse(url=target, status_code=status_code)
 
 
 def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -> HTMLResponse:
@@ -185,14 +197,18 @@ def group_edit_query_legacy(request: Request, key: str = Query(...)) -> Redirect
 def group_detail_github_legacy(request: Request, org: str, repo: str) -> RedirectResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
-        group_key = f"github:{org}/{repo}".lower()
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
             auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
         )
-        detail_href = resolve_project_detail_href(connection, group_key, project_access=project_access)
-        if detail_href == f"/groups?key={quote(group_key, safe='')}":
+        detail_href = resolve_github_project_detail_href(
+            connection,
+            org,
+            repo,
+            project_access=project_access,
+        )
+        if detail_href is None:
             raise HTTPException(status_code=404, detail="Project group not found")
     return RedirectResponse(url=detail_href, status_code=308)
 
@@ -214,6 +230,165 @@ def group_detail_directory_legacy(request: Request, host: str, directory: str) -
 
 
 @router.get("/projects/{owner_slug}/{project_slug}/edit", response_class=HTMLResponse)
+def group_edit_legacy(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        group_key = resolve_group_key_from_detail_path(
+            connection,
+            owner_slug,
+            project_slug,
+            project_access=project_access,
+        )
+        detail_href = (
+            resolve_project_detail_href(connection, group_key, project_access=project_access)
+            if group_key is not None
+            else ""
+        )
+    if group_key is None:
+        raise HTTPException(status_code=404, detail="Project group not found")
+    target_path = project_edit_href(detail_href)
+    if target_path != str(request.url.path):
+        return redirect_preserving_query(request, target_path)
+    return render_group_edit(request, group_key)
+
+
+@router.get("/projects/{owner_slug}/{project_slug}", response_class=HTMLResponse)
+def group_detail_path_legacy(
+    request: Request,
+    owner_slug: str,
+    project_slug: str,
+    sessions_page: int = Query(default=1),
+) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        group_key = resolve_group_key_from_detail_path(
+            connection,
+            owner_slug,
+            project_slug,
+            project_access=project_access,
+        )
+        detail_href = (
+            resolve_project_detail_href(connection, group_key, project_access=project_access)
+            if group_key is not None
+            else ""
+        )
+    if group_key is None:
+        raise HTTPException(status_code=404, detail="Project group not found")
+    if detail_href != str(request.url.path):
+        return redirect_preserving_query(request, detail_href)
+    return render_group_detail(request, group_key, sessions_page=sessions_page)
+
+
+@router.get("/projects/{owner_slug}/{project_slug}/queue", response_class=HTMLResponse)
+def group_queue_legacy(request: Request, owner_slug: str, project_slug: str) -> RedirectResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        group_key = resolve_group_key_from_detail_path(
+            connection,
+            owner_slug,
+            project_slug,
+            project_access=project_access,
+        )
+    if group_key is None:
+        raise HTTPException(status_code=404, detail="Project group not found")
+    return RedirectResponse(url=f"/queue?project={quote(group_key, safe='')}", status_code=308)
+
+
+@router.get("/projects/{owner_slug}/{project_slug}/environment", response_class=HTMLResponse)
+def group_environment_legacy(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        group_key = resolve_group_key_from_detail_path(
+            connection,
+            owner_slug,
+            project_slug,
+            project_access=project_access,
+        )
+        if group_key is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        detail_href = resolve_project_detail_href(connection, group_key, project_access=project_access)
+        target_path = f"{detail_href.rstrip('/')}/environment"
+        if target_path != str(request.url.path):
+            return redirect_preserving_query(request, target_path)
+        audit = fetch_project_environment_audit(connection, group_key, project_access=project_access)
+        if audit is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+    audit["group"].detail_href = str(request.url.path).rsplit("/environment", 1)[0]
+    return context.templates.TemplateResponse(
+        request,
+        name="project_environment.html",
+        context={
+            "request": request,
+            "audit": audit,
+            "search_query": "",
+        },
+    )
+
+
+@router.get("/projects/{owner_slug}/{project_slug}/stream", response_class=HTMLResponse)
+def group_stream_legacy(request: Request, owner_slug: str, project_slug: str, page: int = Query(default=1)) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        group_key = resolve_group_key_from_detail_path(
+            connection,
+            owner_slug,
+            project_slug,
+            project_access=project_access,
+        )
+        if group_key is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        detail_href = resolve_project_detail_href(connection, group_key, project_access=project_access)
+        target_path = f"{detail_href.rstrip('/')}/stream"
+        if target_path != str(request.url.path):
+            return redirect_preserving_query(request, target_path)
+        detail = fetch_group_detail(connection, group_key, project_access=project_access)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        stream_data = fetch_turn_stream(
+            connection,
+            page=page,
+            group_key=group_key,
+            detail_href_override=str(request.url.path).rsplit("/stream", 1)[0],
+        )
+    return context.templates.TemplateResponse(
+        request,
+        name="stream.html",
+        context={
+            "request": request,
+            "stream_data": stream_data,
+            "stream_project": detail["group"],
+            "stream_project_key": group_key,
+            "search_query": "",
+        },
+    )
+
+
+@router.get("/{owner_slug}/{project_slug}/edit", response_class=HTMLResponse)
 def group_edit(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
@@ -233,7 +408,7 @@ def group_edit(request: Request, owner_slug: str, project_slug: str) -> HTMLResp
     return render_group_edit(request, group_key)
 
 
-@router.get("/projects/{owner_slug}/{project_slug}", response_class=HTMLResponse)
+@router.get("/{owner_slug}/{project_slug}", response_class=HTMLResponse)
 def group_detail(
     request: Request,
     owner_slug: str,
@@ -258,7 +433,7 @@ def group_detail(
     return render_group_detail(request, group_key, sessions_page=sessions_page)
 
 
-@router.get("/projects/{owner_slug}/{project_slug}/queue", response_class=HTMLResponse)
+@router.get("/{owner_slug}/{project_slug}/queue", response_class=HTMLResponse)
 def group_queue(request: Request, owner_slug: str, project_slug: str) -> RedirectResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
@@ -278,7 +453,7 @@ def group_queue(request: Request, owner_slug: str, project_slug: str) -> Redirec
     return RedirectResponse(url=f"/queue?project={quote(group_key, safe='')}", status_code=308)
 
 
-@router.get("/projects/{owner_slug}/{project_slug}/environment", response_class=HTMLResponse)
+@router.get("/{owner_slug}/{project_slug}/environment", response_class=HTMLResponse)
 def group_environment(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:
@@ -310,7 +485,7 @@ def group_environment(request: Request, owner_slug: str, project_slug: str) -> H
     )
 
 
-@router.get("/projects/{owner_slug}/{project_slug}/stream", response_class=HTMLResponse)
+@router.get("/{owner_slug}/{project_slug}/stream", response_class=HTMLResponse)
 def group_stream(request: Request, owner_slug: str, project_slug: str, page: int = Query(default=1)) -> HTMLResponse:
     context = get_app_context(request)
     with connect(context.settings.database_path) as connection:

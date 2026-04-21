@@ -12,6 +12,8 @@ from ...projects import (
     build_project_access_context,
     effective_project_fields,
     fetch_session_with_project,
+    project_edit_href,
+    resolve_project_detail_href,
     row_is_visible_to_project_access,
 )
 from ...runtime import export_markdown, get_events
@@ -132,6 +134,10 @@ def session_detail(
             raise HTTPException(status_code=404, detail="Session not found")
         if not row_is_visible_to_project_access(session, project_access):
             raise HTTPException(status_code=404, detail="Session not found")
+        project = effective_project_fields(session)
+        group_key = str(project["effective_group_key"])
+        group_href = resolve_project_detail_href(connection, group_key, project_access=project_access)
+        edit_href = project_edit_href(group_href) if project_access.bypass else ""
         agent_snapshot = session_agent_snapshot(session)
         usage_pressure = usage_pressure_snapshot(session)
         parent_session_href = None
@@ -164,10 +170,6 @@ def session_detail(
         else:
             events = get_session_view_events(connection, session_id)
         saved_turn_states = fetch_session_saved_turn_states(connection, owner_scope, session_id)
-    project = effective_project_fields(session)
-    group_key = str(project["effective_group_key"])
-    group_href = f"/projects/key/{quote(group_key, safe='')}"
-    edit_href = f"/projects/edit?key={quote(group_key, safe='')}" if project_access.bypass else ""
     starting_turn_number = int(window["context_turn"]["turn_number"]) if window.get("context_turn") else int(window.get("oldest_turn") or 1)
     turns_chrono = build_turns(
         events,

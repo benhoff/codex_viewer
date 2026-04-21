@@ -1208,13 +1208,25 @@ def index(
             group_signals,
         )
 
+    visible_hosts = {
+        str(effective_project_fields(row)["source_host"] or "").strip()
+        for row in rows
+        if str(effective_project_fields(row)["source_host"] or "").strip()
+    }
+    visible_remotes = remotes
+    if project_access is not None and not project_access.bypass:
+        visible_remotes = [
+            remote
+            for remote in remotes
+            if str(remote.get("source_host") or "").strip() in visible_hosts
+        ]
     active_host_count, active_hosts, active_hosts_from_agents = build_active_hosts_panel(
         rows,
-        remotes,
+        visible_remotes,
     )
-    failed_agents = [remote for remote in remotes if agent_has_failure(remote)][:5]
+    failed_agents = [remote for remote in visible_remotes if agent_has_failure(remote)][:5]
     stats["active_hosts"] = active_host_count
-    stats["failed_agents"] = len([remote for remote in remotes if agent_has_failure(remote)])
+    stats["failed_agents"] = len([remote for remote in visible_remotes if agent_has_failure(remote)])
     stats["turns_today"] = sum(int(item.get("secondary_turn_count", 0) or 0) for item in hot_turn_activity.values())
     return context.templates.TemplateResponse(
         request,
@@ -1338,7 +1350,10 @@ def machine_environment_audit(request: Request, source_host: str) -> HTMLRespons
             context.settings,
             project_access=project_access,
         )
-    if audit["remote"] is None and int(audit["summary"]["session_count"] or 0) == 0:
+    session_count = int(audit["summary"]["session_count"] or 0)
+    if project_access is not None and not project_access.bypass and session_count == 0:
+        raise HTTPException(status_code=404, detail="Remote host not found")
+    if audit["remote"] is None and session_count == 0:
         raise HTTPException(status_code=404, detail="Remote host not found")
     return context.templates.TemplateResponse(
         request,

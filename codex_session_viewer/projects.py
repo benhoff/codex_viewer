@@ -412,8 +412,39 @@ def project_short_key(group_key: str) -> str:
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
 
 
-def project_detail_href_for_route(owner_slug: str, project_slug: str) -> str:
+PROJECT_ROUTE_RESERVED_OWNERS = frozenset(
+    {
+        "api",
+        "docs",
+        "groups",
+        "login",
+        "machines",
+        "projects",
+        "redoc",
+        "remotes",
+        "search",
+        "sessions",
+        "settings",
+        "setup",
+        "static",
+        "stream",
+        "queue",
+    }
+)
+
+
+def project_short_detail_href_for_route(owner_slug: str, project_slug: str) -> str:
+    return f"/{quote(owner_slug, safe='')}/{quote(project_slug, safe='')}"
+
+
+def project_legacy_detail_href_for_route(owner_slug: str, project_slug: str) -> str:
     return f"/projects/{quote(owner_slug, safe='')}/{quote(project_slug, safe='')}"
+
+
+def project_detail_href_for_route(owner_slug: str, project_slug: str) -> str:
+    if (owner_slug or "").strip().lower() in PROJECT_ROUTE_RESERVED_OWNERS:
+        return project_legacy_detail_href_for_route(owner_slug, project_slug)
+    return project_short_detail_href_for_route(owner_slug, project_slug)
 
 
 def project_edit_href(detail_href: str) -> str:
@@ -2297,6 +2328,40 @@ def resolve_project_detail_href(
         if group.key == group_key:
             return group.detail_href
     return f"/groups?key={quote(group_key, safe='')}"
+
+
+def resolve_github_project_detail_href(
+    connection: sqlite3.Connection,
+    org: str,
+    repo: str,
+    *,
+    project_access: ProjectAccessContext | None = None,
+) -> str | None:
+    target_org = trimmed(org)
+    target_repo = trimmed(repo)
+    if not target_org or not target_repo:
+        return None
+
+    target_slug = f"{target_org}/{target_repo}".lower()
+    target_group_key = f"github:{target_slug}"
+    groups = build_grouped_projects(query_group_rows(connection, project_access=project_access))
+
+    for group in groups:
+        if group.key == target_group_key:
+            return group.detail_href
+
+    for group in groups:
+        remote = normalize_github_remote(group.remote_url)
+        if remote is not None and remote["slug"] == target_slug:
+            return group.detail_href
+        if (
+            group.inferred_kind in {"github", "git"}
+            and group.organization.strip().lower() == target_org.lower()
+            and group.repository.strip().lower() == target_repo.lower()
+        ):
+            return group.detail_href
+
+    return None
 
 
 def resolve_group_key_from_detail_path(

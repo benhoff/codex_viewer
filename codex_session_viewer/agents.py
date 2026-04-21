@@ -362,6 +362,15 @@ def _new_agent_entry(source_host: str, remote: dict[str, Any] | None) -> dict[st
     }
 
 
+def _visible_source_hosts(rows: list[sqlite3.Row]) -> set[str]:
+    hosts: set[str] = set()
+    for row in rows:
+        source_host = str(effective_project_fields(row)["source_host"] or "").strip()
+        if source_host:
+            hosts.add(source_host)
+    return hosts
+
+
 def _has_fresh_remote_contact(remote: dict[str, Any] | None) -> bool:
     remote = remote or {}
     sync_mode = str(remote.get("sync_mode") or "").strip()
@@ -645,6 +654,13 @@ def fetch_agents_dashboard(
 ) -> dict[str, Any]:
     remotes = fetch_remote_agent_health(connection, settings)
     rows = query_group_rows(connection, project_access=project_access)
+    visible_hosts = _visible_source_hosts(rows)
+    if project_access is not None and not project_access.bypass:
+        remotes = [
+            remote
+            for remote in remotes
+            if str(remote.get("source_host") or "").strip() in visible_hosts
+        ]
     route_map = {
         project.key: project.detail_href
         for project in build_grouped_projects(rows)

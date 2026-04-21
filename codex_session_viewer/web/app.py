@@ -64,7 +64,7 @@ def create_app(
             sync_sessions(app_settings)
 
     app.include_router(pages_router)
-    app.include_router(projects_router)
     app.include_router(sessions_router)
     app.include_router(sync_api_router)
+    app.include_router(projects_router)
     return app
