@@ -1,4 +1,4 @@
-# Codex Session Viewer
+# Agent Operations Viewer
 
 FastAPI viewer for Codex rollout sessions.
 
@@ -33,7 +33,8 @@ What this does by default:
 - imports from `~/.codex/sessions`
 - stores SQLite data in `./data`
 - starts the web UI on `127.0.0.1:8000`
-- skips auth unless you explicitly enable it
+- enables password auth by default
+- routes the first browser visit through `/setup` so you can create the initial admin
 
 If the dashboard is empty:
 
@@ -58,11 +59,8 @@ cp .env.server.example .env
 docker compose up --build -d
 ```
 
-`compose.yml` starts in `remote` sync mode and serves the UI on port `8000`.
-If the server will be reachable by anyone beyond your local machine, enable browser auth before exposing it:
-
-- set `CODEX_VIEWER_AUTH_MODE=password`, or
-- place the app behind a trusted auth proxy and use `CODEX_VIEWER_AUTH_MODE=proxy`
+`compose.yml` starts in `remote` sync mode, serves the UI on port `8000`, and defaults browser auth to `password`.
+If you want to hand auth off to a trusted proxy instead, set `CODEX_VIEWER_AUTH_MODE=proxy`.
 
 Then open the viewer, finish `/setup`, create a sync token, and connect an agent host.
 
@@ -163,8 +161,8 @@ Example env files:
 
 ## Auth
 
-Browser auth is optional for a single-user local install.
-For any remote or shared server, enable `password` auth or put the app behind a trusted auth proxy before exposing it.
+`password` is the default auth mode.
+Set `CODEX_VIEWER_AUTH_MODE=none` only for a trusted single-user localhost install, or switch to `proxy` / `password_or_proxy` when you have a trusted auth proxy in front of the app.
 
 Built-in password auth:
 
@@ -192,7 +190,7 @@ Defaults in [compose.yml](compose.yml):
 - `CODEX_VIEWER_SYNC_MODE=remote`
 - SQLite persisted in the `viewer-data` Docker volume
 - viewer served on port `8000`
-- browser auth defaults to `none` unless you set `CODEX_VIEWER_AUTH_MODE` in your `.env`
+- browser auth defaults to `password`
 
 The Docker build now compiles Tailwind inside the image, so the host does not need Node for the container path.
 

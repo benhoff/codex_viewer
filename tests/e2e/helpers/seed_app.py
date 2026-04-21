@@ -41,7 +41,7 @@ def iso_at(value: datetime) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Seed Codex Viewer E2E fixtures")
+    parser = argparse.ArgumentParser(description="Seed Agent Operations Viewer E2E fixtures")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     create_admin = subparsers.add_parser("create-admin")

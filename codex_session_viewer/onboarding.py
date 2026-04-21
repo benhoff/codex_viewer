@@ -400,7 +400,7 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
                 f"{primary_remote['source_host']} is using sync API {primary_remote['sync_api_version']}, "
                 f"but the server expects {settings.sync_api_version}."
             )
-            next_action = "Update the machine's Codex Viewer install so the sync protocol matches."
+            next_action = "Update the machine's Agent Operations Viewer install so the sync protocol matches."
         elif primary_remote.get("version_mismatch") or update_state in DEGRADED_UPDATE_STATES:
             overall_tone = "amber"
             overall_state = "blocked"

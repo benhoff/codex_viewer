@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{% block title %}Codex Session Viewer{% endblock %}</title>
+    <title>{% block title %}Agent Operations Viewer{% endblock %}</title>
     <link rel="stylesheet" href="{{ static_asset_url(request, 'app.css') }}" />
   </head>
   <body class="min-h-screen antialiased selection:bg-blue-200/70">
@@ -19,7 +19,7 @@
         {% set current_path = request.url.path %}
         {% if current_path in ('/login', '/setup') %}
           <div class="flex items-center justify-between gap-3">
-            <a href="/" class="text-sm font-semibold uppercase tracking-[0.22em] text-[#1F2937]">Codex Session Viewer</a>
+            <a href="/" class="text-sm font-semibold uppercase tracking-[0.22em] text-[#1F2937]">Agent Operations Viewer</a>
             {% if request.state.auth_enabled %}
               <span class="rounded-full border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-semibold text-[#6B7280]">
                 {% if current_path == '/setup' %}
@@ -52,7 +52,7 @@
                   </svg>
                 </a>
                 <a href="/" class="min-w-0 truncate text-sm font-semibold uppercase tracking-[0.22em] text-[#1F2937]">
-                  Codex Session Viewer
+                  Agent Operations Viewer
                 </a>
               </div>
               <div class="flex flex-wrap items-center gap-2">

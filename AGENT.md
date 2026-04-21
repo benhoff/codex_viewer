@@ -103,7 +103,7 @@ If a command imports `codex_session_viewer.web.*`, `fastapi`, or template code, 
 
 ## Access Policy
 
-This document describes the current access model for the Codex Session Viewer.
+This document describes the current access model for the Agent Operations Viewer.
 
 It reflects the behavior implemented in:
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=Codex Session Viewer agent daemon
+Description=Agent Operations Viewer agent daemon
 After=network-online.target
 Wants=network-online.target
 
@@ -16,4 +16,3 @@ TimeoutStopSec=20
 
 [Install]
 WantedBy=multi-user.target
-

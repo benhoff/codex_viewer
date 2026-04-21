@@ -47,7 +47,7 @@ def create_app(
                     )
     STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 
-    app = FastAPI(title="Codex Session Viewer", version=app_settings.app_version)
+    app = FastAPI(title="Agent Operations Viewer", version=app_settings.app_version)
     install_auth(app, app_settings)
     templates = build_templates(app_settings.app_version)
     set_app_context(app, AppContext(settings=app_settings, templates=templates))

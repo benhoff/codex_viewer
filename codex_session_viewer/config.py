@@ -71,11 +71,11 @@ def load_or_create_session_secret(data_dir: Path) -> str:
 
 
 def _normalize_auth_mode(raw: str | None) -> str:
-    candidate = (raw or "none").strip().lower().replace("-", "_")
-    if candidate in {"none", ""}:
-        return "none"
-    if candidate in {"password", "local"}:
+    candidate = (raw or "").strip().lower().replace("-", "_")
+    if candidate in {"", "password", "local"}:
         return "password"
+    if candidate == "none":
+        return "none"
     if candidate in {"proxy", "sso", "header", "headers"}:
         return "proxy"
     if candidate in {"password_or_proxy", "proxy_or_password", "both", "hybrid"}:
