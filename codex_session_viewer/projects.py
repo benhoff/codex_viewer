@@ -1811,7 +1811,7 @@ def fetch_turn_stream(
                 "project_label": project["display_label"],
                 "project_detail_href": detail_href,
                 "host": project["source_host"],
-                "session_href": f"/sessions/{quote(str(row['session_id']), safe='')}?turn={int(row['turn_number'] or 0)}",
+                "session_href": f"/sessions/{quote(str(row['session_id']), safe='')}?view=conversation&turn={int(row['turn_number'] or 0)}",
                 "audit_href": f"/sessions/{quote(str(row['session_id']), safe='')}?view=audit&turn={int(row['turn_number'] or 0)}",
             }
         )

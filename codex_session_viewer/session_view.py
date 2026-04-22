@@ -2573,3 +2573,113 @@ def build_session_audit_summary(
         "git_branch": str(session_row.get("git_branch") or "").strip(),
         "git_commit_hash": str(session_row.get("git_commit_hash") or "").strip(),
     }
+
+
+def _review_count_label(
+    count: int,
+    singular: str,
+    *,
+    plural: str | None = None,
+    zero_label: str | None = None,
+) -> str:
+    if count <= 0:
+        return zero_label or f"No {plural or singular + 's'}"
+    noun = singular if count == 1 else (plural or f"{singular}s")
+    return f"{count} {noun}"
+
+
+def build_turn_review_focus(
+    turn: dict[str, object] | None,
+    review_kind: str | None,
+) -> dict[str, object] | None:
+    if not isinstance(turn, dict):
+        return None
+
+    normalized_kind = str(review_kind or "").strip().lower()
+    if normalized_kind != "claim_evidence_mismatch":
+        return None
+
+    response_evidence = turn.get("audit_response_evidence")
+    warnings = response_evidence.get("warnings") if isinstance(response_evidence, dict) else []
+    clean_warnings = [str(item).strip() for item in warnings if isinstance(item, str) and item.strip()]
+    if not clean_warnings:
+        return None
+
+    audit_summary = turn.get("audit_summary") if isinstance(turn.get("audit_summary"), dict) else {}
+    turn_number = int(turn.get("number") or 0)
+    command_count = int(audit_summary.get("command_count") or 0)
+    patch_count = int(audit_summary.get("patch_count") or 0)
+    verification_count = int(audit_summary.get("verification_count") or 0)
+    file_count = int(audit_summary.get("files_touched_count") or 0)
+    mismatch_count = len(clean_warnings)
+    claim_excerpt = str(turn.get("response_excerpt") or turn.get("response_text") or "").strip()
+    if not claim_excerpt:
+        claim_excerpt = "No assistant response captured."
+
+    return {
+        "kind": normalized_kind,
+        "turn_number": turn_number,
+        "title": "Response may overstate completed work",
+        "summary": (
+            "The assistant response claims work was completed, but the recorded commands, "
+            "patches, files, or verification do not fully support that claim."
+        ),
+        "claim_excerpt": claim_excerpt,
+        "warning_count": mismatch_count,
+        "warning_count_label": _review_count_label(
+            mismatch_count,
+            "mismatch detected",
+            plural="mismatches detected",
+        ),
+        "warnings": clean_warnings,
+        "evidence_rows": [
+            {
+                "label": "Commands",
+                "value": _review_count_label(command_count, "command", zero_label="No commands"),
+            },
+            {
+                "label": "Patches",
+                "value": _review_count_label(patch_count, "patch", zero_label="No patches"),
+            },
+            {
+                "label": "Verification",
+                "value": _review_count_label(
+                    verification_count,
+                    "verification run",
+                    plural="verification runs",
+                    zero_label="No verification",
+                ),
+            },
+            {
+                "label": "Files changed",
+                "value": _review_count_label(
+                    file_count,
+                    "file changed",
+                    plural="files changed",
+                    zero_label="No files changed",
+                ),
+            },
+        ],
+        "actions": [
+            {
+                "label": "Review commands",
+                "href": f"#turn-{turn_number}-commands" if command_count > 0 and turn_number > 0 else "",
+                "empty_label": "No commands recorded",
+            },
+            {
+                "label": "Review patches",
+                "href": f"#turn-{turn_number}-patches" if patch_count > 0 and turn_number > 0 else "",
+                "empty_label": "No patches recorded",
+            },
+            {
+                "label": "Review verification",
+                "href": f"#turn-{turn_number}-verification" if verification_count > 0 and turn_number > 0 else "",
+                "empty_label": "No verification recorded",
+            },
+            {
+                "label": "Review files changed",
+                "href": f"#turn-{turn_number}-files" if file_count > 0 and turn_number > 0 else "",
+                "empty_label": "No files recorded",
+            },
+        ],
+    }
