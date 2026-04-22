@@ -85,19 +85,19 @@ Run the remote daemon the same way the scripts do:
 ./scripts/start-agent-daemon.sh
 ```
 
-Run focused local Python checks against the existing venv only when they do not need the web stack:
+Run focused local Python checks against the repo-local dependency path:
 
 ```bash
-./.venv/bin/python -m unittest tests.test_action_queue tests.test_action_queue_state tests.test_agents_dashboard
+PYTHONPATH=.deps python3 -m unittest tests.test_action_queue tests.test_action_queue_state tests.test_environment_audit
 ```
 
-If a command imports `codex_session_viewer.web.*`, `fastapi`, or template code, prefer the `.deps` path unless you have explicitly repaired the venv.
+If a command imports `codex_session_viewer.web.*`, `fastapi`, or template code, stay on the `.deps` path.
 
 ### Known footguns
 
 - `python` fails because only `python3` is installed on `PATH`.
-- `./.venv/bin/python` is usable, but incomplete for FastAPI-backed code paths.
-- `./.venv/bin/python -m pip` does not work in the current venv.
+- `.venv` is not guaranteed to exist in this repo snapshot.
+- `PYTHONPATH=.deps python3` is the reliable path for FastAPI-backed code paths.
 - A command succeeding under `.venv` does not mean it matches the deployed app environment.
 - The deployed app path is script-driven and `.deps`-driven, not venv-activation-driven.
 

@@ -856,7 +856,7 @@ class ActionQueueTests(unittest.TestCase):
         repo_blockers = detail["project_action_queue"]
         self.assertEqual(len(repo_blockers), 3)
         self.assertEqual(detail["status_strip"]["health_label"], "Setup blocker")
-        self.assertIn("unresolved repo blockers", str(detail["status_strip"]["health_title"]))
+        self.assertIn("unresolved project blockers", str(detail["status_strip"]["health_title"]))
 
         action_groups = detail["project_action_groups"]
         self.assertEqual(len(action_groups), 2)
