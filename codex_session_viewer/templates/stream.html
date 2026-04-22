@@ -4,7 +4,7 @@
 
 {% block content %}
   <div class="mx-auto w-full max-w-6xl">
-    <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-5">
       <div class="flex flex-wrap gap-2 sm:gap-3">
         <a href="{{ stream_project.detail_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
           Back to project
@@ -12,17 +12,36 @@
       </div>
     </div>
 
-    <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:mb-8 sm:p-6 lg:p-7">
-      <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+    <section class="mb-4 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:mb-8 sm:p-6 lg:p-7">
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div class="min-w-0 flex-1">
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Cross-session turn stream</p>
           <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">{{ stream_project.display_label }}</h1>
-          <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
+          <p class="mt-2 hidden max-w-3xl text-sm leading-7 text-stone-600 sm:block sm:text-base">
             All turns across every session in this project, newest first.
           </p>
         </div>
 
-        <div class="grid w-full grid-cols-2 gap-3 lg:w-[20rem]">
+        <div class="mt-1 flex flex-wrap gap-2 sm:hidden">
+          <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-50">
+            {{ stream_data.total_count }} turns
+          </span>
+          <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-sky-800">
+            {{ stream_data.showing_to - stream_data.showing_from + 1 if stream_data.showing_from else 0 }} shown
+          </span>
+          <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-amber-800">
+            Page {{ stream_data.page }}
+          </span>
+          <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">
+            {% if stream_data.showing_from %}
+              {{ stream_data.showing_from }}-{{ stream_data.showing_to }}
+            {% else %}
+              0
+            {% endif %}
+          </span>
+        </div>
+
+        <div class="hidden w-full grid-cols-2 gap-3 sm:grid lg:w-[20rem]">
           <div class="rounded-[1.15rem] bg-stone-900 p-4 text-stone-50">
             <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-300">Turns</p>
             <p class="mt-2 text-2xl font-semibold">{{ stream_data.total_count }}</p>
@@ -50,12 +69,12 @@
     </section>
 
     <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
-      <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-5">
         <div>
-          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Turn Stream</h2>
-          <p class="mt-1 text-sm text-stone-600">Cross-session activity for this project.</p>
+          <h2 class="font-display text-xl text-stone-900 sm:text-[2rem]">Turn Stream</h2>
+          <p class="mt-1 hidden text-sm text-stone-600 sm:block">Cross-session activity for this project.</p>
         </div>
-        <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">
+        <p class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-600 sm:bg-transparent sm:px-0 sm:py-0 sm:text-[0.72rem] sm:text-stone-500">
           {% if stream_data.showing_from %}
             showing {{ stream_data.showing_from }}-{{ stream_data.showing_to }} of {{ stream_data.total_count }}
           {% else %}

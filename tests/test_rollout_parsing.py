@@ -31,6 +31,7 @@ from codex_session_viewer.remote_sync import RemoteSyncError, json_request, sync
 from codex_session_viewer.projects import (
     build_project_access_context,
     effective_project_fields,
+    fetch_turn_stream,
     fetch_group_detail,
 )
 from codex_session_viewer.session_status import is_task_complete, terminal_turn_summary
@@ -2318,6 +2319,151 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(row["latest_context_remaining_percent"], 77)
         self.assertAlmostEqual(float(row["latest_primary_limit_used_percent"] or 0.0), 95.0)
         self.assertEqual(row["latest_rate_limit_name"], "tokens")
+
+    def test_fetch_turn_stream_uses_turn_level_usage_pressure(self) -> None:
+        raw_jsonl = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": "turn-usage-session",
+                            "timestamp": "2026-04-20T03:19:14Z",
+                            "cwd": "/workspace/repo",
+                            "originator": "tester",
+                            "cli_version": "1.0.0",
+                            "source": "cli",
+                            "model_provider": "openai",
+                            "git": {
+                                "repository_url": "https://github.com/openai/codex-viewer.git",
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:15Z",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "Handle the first turn.",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:16Z",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "model_context_window": 128000,
+                                "total_token_usage": {
+                                    "input_tokens": 17000,
+                                    "cached_input_tokens": 2000,
+                                    "output_tokens": 3000,
+                                    "reasoning_output_tokens": 500,
+                                    "total_tokens": 20000,
+                                },
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:17Z",
+                        "payload": {
+                            "type": "turn_complete",
+                            "turn_id": "turn-1",
+                            "last_agent_message": "First turn complete.",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:18Z",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "Handle the second turn.",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:19Z",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "model_context_window": 128000,
+                                "total_token_usage": {
+                                    "input_tokens": 85000,
+                                    "cached_input_tokens": 5000,
+                                    "output_tokens": 15000,
+                                    "reasoning_output_tokens": 1200,
+                                    "total_tokens": 100000,
+                                },
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:19:20Z",
+                        "payload": {
+                            "type": "turn_complete",
+                            "turn_id": "turn-2",
+                            "last_agent_message": "Second turn complete.",
+                        },
+                    }
+                ),
+            ]
+        )
+
+        parsed = parse_session_text(
+            raw_jsonl,
+            Path("/tmp/turn-usage-session.jsonl"),
+            Path("/tmp"),
+            "local-host",
+            file_size=len(raw_jsonl.encode("utf-8")),
+            file_mtime_ns=0,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "viewer.sqlite3"
+            init_db(db_path)
+            with connect(db_path) as connection:
+                with write_transaction(connection):
+                    upsert_parsed_session(connection, parsed)
+
+                rows = connection.execute(
+                    """
+                    SELECT turn_number, latest_context_remaining_percent
+                    FROM session_turns
+                    WHERE session_id = ?
+                    ORDER BY turn_number ASC
+                    """,
+                    ("turn-usage-session",),
+                ).fetchall()
+                stream = fetch_turn_stream(connection, page_size=10)
+
+        self.assertEqual(
+            [(int(row["turn_number"]), row["latest_context_remaining_percent"]) for row in rows],
+            [(1, 93), (2, 24)],
+        )
+
+        items_by_turn = {int(item["turn_number"]): item for item in stream["items"]}
+        self.assertNotIn(
+            "Context 24%",
+            [str(badge["label"]) for badge in items_by_turn[1]["signal_badges"]],
+        )
+        self.assertIn(
+            "Context 24%",
+            [str(badge["label"]) for badge in items_by_turn[2]["signal_badges"]],
+        )
 
     def test_fetch_group_detail_handles_attention_sessions_with_usage_pressure(self) -> None:
         raw_jsonl = "\n".join(

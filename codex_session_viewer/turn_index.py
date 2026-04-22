@@ -16,10 +16,11 @@ from .session_status import (
     legacy_terminal_assistant_event,
     prefers_event_msg_user_turns,
 )
+from .session_insights import compute_usage_rollup
 from .text_utils import shorten, strip_codex_wrappers
 
 
-TURN_INDEX_VERSION = 3
+TURN_INDEX_VERSION = 4
 TURN_SEARCH_VERSION = 2
 
 MAX_PROMPT_SEARCH_CHARS = 8_000
@@ -259,6 +260,7 @@ def compute_session_turn_index(
             for event in all_events
             if event.get("record_type") == "event_msg" and event.get("payload_type") == "patch_apply_end"
         )
+        usage_rollup = compute_usage_rollup(all_events)
         latest_timestamp = _latest_timestamp(
             [response_timestamp, turn.get("prompt_timestamp")] + [event.get("timestamp") for event in all_events]
         )
@@ -279,6 +281,20 @@ def compute_session_turn_index(
             "patch_count": patch_count,
             "failure_count": failure_count,
             "files_touched_count": files_touched_count,
+            "latest_usage_timestamp": usage_rollup["latest_usage_timestamp"],
+            "latest_input_tokens": int(usage_rollup["latest_input_tokens"] or 0),
+            "latest_cached_input_tokens": int(usage_rollup["latest_cached_input_tokens"] or 0),
+            "latest_output_tokens": int(usage_rollup["latest_output_tokens"] or 0),
+            "latest_reasoning_output_tokens": int(usage_rollup["latest_reasoning_output_tokens"] or 0),
+            "latest_total_tokens": int(usage_rollup["latest_total_tokens"] or 0),
+            "latest_context_window": usage_rollup["latest_context_window"],
+            "latest_context_remaining_percent": usage_rollup["latest_context_remaining_percent"],
+            "latest_primary_limit_used_percent": usage_rollup["latest_primary_limit_used_percent"],
+            "latest_primary_limit_resets_at": usage_rollup["latest_primary_limit_resets_at"],
+            "latest_secondary_limit_used_percent": usage_rollup["latest_secondary_limit_used_percent"],
+            "latest_secondary_limit_resets_at": usage_rollup["latest_secondary_limit_resets_at"],
+            "latest_rate_limit_name": usage_rollup["latest_rate_limit_name"],
+            "latest_rate_limit_reached_type": usage_rollup["latest_rate_limit_reached_type"],
             "event_text": event_text,
         }
 
@@ -347,8 +363,22 @@ def replace_session_turns(
                 command_count,
                 patch_count,
                 failure_count,
-                files_touched_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                files_touched_count,
+                latest_usage_timestamp,
+                latest_input_tokens,
+                latest_cached_input_tokens,
+                latest_output_tokens,
+                latest_reasoning_output_tokens,
+                latest_total_tokens,
+                latest_context_window,
+                latest_context_remaining_percent,
+                latest_primary_limit_used_percent,
+                latest_primary_limit_resets_at,
+                latest_secondary_limit_used_percent,
+                latest_secondary_limit_resets_at,
+                latest_rate_limit_name,
+                latest_rate_limit_reached_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -366,6 +396,20 @@ def replace_session_turns(
                     int(row["patch_count"] or 0),
                     int(row["failure_count"] or 0),
                     int(row["files_touched_count"] or 0),
+                    row["latest_usage_timestamp"],
+                    int(row["latest_input_tokens"] or 0),
+                    int(row["latest_cached_input_tokens"] or 0),
+                    int(row["latest_output_tokens"] or 0),
+                    int(row["latest_reasoning_output_tokens"] or 0),
+                    int(row["latest_total_tokens"] or 0),
+                    row["latest_context_window"],
+                    row["latest_context_remaining_percent"],
+                    row["latest_primary_limit_used_percent"],
+                    row["latest_primary_limit_resets_at"],
+                    row["latest_secondary_limit_used_percent"],
+                    row["latest_secondary_limit_resets_at"],
+                    row["latest_rate_limit_name"],
+                    row["latest_rate_limit_reached_type"],
                 )
                 for row in rows
             ],
@@ -442,6 +486,20 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
                     int(row["patch_count"] or 0),
                     int(row["failure_count"] or 0),
                     int(row["files_touched_count"] or 0),
+                    row["latest_usage_timestamp"],
+                    int(row["latest_input_tokens"] or 0),
+                    int(row["latest_cached_input_tokens"] or 0),
+                    int(row["latest_output_tokens"] or 0),
+                    int(row["latest_reasoning_output_tokens"] or 0),
+                    int(row["latest_total_tokens"] or 0),
+                    row["latest_context_window"],
+                    row["latest_context_remaining_percent"],
+                    row["latest_primary_limit_used_percent"],
+                    row["latest_primary_limit_resets_at"],
+                    row["latest_secondary_limit_used_percent"],
+                    row["latest_secondary_limit_resets_at"],
+                    row["latest_rate_limit_name"],
+                    row["latest_rate_limit_reached_type"],
                 )
             )
 
@@ -462,8 +520,22 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
                 command_count,
                 patch_count,
                 failure_count,
-                files_touched_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                files_touched_count,
+                latest_usage_timestamp,
+                latest_input_tokens,
+                latest_cached_input_tokens,
+                latest_output_tokens,
+                latest_reasoning_output_tokens,
+                latest_total_tokens,
+                latest_context_window,
+                latest_context_remaining_percent,
+                latest_primary_limit_used_percent,
+                latest_primary_limit_resets_at,
+                latest_secondary_limit_used_percent,
+                latest_secondary_limit_resets_at,
+                latest_rate_limit_name,
+                latest_rate_limit_reached_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             inserts,
         )

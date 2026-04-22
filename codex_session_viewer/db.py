@@ -316,6 +316,20 @@ SESSION_TURN_COLUMN_DEFS = {
     "patch_count": "INTEGER NOT NULL DEFAULT 0",
     "failure_count": "INTEGER NOT NULL DEFAULT 0",
     "files_touched_count": "INTEGER NOT NULL DEFAULT 0",
+    "latest_usage_timestamp": "TEXT",
+    "latest_input_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_cached_input_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_output_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_reasoning_output_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_total_tokens": "INTEGER NOT NULL DEFAULT 0",
+    "latest_context_window": "INTEGER",
+    "latest_context_remaining_percent": "INTEGER",
+    "latest_primary_limit_used_percent": "REAL",
+    "latest_primary_limit_resets_at": "TEXT",
+    "latest_secondary_limit_used_percent": "REAL",
+    "latest_secondary_limit_resets_at": "TEXT",
+    "latest_rate_limit_name": "TEXT",
+    "latest_rate_limit_reached_type": "TEXT",
 }
 
 SESSION_COLUMNS = list(SESSION_COLUMN_DEFS.keys())
@@ -707,6 +721,20 @@ CREATE TABLE IF NOT EXISTS session_turns (
     patch_count INTEGER NOT NULL DEFAULT 0,
     failure_count INTEGER NOT NULL DEFAULT 0,
     files_touched_count INTEGER NOT NULL DEFAULT 0,
+    latest_usage_timestamp TEXT,
+    latest_input_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_output_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_total_tokens INTEGER NOT NULL DEFAULT 0,
+    latest_context_window INTEGER,
+    latest_context_remaining_percent INTEGER,
+    latest_primary_limit_used_percent REAL,
+    latest_primary_limit_resets_at TEXT,
+    latest_secondary_limit_used_percent REAL,
+    latest_secondary_limit_resets_at TEXT,
+    latest_rate_limit_name TEXT,
+    latest_rate_limit_reached_type TEXT,
     PRIMARY KEY (session_id, turn_number)
 );
 
