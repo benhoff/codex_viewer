@@ -1303,6 +1303,11 @@ def remotes_health_legacy(request: Request) -> RedirectResponse:
 @router.get("/machines", response_class=HTMLResponse)
 def machines_health(request: Request) -> HTMLResponse:
     context = get_app_context(request)
+    current_user = getattr(request.state, "auth_user", None)
+    can_manage_admin = bool(
+        (not context.settings.auth_enabled())
+        or (current_user and current_user.get("is_admin"))
+    )
     with connect(context.settings.database_path) as connection:
         with write_transaction(connection):
             onboarding = reconcile_onboarding_state(connection, context.settings)
@@ -1325,6 +1330,7 @@ def machines_health(request: Request) -> HTMLResponse:
             "agents_dashboard": agents_dashboard,
             "onboarding": onboarding,
             "return_to": request_return_to(request),
+            "can_manage_admin": can_manage_admin,
             "search_query": "",
         },
     )

@@ -19,7 +19,13 @@ from codex_session_viewer.agents import upsert_remote_agent_status  # noqa: E402
 from codex_session_viewer.api_tokens import create_api_token  # noqa: E402
 from codex_session_viewer.config import Settings  # noqa: E402
 from codex_session_viewer.db import connect, init_db, write_transaction  # noqa: E402
-from codex_session_viewer.importer import NormalizedEvent, ParsedSession, upsert_parsed_session  # noqa: E402
+from codex_session_viewer.importer import (  # noqa: E402
+    NormalizedEvent,
+    ParsedSession,
+    parse_session_text,
+    parsed_session_to_payload,
+    upsert_parsed_session,
+)
 from codex_session_viewer.local_auth import create_initial_admin, create_local_user, fetch_user_by_username  # noqa: E402
 from codex_session_viewer.onboarding import (  # noqa: E402
     record_first_heartbeat,
@@ -73,6 +79,26 @@ def parse_args() -> argparse.Namespace:
     session.add_argument("--turns", type=int, default=3)
     session.add_argument("--commands-per-turn", type=int, default=1)
     session.add_argument("--session-index", type=int, default=1)
+
+    session_payload = subparsers.add_parser("build-session-payload")
+    session_payload.add_argument("--source-host", required=True)
+    session_payload.add_argument("--project-key", required=True)
+    session_payload.add_argument("--project-label", required=True)
+    session_payload.add_argument("--github-org", default="")
+    session_payload.add_argument("--github-repo", default="")
+    session_payload.add_argument("--turns", type=int, default=3)
+    session_payload.add_argument("--commands-per-turn", type=int, default=1)
+    session_payload.add_argument("--session-index", type=int, default=1)
+
+    raw_session_payload = subparsers.add_parser("build-raw-session-payload")
+    raw_session_payload.add_argument("--source-host", required=True)
+    raw_session_payload.add_argument("--project-key", required=True)
+    raw_session_payload.add_argument("--project-label", required=True)
+    raw_session_payload.add_argument("--github-org", default="")
+    raw_session_payload.add_argument("--github-repo", default="")
+    raw_session_payload.add_argument("--session-index", type=int, default=1)
+    raw_session_payload.add_argument("--user-message", default="")
+    raw_session_payload.add_argument("--assistant-message", default="")
 
     visibility = subparsers.add_parser("set-project-visibility")
     visibility.add_argument("--group-key", required=True)
@@ -329,6 +355,122 @@ def build_synthetic_session(
     )
 
 
+def build_raw_sync_payload(
+    *,
+    source_host: str,
+    project_key: str,
+    project_label: str,
+    github_org: str,
+    github_repo: str,
+    session_index: int,
+    user_message: str | None = None,
+    assistant_message: str | None = None,
+) -> dict[str, object]:
+    repo_name = github_repo or project_key.rsplit("/", 1)[-1]
+    org_name = github_org or (project_key.split("/", 1)[0] if "/" in project_key else "")
+    session_id = str(uuid5(NAMESPACE_URL, f"raw:{source_host}:{project_key}:{session_index}"))
+    session_timestamp = iso_at(datetime.now(tz=UTC) - timedelta(minutes=max(session_index, 1)))
+    source_root = Path("/tmp/e2e-raw-sessions") / source_host
+    source_path = source_root / project_key.replace("/", "_") / f"raw-session-{session_index}.jsonl"
+    prompt = user_message or f"Investigate raw batch session {session_index} for {project_label}."
+    response = assistant_message or f"Completed raw batch session {session_index} for {project_label}."
+
+    raw_records = [
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": session_id,
+                "timestamp": session_timestamp,
+                "cwd": f"/workspace/{repo_name}",
+                "originator": "e2e",
+                "cli_version": "0.1.0",
+                "source": "cli",
+                "model_provider": "openai",
+                "git": {
+                    "repository_url": f"https://github.com/{org_name}/{repo_name}.git" if org_name and repo_name else None,
+                    "branch": "main",
+                    "commit_hash": "deadbeef",
+                },
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": session_timestamp,
+            "payload": {
+                "type": "user_message",
+                "message": prompt,
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_at(datetime.now(tz=UTC) - timedelta(seconds=10)),
+            "payload": {
+                "type": "agent_message",
+                "message": response,
+            },
+        },
+        {
+            "type": "event_msg",
+            "timestamp": iso_at(datetime.now(tz=UTC) - timedelta(seconds=5)),
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "model_context_window": 128000,
+                    "total_token_usage": {
+                        "input_tokens": 1000,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 100,
+                        "reasoning_output_tokens": 0,
+                        "total_tokens": 1100,
+                    },
+                    "last_token_usage": {
+                        "input_tokens": 1000,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 100,
+                        "reasoning_output_tokens": 0,
+                        "total_tokens": 1100,
+                    },
+                },
+            },
+        },
+    ]
+    raw_jsonl = "\n".join(json.dumps(record, sort_keys=True) for record in raw_records)
+    file_size = len(raw_jsonl.encode("utf-8"))
+    file_mtime_ns = session_index * 1_000_000
+    parsed = parse_session_text(
+        raw_jsonl,
+        source_path,
+        source_root,
+        source_host,
+        file_size=file_size,
+        file_mtime_ns=file_mtime_ns,
+    )
+    return {
+        "payload": {
+            "source_host": source_host,
+            "source_root": str(source_root),
+            "source_path": str(source_path),
+            "file_size": file_size,
+            "file_mtime_ns": file_mtime_ns,
+            "raw_jsonl": raw_jsonl,
+        },
+        "expected": {
+            "session_id": parsed.session_id,
+            "project_key": parsed.inferred_project_key,
+            "project_label": parsed.inferred_project_label,
+            "source_host": parsed.source_host,
+            "event_count": parsed.event_count,
+            "content_sha256": parsed.content_sha256,
+            "source_root": str(parsed.source_root),
+            "source_path": str(parsed.source_path),
+            "file_size": parsed.file_size,
+            "file_mtime_ns": parsed.file_mtime_ns,
+            "user_message": prompt,
+            "assistant_message": response,
+        },
+    }
+
+
 def main() -> int:
     args = parse_args()
     settings = Settings.from_env(PROJECT_ROOT)
@@ -431,6 +573,37 @@ def main() -> int:
                             "source_host": parsed.source_host,
                             "turn_count": parsed.turn_count,
                         }
+                    )
+                )
+                return 0
+
+            if args.command == "build-session-payload":
+                parsed = build_synthetic_session(
+                    source_host=args.source_host,
+                    project_key=args.project_key,
+                    project_label=args.project_label,
+                    github_org=args.github_org,
+                    github_repo=args.github_repo,
+                    turns=args.turns,
+                    commands_per_turn=args.commands_per_turn,
+                    session_index=args.session_index,
+                )
+                print(json.dumps(parsed_session_to_payload(parsed)))
+                return 0
+
+            if args.command == "build-raw-session-payload":
+                print(
+                    json.dumps(
+                        build_raw_sync_payload(
+                            source_host=args.source_host,
+                            project_key=args.project_key,
+                            project_label=args.project_label,
+                            github_org=args.github_org,
+                            github_repo=args.github_repo,
+                            session_index=args.session_index,
+                            user_message=args.user_message,
+                            assistant_message=args.assistant_message,
+                        )
                     )
                 )
                 return 0

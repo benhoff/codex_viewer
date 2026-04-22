@@ -104,6 +104,58 @@ function createSeedHelpers(app) {
       return runSeedCommand(app, args);
     },
 
+    buildSessionPayload(options = {}) {
+      const args = [
+        "build-session-payload",
+        "--source-host",
+        options.sourceHost || "builder-1",
+        "--project-key",
+        options.projectKey || "openai/codex-viewer",
+        "--project-label",
+        options.projectLabel || "openai/codex-viewer",
+        "--turns",
+        String(options.turns || 3),
+        "--commands-per-turn",
+        String(options.commandsPerTurn || 1),
+        "--session-index",
+        String(options.sessionIndex || 1),
+      ];
+      if (options.githubOrg) {
+        args.push("--github-org", options.githubOrg);
+      }
+      if (options.githubRepo) {
+        args.push("--github-repo", options.githubRepo);
+      }
+      return runSeedCommand(app, args);
+    },
+
+    buildRawSessionPayload(options = {}) {
+      const args = [
+        "build-raw-session-payload",
+        "--source-host",
+        options.sourceHost || "builder-1",
+        "--project-key",
+        options.projectKey || "openai/codex-viewer",
+        "--project-label",
+        options.projectLabel || "openai/codex-viewer",
+        "--session-index",
+        String(options.sessionIndex || 1),
+      ];
+      if (options.githubOrg) {
+        args.push("--github-org", options.githubOrg);
+      }
+      if (options.githubRepo) {
+        args.push("--github-repo", options.githubRepo);
+      }
+      if (options.userMessage) {
+        args.push("--user-message", options.userMessage);
+      }
+      if (options.assistantMessage) {
+        args.push("--assistant-message", options.assistantMessage);
+      }
+      return runSeedCommand(app, args);
+    },
+
     async project(options = {}) {
       const sessionCount = options.sessionCount || 2;
       const sessions = [];
