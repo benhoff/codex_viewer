@@ -249,12 +249,21 @@
         <div class="min-w-0 flex-1">
           <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Fleet Overview</p>
           <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">Machines</h1>
-          <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
-            Machine activity, stale machines, sync trouble, and the fastest route back to the affected project or session.
-          </p>
         </div>
 
-        <div class="grid w-full gap-3 sm:grid-cols-3 lg:w-[24rem]">
+        <div class="mt-1 flex flex-wrap gap-2 sm:hidden">
+          <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-rose-800">
+            {{ agents_dashboard.counts.attention }} attention
+          </span>
+          <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">
+            {{ agents_dashboard.counts.active }} active
+          </span>
+          <span class="rounded-full bg-stone-200 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">
+            {{ agents_dashboard.counts.dormant }} dormant
+          </span>
+        </div>
+
+        <div class="hidden w-full gap-3 sm:grid sm:grid-cols-3 lg:w-[24rem]">
           <div class="rounded-[1.15rem] border border-[#E5E7EB] bg-white px-4 py-3">
             <p class="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-[#DC2626]">Machines Needing Attention</p>
             <div class="mt-2 flex items-end justify-between gap-3">
@@ -279,7 +288,7 @@
         </div>
       </div>
 
-      <div class="mt-5 flex flex-wrap items-center gap-2 rounded-full border border-stone-900/10 bg-white/80 p-1" role="tablist" aria-label="Machine filters">
+      <div class="mt-5 hidden flex-wrap items-center gap-2 rounded-full border border-stone-900/10 bg-white/80 p-1 sm:flex" role="tablist" aria-label="Machine filters">
         <button type="button" data-agents-filter="all" class="rounded-full bg-stone-900 px-4 py-2 text-sm font-semibold text-white">All</button>
         <button type="button" data-agents-filter="attention" class="rounded-full px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-100">Attention</button>
         <button type="button" data-agents-filter="active" class="rounded-full px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-100">Active</button>

@@ -12,6 +12,7 @@ It is optimized for the shortest path to useful output:
 Design notes:
 
 - [Action queue scoring](docs/action-queue-scoring.md)
+- [Agent daemon on macOS and Windows](docs/agent-daemon-windows-macos.md)
 - [Self-hosted launch priorities](docs/selfhosted-launch-priorities.md)
 
 ## Fastest Path To Value
@@ -79,6 +80,7 @@ Set these values in the agent `.env` file:
 - `CODEX_VIEWER_SYNC_API_TOKEN`
 
 The agent wrapper already forces `CODEX_VIEWER_SYNC_MODE=remote`.
+For native macOS and Windows launch examples, including `launchd` and Task Scheduler, see [docs/agent-daemon-windows-macos.md](docs/agent-daemon-windows-macos.md).
 
 ## Commands
 
@@ -110,6 +112,13 @@ Run the remote sync daemon:
 
 ```bash
 ./scripts/start-agent-daemon.sh
+```
+
+Run the remote sync daemon from Windows PowerShell:
+
+```powershell
+.\scripts\bootstrap-local.ps1 -SkipCss
+.\scripts\start-agent-daemon.ps1
 ```
 
 Export one session:
@@ -239,6 +248,8 @@ Wrapper scripts:
 - [scripts/start-server.sh](scripts/start-server.sh)
 - [scripts/start-agent-daemon.sh](scripts/start-agent-daemon.sh)
 - [scripts/bootstrap-local.sh](scripts/bootstrap-local.sh)
+- [scripts/start-agent-daemon.ps1](scripts/start-agent-daemon.ps1)
+- [scripts/bootstrap-local.ps1](scripts/bootstrap-local.ps1)
 
 ## Testing
 

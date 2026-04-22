@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shlex
 import socket
 import sqlite3
@@ -308,6 +309,16 @@ class ParsedSession:
     raw_artifact_sha256: str | None = None
 
 
+@dataclass(slots=True)
+class SessionPreScan:
+    session_format: str
+    session_id: str
+    cwd: str | None
+    inferred_project_kind: str
+    inferred_project_key: str
+    inferred_project_label: str
+
+
 class SessionParseError(ValueError):
     def __init__(
         self,
@@ -323,6 +334,10 @@ class SessionParseError(ValueError):
         if line_preview:
             detail = f"{detail} [{line_preview}]"
         super().__init__(f"{source_path}: {detail}")
+
+
+class SessionSkipError(SessionParseError):
+    """Raised for recognized session files that should not be imported."""
 
 
 def normalize_event(record: dict[str, object], event_index: int) -> NormalizedEvent | None:
@@ -602,54 +617,597 @@ def normalize_jsonl_line(line: str, line_number: int) -> str | None:
     return normalized.lstrip("\x00")
 
 
-def _parse_session_lines(
+CLAUDE_TRANSCRIPT_RECORD_TYPES = {
+    "user",
+    "assistant",
+    "system",
+    "attachment",
+    "progress",
+    "summary",
+    "custom-title",
+    "ai-title",
+    "last-prompt",
+    "task-summary",
+    "tag",
+    "agent-name",
+    "agent-color",
+    "agent-setting",
+    "pr-link",
+    "file-history-snapshot",
+    "attribution-snapshot",
+    "mode",
+    "worktree-state",
+    "content-replacement",
+    "marble-origami-commit",
+    "marble-origami-snapshot",
+}
+
+CLAUDE_COMMAND_TOOL_NAMES = {"Bash", "PowerShell"}
+
+CLAUDE_SERVER_TOOL_USE_TYPES = {"server_tool_use", "mcp_tool_use"}
+
+CLAUDE_SERVER_TOOL_RESULT_TYPES = {
+    "advisor_tool_result",
+    "code_execution_tool_result",
+    "mcp_tool_result",
+    "tool_search_tool_result",
+    "web_fetch_tool_result",
+    "web_search_tool_result",
+    "bash_code_execution_tool_result",
+    "text_editor_code_execution_tool_result",
+}
+
+CLAUDE_PERSISTED_OUTPUT_MAX_CHARS = 200_000
+CLAUDE_PERSISTED_OUTPUT_PATH_RE = re.compile(r"Full output saved to:\s*(?P<path>[^\n<]+)")
+
+
+def _parse_json_record(
+    normalized_line: str,
+    source_path: Path,
+    *,
+    line_number: int,
+) -> dict[str, object]:
+    try:
+        record = json.loads(normalized_line)
+    except json.JSONDecodeError as exc:
+        raise SessionParseError(
+            source_path,
+            exc.msg,
+            line_number=line_number,
+            line_preview=shorten(normalized_line.replace("\n", " "), 120),
+        ) from exc
+    if not isinstance(record, dict):
+        raise SessionParseError(
+            source_path,
+            "record must be a JSON object",
+            line_number=line_number,
+            line_preview=shorten(normalized_line.replace("\n", " "), 120),
+        )
+    return record
+
+
+def _append_normalized_event(
+    events: list[NormalizedEvent],
+    record: dict[str, object],
+) -> NormalizedEvent | None:
+    normalized = normalize_event(record, len(events))
+    if normalized is None:
+        return None
+    events.append(normalized)
+    return normalized
+
+
+def _assistant_usage_payload(message: dict[str, object]) -> dict[str, object] | None:
+    usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    cache_read_input_tokens = usage.get("cache_read_input_tokens")
+    cache_creation_input_tokens = usage.get("cache_creation_input_tokens")
+
+    if not any(
+        isinstance(value, (int, float))
+        for value in (
+            input_tokens,
+            output_tokens,
+            cache_read_input_tokens,
+            cache_creation_input_tokens,
+        )
+    ):
+        return None
+
+    coerced_input_tokens = int(input_tokens) if isinstance(input_tokens, (int, float)) else 0
+    coerced_output_tokens = int(output_tokens) if isinstance(output_tokens, (int, float)) else 0
+    cached_input_tokens = int(cache_read_input_tokens) if isinstance(cache_read_input_tokens, (int, float)) else 0
+    total_tokens = coerced_input_tokens + coerced_output_tokens
+    if isinstance(cache_creation_input_tokens, (int, float)):
+        total_tokens += int(cache_creation_input_tokens)
+
+    return {
+        "type": "token_count",
+        "info": {
+            "total_token_usage": {
+                "input_tokens": coerced_input_tokens,
+                "cached_input_tokens": cached_input_tokens,
+                "output_tokens": coerced_output_tokens,
+                "reasoning_output_tokens": 0,
+                "total_tokens": total_tokens,
+            }
+        },
+    }
+
+
+def _claude_output_text(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+                continue
+            if not isinstance(item, dict):
+                continue
+            for key in ("text", "content", "output", "message", "result"):
+                field_value = item.get(key)
+                if isinstance(field_value, str) and field_value.strip():
+                    parts.append(field_value.strip())
+                    break
+        return "\n".join(parts).strip()
+    return ""
+
+
+def _claude_content_blocks(value: object) -> list[dict[str, object]]:
+    if isinstance(value, str):
+        return [{"type": "text", "text": value}]
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _claude_block_identity(block: dict[str, object]) -> tuple[str, str] | None:
+    block_type = str(block.get("type") or "").strip()
+    if not block_type:
+        return None
+    if block_type in {"text", "thinking", "redacted_thinking"}:
+        return None
+    if block_type in {"tool_use", *CLAUDE_SERVER_TOOL_USE_TYPES}:
+        block_id = block.get("id")
+        if isinstance(block_id, str) and block_id.strip():
+            return (block_type, block_id.strip())
+    if (
+        block_type in CLAUDE_SERVER_TOOL_RESULT_TYPES
+        or (block_type.endswith("_tool_result") and isinstance(block.get("tool_use_id"), str))
+    ):
+        tool_use_id = block.get("tool_use_id")
+        if isinstance(tool_use_id, str) and tool_use_id.strip():
+            return (block_type, tool_use_id.strip())
+    return (block_type, safe_json(block))
+
+
+def _merge_claude_textlike_block(
+    merged_blocks: list[dict[str, object]],
+    block: dict[str, object],
+) -> bool:
+    block_type = str(block.get("type") or "").strip()
+    if block_type == "text":
+        field = "text"
+    elif block_type in {"thinking", "redacted_thinking"}:
+        field = "thinking"
+    else:
+        return False
+
+    candidate = block.get(field)
+    if not isinstance(candidate, str) or not candidate:
+        return False
+
+    for index in range(len(merged_blocks) - 1, -1, -1):
+        existing = merged_blocks[index]
+        if str(existing.get("type") or "").strip() != block_type:
+            continue
+        existing_value = existing.get(field)
+        if not isinstance(existing_value, str) or not existing_value:
+            continue
+        if existing_value == candidate or candidate.startswith(existing_value):
+            merged_blocks[index] = dict(block)
+            return True
+        if existing_value.startswith(candidate):
+            return True
+        merged_blocks[index] = dict(block)
+        return True
+
+    merged_blocks.append(dict(block))
+    return True
+
+
+def _merge_claude_content_blocks(
+    existing_blocks: list[dict[str, object]],
+    new_blocks: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    merged_blocks = [dict(block) for block in existing_blocks]
+    for block in new_blocks:
+        if _merge_claude_textlike_block(merged_blocks, block):
+            continue
+        identity = _claude_block_identity(block)
+        if identity is not None:
+            matched = False
+            for index, existing in enumerate(merged_blocks):
+                if _claude_block_identity(existing) != identity:
+                    continue
+                merged_blocks[index] = dict(block)
+                matched = True
+                break
+            if matched:
+                continue
+        if any(existing == block for existing in merged_blocks):
+            continue
+        merged_blocks.append(dict(block))
+    return merged_blocks
+
+
+def _merge_claude_assistant_records(
+    existing_record: dict[str, object],
+    fragment_record: dict[str, object],
+) -> dict[str, object]:
+    merged_record = dict(existing_record)
+    for key, value in fragment_record.items():
+        if key == "message":
+            continue
+        if value is not None:
+            merged_record[key] = value
+
+    existing_message = (
+        dict(existing_record.get("message"))
+        if isinstance(existing_record.get("message"), dict)
+        else {}
+    )
+    fragment_message = (
+        dict(fragment_record.get("message"))
+        if isinstance(fragment_record.get("message"), dict)
+        else {}
+    )
+    merged_message = dict(existing_message)
+
+    existing_blocks = _claude_content_blocks(existing_message.get("content"))
+    fragment_blocks = _claude_content_blocks(fragment_message.get("content"))
+    if existing_blocks or fragment_blocks:
+        merged_message["content"] = _merge_claude_content_blocks(existing_blocks, fragment_blocks)
+
+    existing_stop_reason = existing_message.get("stop_reason")
+    fragment_stop_reason = fragment_message.get("stop_reason")
+    fragment_has_final_stop = isinstance(fragment_stop_reason, str) and fragment_stop_reason.strip()
+    existing_has_final_stop = isinstance(existing_stop_reason, str) and existing_stop_reason.strip()
+
+    for key, value in fragment_message.items():
+        if key == "content":
+            continue
+        if key == "usage":
+            if not isinstance(value, dict):
+                continue
+            if fragment_has_final_stop or not isinstance(merged_message.get("usage"), dict) or not existing_has_final_stop:
+                merged_message["usage"] = value
+            continue
+        if key == "stop_reason":
+            if fragment_has_final_stop:
+                merged_message[key] = fragment_stop_reason
+            elif "stop_reason" not in merged_message:
+                merged_message[key] = fragment_stop_reason
+            continue
+        if value is not None:
+            merged_message[key] = value
+
+    merged_record["message"] = merged_message
+    return merged_record
+
+
+def _extract_claude_persisted_output_path(value: object) -> str | None:
+    if isinstance(value, dict):
+        direct = value.get("persistedOutputPath")
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+        for key in ("content", "stdout", "stderr", "output", "message", "result"):
+            resolved = _extract_claude_persisted_output_path(value.get(key))
+            if resolved:
+                return resolved
+        return None
+    if isinstance(value, list):
+        for item in value:
+            resolved = _extract_claude_persisted_output_path(item)
+            if resolved:
+                return resolved
+        return None
+    if isinstance(value, str):
+        match = CLAUDE_PERSISTED_OUTPUT_PATH_RE.search(value)
+        if match is not None:
+            candidate = match.group("path").strip()
+            return candidate or None
+    return None
+
+
+def _resolve_claude_persisted_output_path(path_text: str | None, source_path: Path) -> Path | None:
+    if not path_text:
+        return None
+    raw_path = Path(path_text).expanduser()
+    candidates = [raw_path]
+    if not raw_path.is_absolute():
+        candidates.append((source_path.parent / raw_path).expanduser())
+        candidates.append((source_path.parent / raw_path.name).expanduser())
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_key = str(candidate)
+        if candidate_key in seen:
+            continue
+        seen.add(candidate_key)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _read_claude_persisted_output(path_text: str | None, source_path: Path) -> str | None:
+    resolved = _resolve_claude_persisted_output_path(path_text, source_path)
+    if resolved is None:
+        return None
+    try:
+        with resolved.open("r", encoding="utf-8", errors="replace") as handle:
+            content = handle.read(CLAUDE_PERSISTED_OUTPUT_MAX_CHARS + 1)
+    except OSError:
+        return None
+    normalized = content.strip()
+    if not normalized:
+        return None
+    if len(normalized) > CLAUDE_PERSISTED_OUTPUT_MAX_CHARS:
+        truncated = normalized[:CLAUDE_PERSISTED_OUTPUT_MAX_CHARS].rstrip()
+        return f"{truncated}\n\n[Persisted output truncated from {resolved}]"
+    return normalized
+
+
+def _claude_materialize_tool_output(value: object, source_path: Path) -> object:
+    persisted_text = _read_claude_persisted_output(
+        _extract_claude_persisted_output_path(value),
+        source_path,
+    )
+    if persisted_text:
+        return persisted_text
+    flattened = _claude_output_text(value)
+    if flattened:
+        return flattened
+    return value
+
+
+def _claude_display_output(value: object, source_path: Path) -> str:
+    materialized = _claude_materialize_tool_output(value, source_path)
+    if isinstance(materialized, str):
+        return materialized.strip()
+    value = materialized
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key in ("stdout", "stderr", "output", "content", "message", "result", "returnCodeInterpretation"):
+            field_value = value.get(key)
+            if isinstance(field_value, str) and field_value.strip():
+                parts.append(field_value.strip())
+        persisted_output_path = value.get("persistedOutputPath")
+        if isinstance(persisted_output_path, str) and persisted_output_path.strip():
+            parts.append(f"Full output saved to {persisted_output_path.strip()}")
+        if parts:
+            return "\n".join(parts)
+    return safe_json(value).strip()
+
+
+def _claude_command_exit_code(block: dict[str, object], output: object) -> int:
+    if isinstance(output, dict) and isinstance(output.get("interrupted"), bool) and output.get("interrupted"):
+        return 130
+    if isinstance(block.get("is_error"), bool):
+        return 1 if block["is_error"] else 0
+    return 0
+
+
+def _normalize_claude_tool_name(tool_name: str | None) -> str | None:
+    normalized = str(tool_name or "").strip()
+    if not normalized:
+        return None
+    if normalized in CLAUDE_COMMAND_TOOL_NAMES:
+        return "exec_command"
+    return normalized
+
+
+def _claude_record_type(record: dict[str, object]) -> str:
+    return str(record.get("type") or "").strip()
+
+
+def _claude_relative_source_path(source_path: Path, source_root: Path) -> str:
+    try:
+        return source_path.relative_to(source_root).as_posix()
+    except ValueError:
+        return source_path.as_posix()
+
+
+def _claude_source_path_agent_id(source_path: Path) -> str | None:
+    stem = source_path.stem.strip()
+    if stem.startswith("agent-") and len(stem) > len("agent-"):
+        return stem[len("agent-") :]
+    return None
+
+
+def _claude_parent_session_from_path(source_path: Path, source_root: Path) -> str | None:
+    try:
+        relative = source_path.relative_to(source_root)
+    except ValueError:
+        return None
+    lowered_parts = [part.lower() for part in relative.parts]
+    if "subagents" not in lowered_parts:
+        return None
+    subagents_index = lowered_parts.index("subagents")
+    if subagents_index <= 0:
+        return None
+    candidate = relative.parts[subagents_index - 1].strip()
+    return candidate or None
+
+
+def _claude_sidechain_session_id(
+    root_session_id: str,
+    agent_id: str | None,
+    source_path: Path,
+    source_root: Path,
+) -> str:
+    if agent_id:
+        return f"{root_session_id}:agent:{agent_id}"
+    relative = _claude_relative_source_path(source_path, source_root)
+    normalized = relative.removesuffix(".jsonl").replace("/", ":")
+    return f"{root_session_id}:sidechain:{normalized}"
+
+
+def _is_claude_warmup_transcript(events: list[NormalizedEvent], is_sidechain: bool) -> bool:
+    if not is_sidechain:
+        return False
+    meaningful_events = [event for event in events if event.kind in {"message", "tool_call", "tool_result", "command"}]
+    if len(meaningful_events) != 1:
+        return False
+    only_event = meaningful_events[0]
+    if only_event.kind != "message" or only_event.role != "user":
+        return False
+    return strip_codex_wrappers(only_event.display_text).strip() == "Warmup"
+
+
+def _is_claude_transcript_record(record: dict[str, object]) -> bool:
+    record_type = _claude_record_type(record)
+    if record_type in CLAUDE_TRANSCRIPT_RECORD_TYPES:
+        return True
+    return any(
+        key in record
+        for key in ("sessionId", "parentUuid", "logicalParentUuid", "isSidechain", "userType", "version")
+    )
+
+
+def _detect_session_format(
     lines: Iterable[str],
+    source_path: Path,
+) -> str:
+    for idx, line in enumerate(lines):
+        normalized_line = normalize_jsonl_line(line, idx + 1)
+        if normalized_line is None:
+            continue
+        record = _parse_json_record(normalized_line, source_path, line_number=idx + 1)
+        record_type = str(record.get("type") or "").strip()
+        if record_type == "session_meta":
+            return "codex"
+        if record_type in {"event_msg", "response_item", "turn_context", "compacted"} or "payload" in record:
+            return "codex"
+        if _is_claude_transcript_record(record):
+            return "claude"
+        break
+    return "codex"
+
+
+def _build_session_prescan(
+    *,
+    session_format: str,
+    session_id: str,
+    cwd: str | None,
+    raw_git: dict[str, object] | None,
+    source_host: str,
+) -> SessionPreScan:
+    git_info = resolve_git_info(
+        cwd,
+        raw_git,
+        allow_probe=can_probe_git_for_source(source_host),
+    )
+    project_root = resolve_project_root(
+        cwd,
+        allow_probe=can_probe_git_for_source(source_host),
+    )
+    project_identity = infer_project_identity(
+        source_host=source_host,
+        cwd=cwd,
+        github_org=git_info["github_org"],
+        github_repo=git_info["github_repo"],
+        github_slug=git_info["github_slug"],
+        git_repository_url=git_info["repository_url"],
+        project_root=project_root,
+    )
+    return SessionPreScan(
+        session_format=session_format,
+        session_id=session_id,
+        cwd=cwd,
+        inferred_project_kind=str(project_identity["kind"]),
+        inferred_project_key=str(project_identity["key"]),
+        inferred_project_label=str(project_identity["label"]),
+    )
+
+
+def prescan_session_source(
     source_path: Path,
     source_root: Path,
     source_host: str,
     *,
+    max_lines: int = 128,
+    max_bytes: int = 131_072,
+) -> SessionPreScan | None:
+    del source_root  # reserved for future pre-scan routing if file layout matters
+
+    line_count = 0
+    byte_count = 0
+    with source_path.open("r", encoding="utf-8", newline="") as handle:
+        for raw_line in handle:
+            line_count += 1
+            byte_count += len(raw_line.encode("utf-8"))
+            normalized_line = normalize_jsonl_line(raw_line, line_count)
+            if normalized_line is None:
+                if line_count >= max_lines or byte_count >= max_bytes:
+                    break
+                continue
+
+            record = _parse_json_record(normalized_line, source_path, line_number=line_count)
+            record_type = str(record.get("type") or "").strip()
+
+            if record_type == "session_meta" and isinstance(record.get("payload"), dict):
+                payload = dict(record["payload"])
+                session_id = str(payload.get("id") or source_path.stem).strip() or source_path.stem
+                cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
+                raw_git = payload.get("git") if isinstance(payload.get("git"), dict) else None
+                return _build_session_prescan(
+                    session_format="codex",
+                    session_id=session_id,
+                    cwd=cwd,
+                    raw_git=raw_git,
+                    source_host=source_host,
+                )
+
+            if _is_claude_transcript_record(record):
+                session_id = str(record.get("sessionId") or source_path.stem).strip() or source_path.stem
+                cwd = record.get("cwd") if isinstance(record.get("cwd"), str) else None
+                return _build_session_prescan(
+                    session_format="claude",
+                    session_id=session_id,
+                    cwd=cwd,
+                    raw_git=None,
+                    source_host=source_host,
+                )
+
+            if line_count >= max_lines or byte_count >= max_bytes:
+                break
+
+    return None
+
+
+def _finalize_parsed_session(
+    *,
+    source_path: Path,
+    source_root: Path,
+    source_host: str,
     file_size: int,
     file_mtime_ns: int,
+    content_sha256: str,
+    raw_meta: dict[str, object],
+    started_at: str | None,
+    ended_at: str | None,
+    events: list[NormalizedEvent],
+    imported_at: str,
+    warning: str | None = None,
 ) -> ParsedSession:
-    imported_at = utc_now_iso()
-    content_hash = hashlib.sha256()
-    raw_meta: dict[str, object] | None = None
-    events: list[NormalizedEvent] = []
-    started_at: str | None = None
-    ended_at: str | None = None
     user_messages: list[str] = []
     assistant_messages: list[str] = []
     search_parts: list[str] = []
-    warning: str | None = None
 
-    for idx, line in enumerate(lines):
-        line_number = idx + 1
-        normalized_line = normalize_jsonl_line(line, line_number)
-        if normalized_line is None:
-            continue
-        content_hash.update(normalized_line.encode("utf-8"))
-        try:
-            record = json.loads(normalized_line)
-        except json.JSONDecodeError as exc:
-            raise SessionParseError(
-                source_path,
-                exc.msg,
-                line_number=line_number,
-                line_preview=shorten(normalized_line.replace("\n", " "), 120),
-            ) from exc
-        record_type = record.get("type")
-        if record_type == "session_meta" and isinstance(record.get("payload"), dict):
-            raw_meta = record["payload"]
-            started_at = raw_meta.get("timestamp") if isinstance(raw_meta.get("timestamp"), str) else started_at
-            continue
-
-        normalized = normalize_event(record, idx)
-        if normalized is None:
-            continue
-
-        ended_at = normalized.timestamp or ended_at
-        events.append(normalized)
-
+    for normalized in events:
         if normalized.kind == "message" and normalized.role == "user" and normalized.display_text:
             cleaned_prompt = strip_codex_wrappers(normalized.display_text)
             if normalized.record_type == "event_msg":
@@ -660,9 +1218,6 @@ def _parse_session_lines(
             assistant_messages.append(normalized.display_text)
         if normalized.display_text:
             search_parts.append(normalized.display_text)
-
-    if raw_meta is None:
-        raise SessionParseError(source_path, "does not contain a session_meta record")
 
     session_id = str(raw_meta.get("id") or source_path.stem)
     session_timestamp = raw_meta.get("timestamp") if isinstance(raw_meta.get("timestamp"), str) else started_at
@@ -711,7 +1266,7 @@ def _parse_session_lines(
     ]
     search_text = "\n".join(part for part in [*search_head, *search_parts] if part)
     if len(search_text) > 200_000:
-        warning = "Search text truncated during import"
+        warning = warning or "Search text truncated during import"
         search_text = search_text[:200_000]
     rollups = compute_session_rollups(events)
     agent_metadata = extract_agent_metadata(raw_meta)
@@ -722,7 +1277,7 @@ def _parse_session_lines(
         source_root=source_root,
         file_size=file_size,
         file_mtime_ns=file_mtime_ns,
-        content_sha256=content_hash.hexdigest(),
+        content_sha256=content_sha256,
         session_timestamp=session_timestamp,
         started_at=started_at,
         ended_at=ended_at,
@@ -799,6 +1354,521 @@ def _parse_session_lines(
     )
 
 
+def _parse_session_lines(
+    lines: Iterable[str],
+    source_path: Path,
+    source_root: Path,
+    source_host: str,
+    *,
+    file_size: int,
+    file_mtime_ns: int,
+) -> ParsedSession:
+    imported_at = utc_now_iso()
+    content_hash = hashlib.sha256()
+    raw_meta: dict[str, object] | None = None
+    events: list[NormalizedEvent] = []
+    started_at: str | None = None
+    ended_at: str | None = None
+
+    for idx, line in enumerate(lines):
+        line_number = idx + 1
+        normalized_line = normalize_jsonl_line(line, line_number)
+        if normalized_line is None:
+            continue
+        content_hash.update(normalized_line.encode("utf-8"))
+        record = _parse_json_record(normalized_line, source_path, line_number=line_number)
+        record_type = record.get("type")
+        if record_type == "session_meta" and isinstance(record.get("payload"), dict):
+            raw_meta = record["payload"]
+            started_at = raw_meta.get("timestamp") if isinstance(raw_meta.get("timestamp"), str) else started_at
+            continue
+
+        normalized = normalize_event(record, idx)
+        if normalized is None:
+            continue
+
+        ended_at = normalized.timestamp or ended_at
+        events.append(normalized)
+
+    if raw_meta is None:
+        raise SessionParseError(source_path, "does not contain a session_meta record")
+
+    return _finalize_parsed_session(
+        source_path=source_path,
+        source_root=source_root,
+        source_host=source_host,
+        file_size=file_size,
+        file_mtime_ns=file_mtime_ns,
+        content_sha256=content_hash.hexdigest(),
+        raw_meta=raw_meta,
+        started_at=started_at,
+        ended_at=ended_at,
+        events=events,
+        imported_at=imported_at,
+    )
+
+
+def _parse_claude_session_lines(
+    lines: Iterable[str],
+    source_path: Path,
+    source_root: Path,
+    source_host: str,
+    *,
+    file_size: int,
+    file_mtime_ns: int,
+) -> ParsedSession:
+    imported_at = utc_now_iso()
+    content_hash = hashlib.sha256()
+    events: list[NormalizedEvent] = []
+    started_at: str | None = None
+    ended_at: str | None = None
+
+    root_session_id = source_path.stem
+    cwd: str | None = None
+    user_type: str | None = None
+    cli_version: str | None = None
+    model_name: str | None = None
+    custom_title: str | None = None
+    agent_name: str | None = None
+    agent_setting: str | None = None
+    pr_url: str | None = None
+    pr_repository: str | None = None
+    mode: str | None = None
+    team_name: str | None = None
+    transcript_agent_id = _claude_source_path_agent_id(source_path)
+    parent_session_id_from_path = _claude_parent_session_from_path(source_path, source_root)
+    is_sidechain = transcript_agent_id is not None or parent_session_id_from_path is not None
+
+    tool_calls: dict[str, dict[str, object]] = {}
+    pending_assistant_record: dict[str, object] | None = None
+    pending_assistant_key: str | None = None
+
+    def process_assistant_record(record: dict[str, object]) -> None:
+        nonlocal model_name
+        timestamp = record.get("timestamp") if isinstance(record.get("timestamp"), str) else None
+        message = record.get("message") if isinstance(record.get("message"), dict) else {}
+        model_name = (
+            message.get("model")
+            if isinstance(message.get("model"), str) and str(message.get("model")).strip()
+            else model_name
+        )
+        content_blocks = _claude_content_blocks(message.get("content"))
+        text_blocks: list[dict[str, object]] = []
+
+        def flush_assistant_text() -> None:
+            if not text_blocks:
+                return
+            _append_normalized_event(
+                events,
+                {
+                    "type": "response_item",
+                    "timestamp": timestamp,
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": list(text_blocks),
+                    },
+                },
+            )
+            text_blocks.clear()
+
+        for block in content_blocks:
+            block_type = str(block.get("type") or "").strip()
+            if block_type == "text":
+                text_blocks.append(block)
+                continue
+
+            flush_assistant_text()
+
+            if block_type in {"thinking", "redacted_thinking"}:
+                reasoning_text = (
+                    block.get("thinking")
+                    if isinstance(block.get("thinking"), str)
+                    else ("Redacted reasoning" if block_type == "redacted_thinking" else "")
+                )
+                if reasoning_text:
+                    _append_normalized_event(
+                        events,
+                        {
+                            "type": "response_item",
+                            "timestamp": timestamp,
+                            "payload": {
+                                "type": "reasoning",
+                                "summary": [reasoning_text],
+                            },
+                        },
+                    )
+                continue
+
+            if block_type in {"tool_use", *CLAUDE_SERVER_TOOL_USE_TYPES}:
+                original_tool_name = (
+                    block.get("name")
+                    if isinstance(block.get("name"), str) and str(block.get("name")).strip()
+                    else block_type
+                )
+                tool_name = _normalize_claude_tool_name(original_tool_name)
+                call_id = block.get("id") if isinstance(block.get("id"), str) else None
+                tool_input = block.get("input")
+                if call_id:
+                    tool_calls[call_id] = {
+                        "tool_name": tool_name,
+                        "original_tool_name": original_tool_name,
+                        "input": tool_input,
+                        "timestamp": timestamp,
+                        "cwd": cwd,
+                    }
+                arguments = tool_input
+                if tool_name == "exec_command":
+                    arguments = {"cmd": tool_input.get("command"), "workdir": cwd} if isinstance(tool_input, dict) else tool_input
+                _append_normalized_event(
+                    events,
+                    {
+                        "type": "response_item",
+                        "timestamp": timestamp,
+                        "payload": {
+                            "type": "function_call",
+                            "name": tool_name,
+                            "call_id": call_id,
+                            "arguments": arguments,
+                        },
+                    },
+                )
+                continue
+
+            if (
+                block_type in CLAUDE_SERVER_TOOL_RESULT_TYPES
+                or (block_type.endswith("_tool_result") and isinstance(block.get("tool_use_id"), str))
+            ):
+                _append_normalized_event(
+                    events,
+                    {
+                        "type": "response_item",
+                        "timestamp": timestamp,
+                        "payload": {
+                            "type": "function_call_output",
+                            "call_id": block.get("tool_use_id") if isinstance(block.get("tool_use_id"), str) else None,
+                            "output": _claude_materialize_tool_output(
+                                block.get("content") if "content" in block else block,
+                                source_path,
+                            ),
+                        },
+                    },
+                )
+                continue
+
+        flush_assistant_text()
+
+        usage_payload = _assistant_usage_payload(message)
+        if usage_payload is not None:
+            _append_normalized_event(
+                events,
+                {
+                    "type": "event_msg",
+                    "timestamp": timestamp,
+                    "payload": usage_payload,
+                },
+            )
+
+    def flush_pending_assistant() -> None:
+        nonlocal pending_assistant_record, pending_assistant_key
+        if pending_assistant_record is None:
+            return
+        process_assistant_record(pending_assistant_record)
+        pending_assistant_record = None
+        pending_assistant_key = None
+
+    for idx, line in enumerate(lines):
+        line_number = idx + 1
+        normalized_line = normalize_jsonl_line(line, line_number)
+        if normalized_line is None:
+            continue
+        content_hash.update(normalized_line.encode("utf-8"))
+        record = _parse_json_record(normalized_line, source_path, line_number=line_number)
+        record_type = _claude_record_type(record)
+        timestamp = record.get("timestamp") if isinstance(record.get("timestamp"), str) else None
+        if started_at is None and timestamp:
+            started_at = timestamp
+        if timestamp:
+            ended_at = timestamp
+
+        root_session_id = (
+            record.get("sessionId")
+            if isinstance(record.get("sessionId"), str) and str(record.get("sessionId")).strip()
+            else root_session_id
+        )
+        cwd = record.get("cwd") if isinstance(record.get("cwd"), str) and str(record.get("cwd")).strip() else cwd
+        user_type = (
+            record.get("userType")
+            if isinstance(record.get("userType"), str) and str(record.get("userType")).strip()
+            else user_type
+        )
+        cli_version = (
+            record.get("version")
+            if isinstance(record.get("version"), str) and str(record.get("version")).strip()
+            else cli_version
+        )
+        if isinstance(record.get("isSidechain"), bool) and bool(record.get("isSidechain")):
+            is_sidechain = True
+        if isinstance(record.get("agentId"), str) and str(record.get("agentId")).strip():
+            transcript_agent_id = str(record.get("agentId")).strip()
+            is_sidechain = True
+        if isinstance(record.get("teamName"), str) and str(record.get("teamName")).strip():
+            team_name = str(record.get("teamName")).strip()
+
+        if record_type == "assistant":
+            message = record.get("message") if isinstance(record.get("message"), dict) else {}
+            message_key = (
+                message.get("id")
+                if isinstance(message.get("id"), str) and str(message.get("id")).strip()
+                else (
+                    record.get("uuid")
+                    if isinstance(record.get("uuid"), str) and str(record.get("uuid")).strip()
+                    else None
+                )
+            )
+            if (
+                pending_assistant_record is not None
+                and pending_assistant_key is not None
+                and message_key == pending_assistant_key
+            ):
+                pending_assistant_record = _merge_claude_assistant_records(
+                    pending_assistant_record,
+                    record,
+                )
+                continue
+            flush_pending_assistant()
+            pending_assistant_record = record
+            pending_assistant_key = message_key
+            if pending_assistant_key is None:
+                flush_pending_assistant()
+            continue
+
+        flush_pending_assistant()
+
+        if record_type == "custom-title":
+            custom_title = (
+                record.get("customTitle")
+                if isinstance(record.get("customTitle"), str) and str(record.get("customTitle")).strip()
+                else custom_title
+            )
+            continue
+        if record_type == "agent-name":
+            agent_name = (
+                record.get("agentName")
+                if isinstance(record.get("agentName"), str) and str(record.get("agentName")).strip()
+                else agent_name
+            )
+            continue
+        if record_type == "agent-setting":
+            agent_setting = (
+                record.get("agentSetting")
+                if isinstance(record.get("agentSetting"), str) and str(record.get("agentSetting")).strip()
+                else agent_setting
+            )
+            continue
+        if record_type == "pr-link":
+            pr_url = record.get("prUrl") if isinstance(record.get("prUrl"), str) and str(record.get("prUrl")).strip() else pr_url
+            pr_repository = (
+                record.get("prRepository")
+                if isinstance(record.get("prRepository"), str) and str(record.get("prRepository")).strip()
+                else pr_repository
+            )
+            continue
+        if record_type == "mode":
+            mode = record.get("mode") if isinstance(record.get("mode"), str) and str(record.get("mode")).strip() else mode
+            continue
+
+        if record_type == "user":
+            content = None
+            message = record.get("message")
+            if isinstance(message, dict):
+                content = message.get("content")
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+            content_blocks = [item for item in content if isinstance(item, dict)] if isinstance(content, list) else []
+            tool_result_blocks = [block for block in content_blocks if str(block.get("type") or "").strip() == "tool_result"]
+            native_tool_result = record.get("toolUseResult")
+
+            for block in tool_result_blocks:
+                call_id = block.get("tool_use_id") if isinstance(block.get("tool_use_id"), str) else None
+                paired_tool = tool_calls.get(call_id or "")
+                output = native_tool_result if len(tool_result_blocks) == 1 and native_tool_result is not None else block.get("content")
+                materialized_output = _claude_materialize_tool_output(output, source_path)
+                if paired_tool and paired_tool.get("tool_name") == "exec_command":
+                    command_input = paired_tool.get("input")
+                    command_text = (
+                        command_input.get("command")
+                        if isinstance(command_input, dict) and isinstance(command_input.get("command"), str)
+                        else None
+                    )
+                    _append_normalized_event(
+                        events,
+                        {
+                            "type": "event_msg",
+                            "timestamp": timestamp,
+                            "payload": {
+                                "type": "exec_command_end",
+                                "call_id": call_id,
+                                "command": command_text,
+                                "exit_code": _claude_command_exit_code(block, output),
+                                "aggregated_output": _claude_display_output(output, source_path),
+                            },
+                        },
+                    )
+                    continue
+                _append_normalized_event(
+                    events,
+                    {
+                        "type": "response_item",
+                        "timestamp": timestamp,
+                        "payload": {
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": materialized_output,
+                        },
+                    },
+                )
+
+            if not tool_result_blocks and not bool(record.get("isMeta")):
+                text_content = first_text_from_content(content_blocks)
+                if text_content:
+                    _append_normalized_event(
+                        events,
+                        {
+                            "type": "response_item",
+                            "timestamp": timestamp,
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": content_blocks,
+                            },
+                        },
+                    )
+            continue
+
+        if record_type == "system":
+            subtype = str(record.get("subtype") or "").strip()
+            if subtype in {"thinking"} and isinstance(record.get("content"), str):
+                _append_normalized_event(
+                    events,
+                    {
+                        "type": "response_item",
+                        "timestamp": timestamp,
+                        "payload": {
+                            "type": "reasoning",
+                            "summary": [record["content"]],
+                        },
+                    },
+                )
+                continue
+            if subtype in {"compact_boundary", "microcompact_boundary"}:
+                _append_normalized_event(
+                    events,
+                    {
+                        "type": "compacted",
+                        "timestamp": timestamp,
+                        "payload": {"message": str(record.get("content") or "Conversation history compacted")},
+                    },
+                )
+                continue
+            if isinstance(record.get("content"), str) and str(record.get("content")).strip():
+                _append_normalized_event(
+                    events,
+                    {
+                        "type": "event_msg",
+                        "timestamp": timestamp,
+                        "payload": {
+                            "type": "agent_message",
+                            "message": str(record.get("content") or ""),
+                        },
+                    },
+                )
+            continue
+
+        if record_type == "attachment":
+            attachment = record.get("attachment") if isinstance(record.get("attachment"), dict) else {}
+            attachment_type = str(attachment.get("type") or "").strip()
+            if attachment_type == "queued_command" and not bool(attachment.get("isMeta")):
+                prompt = attachment.get("prompt")
+                prompt_text = prompt if isinstance(prompt, str) else first_text_from_content(prompt)
+                if prompt_text:
+                    _append_normalized_event(
+                        events,
+                        {
+                            "type": "response_item",
+                            "timestamp": timestamp,
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "text", "text": prompt_text}],
+                            },
+                        },
+                    )
+            continue
+
+    flush_pending_assistant()
+
+    parent_session_id = parent_session_id_from_path or (root_session_id if is_sidechain else None)
+    session_id = (
+        _claude_sidechain_session_id(root_session_id, transcript_agent_id, source_path, source_root)
+        if is_sidechain
+        else root_session_id
+    )
+
+    if _is_claude_warmup_transcript(events, is_sidechain):
+        raise SessionSkipError(source_path, "warmup agent transcript")
+
+    raw_meta: dict[str, object] = {
+        "id": session_id,
+        "timestamp": started_at,
+        "cwd": cwd,
+        "originator": user_type or "claude-code",
+        "cli_version": cli_version,
+        "source": "claude-code",
+        "model_provider": "anthropic",
+        "transcript_format": "claude",
+    }
+    if model_name:
+        raw_meta["model"] = model_name
+    if custom_title:
+        raw_meta["custom_title"] = custom_title
+    if agent_name:
+        raw_meta["agent_nickname"] = agent_name
+    elif transcript_agent_id:
+        raw_meta["agent_nickname"] = transcript_agent_id.split("@", 1)[0].strip() or transcript_agent_id
+    if agent_setting:
+        raw_meta["agent_role"] = agent_setting
+    if transcript_agent_id:
+        raw_meta["agent_id"] = transcript_agent_id
+        raw_meta["agent_path"] = _claude_relative_source_path(source_path, source_root)
+    if parent_session_id and parent_session_id != session_id:
+        raw_meta["forked_from_id"] = parent_session_id
+    if pr_url:
+        raw_meta["pr_url"] = pr_url
+    if pr_repository:
+        raw_meta["pr_repository"] = pr_repository
+    if mode:
+        raw_meta["mode"] = mode
+    if team_name:
+        raw_meta["team_name"] = team_name
+    if is_sidechain:
+        raw_meta["transcript_scope"] = "sidechain"
+
+    return _finalize_parsed_session(
+        source_path=source_path,
+        source_root=source_root,
+        source_host=source_host,
+        file_size=file_size,
+        file_mtime_ns=file_mtime_ns,
+        content_sha256=content_hash.hexdigest(),
+        raw_meta=raw_meta,
+        started_at=started_at,
+        ended_at=ended_at,
+        events=events,
+        imported_at=imported_at,
+    )
+
+
 def parse_session_file(source_path: Path, source_root: Path, source_host: str) -> ParsedSession:
     stat = source_path.stat()
     raw_jsonl = read_session_source_text(source_path)
@@ -822,13 +1892,26 @@ def parse_session_text(
     file_mtime_ns: int | None = None,
 ) -> ParsedSession:
     content_bytes = raw_jsonl.encode("utf-8")
+    lines = raw_jsonl.splitlines(keepends=True)
+    parse_kwargs = {
+        "file_size": file_size if file_size is not None else len(content_bytes),
+        "file_mtime_ns": file_mtime_ns if file_mtime_ns is not None else 0,
+    }
+    session_format = _detect_session_format(lines, source_path)
+    if session_format == "claude":
+        return _parse_claude_session_lines(
+            lines,
+            source_path,
+            source_root,
+            source_host,
+            **parse_kwargs,
+        )
     return _parse_session_lines(
-        raw_jsonl.splitlines(keepends=True),
+        lines,
         source_path,
         source_root,
         source_host,
-        file_size=file_size if file_size is not None else len(content_bytes),
-        file_mtime_ns=file_mtime_ns if file_mtime_ns is not None else 0,
+        **parse_kwargs,
     )
 
 
@@ -1533,6 +2616,10 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
                         file_size=stat.st_size,
                         file_mtime_ns=stat.st_mtime_ns,
                     )
+                except SessionSkipError as exc:
+                    logger.info("Skipping session file %s", exc)
+                    skipped += 1
+                    continue
                 except SessionParseError as exc:
                     logger.warning("Skipping malformed session file %s", exc)
                     skipped += 1
@@ -1577,6 +2664,10 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
                             file_size=int(row["file_size"] or len(raw_jsonl.encode("utf-8"))),
                             file_mtime_ns=int(row["file_mtime_ns"] or 0),
                         )
+                    except SessionSkipError as exc:
+                        logger.info("Skipping stored session artifact %s", exc)
+                        skipped += 1
+                        continue
                     except SessionParseError as exc:
                         logger.warning("Skipping malformed stored session artifact %s", exc)
                         skipped += 1

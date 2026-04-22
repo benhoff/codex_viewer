@@ -1,0 +1,3 @@
+full fixture output
+line two
+line three

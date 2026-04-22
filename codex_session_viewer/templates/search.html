@@ -4,61 +4,60 @@
 
 {% block content %}
   <div class="mx-auto w-full max-w-6xl">
-    <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:mb-8 sm:p-6 lg:p-7">
-      <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-        <div class="min-w-0 flex-1">
-          <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Investigation Search</p>
-          <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">{{ q }}</h1>
-          <p class="mt-3 max-w-3xl text-sm leading-7 text-stone-600 sm:text-base">
-            Matching turns across prompts, assistant output, tool results, and project metadata.
-          </p>
-        </div>
-
-        <div class="grid w-full grid-cols-2 gap-3 lg:w-[20rem]">
-          <div class="rounded-[1.15rem] bg-stone-900 p-4 text-stone-50">
-            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-300">Matches</p>
-            <p class="mt-2 text-2xl font-semibold">{{ search_data.total_count }}</p>
-          </div>
-          <div class="rounded-[1.15rem] bg-sky-50 p-4">
-            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-sky-600">Page</p>
-            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ search_data.page }}</p>
-          </div>
-          <div class="rounded-[1.15rem] bg-amber-50 p-4">
-            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-amber-600">Showing</p>
-            <p class="mt-2 text-sm font-semibold text-stone-900">
-              {% if search_data.showing_from %}
-                {{ search_data.showing_from }}-{{ search_data.showing_to }}
+    <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+      <div class="mb-5 border-b border-stone-200/80 pb-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Investigation Search</p>
+            <h1 class="mt-2 font-display text-2xl leading-tight text-stone-900 sm:text-[2.2rem]">{{ q }}</h1>
+            <p class="mt-2 text-sm text-stone-600">
+              {% if search_data.total_count %}
+                {{ search_data.total_count }} matching turn{% if search_data.total_count != 1 %}s{% endif %} across prompts, responses, activity, and project metadata.
               {% else %}
-                0
+                No matching turns yet. Refine the query below.
               {% endif %}
             </p>
           </div>
-          <div class="rounded-[1.15rem] bg-emerald-50 p-4">
-            <p class="text-[0.7rem] uppercase tracking-[0.18em] text-emerald-600">Pages</p>
-            <p class="mt-2 text-2xl font-semibold text-stone-900">{{ search_data.page_count }}</p>
-          </div>
+          <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">
+            Page {{ search_data.page }} / {{ search_data.page_count }}
+          </span>
         </div>
-      </div>
-    </section>
 
-    <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
-      <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Turn Hits</h2>
-          <p class="mt-1 text-sm text-stone-600">Each result opens directly on the matching turn.</p>
+        <form action="/search" method="get" class="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+          <label class="sr-only" for="search-page-query">Refine search</label>
+          <input
+            id="search-page-query"
+            type="text"
+            name="q"
+            value="{{ q }}"
+            placeholder="Search prompts, responses, commands, projects"
+            class="w-full min-w-0 rounded-2xl border border-stone-900/10 bg-white px-4 py-2.5 text-sm text-stone-900 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200/70"
+          />
+          <button type="submit" class="inline-flex items-center justify-center rounded-full border border-stone-900 bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-800">
+            Search
+          </button>
+        </form>
+
+        <div class="mt-3 flex flex-wrap items-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">
+          <span class="rounded-full bg-stone-100 px-3 py-1">
+            {% if search_data.showing_from %}
+              Showing {{ search_data.showing_from }}-{{ search_data.showing_to }}
+            {% else %}
+              Showing 0
+            {% endif %}
+          </span>
+          <span class="rounded-full bg-stone-100 px-3 py-1">
+            {{ search_data.total_count }} total matches
+          </span>
+          <span class="rounded-full bg-stone-100 px-3 py-1">
+            Turn hits
+          </span>
         </div>
-        <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">
-          {% if search_data.showing_from %}
-            showing {{ search_data.showing_from }}-{{ search_data.showing_to }} of {{ search_data.total_count }}
-          {% else %}
-            no matches found
-          {% endif %}
-        </p>
       </div>
 
       <div class="space-y-4">
         {% for item in search_data["items"] %}
-          <article class="rounded-[1.35rem] border border-stone-200 bg-stone-50/70 p-4 sm:p-5">
+          <article class="min-w-0 overflow-hidden rounded-[1.35rem] border border-stone-200 bg-stone-50/70 p-4 sm:p-5">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
@@ -99,13 +98,13 @@
               <p class="mt-3 whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ item.snippet_html|safe }}</p>
             </section>
 
-            <div class="mt-4 grid gap-4 lg:grid-cols-2">
-              <section class="rounded-[1.1rem] border border-rose-200 bg-rose-50/85 p-4">
+            <div class="mt-4 grid min-w-0 gap-4 lg:grid-cols-2">
+              <section class="min-w-0 overflow-hidden rounded-[1.1rem] border border-rose-200 bg-rose-50/85 p-4">
                 <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-rose-700">Prompt</p>
                 <p class="mt-3 whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ item.prompt_excerpt }}</p>
               </section>
 
-              <section class="rounded-[1.1rem] border p-4 {% if item.response_state == 'canceled' %}border-amber-200 bg-amber-50/85{% elif item.response_state == 'update' %}border-sky-200 bg-sky-50/85{% elif item.response_state == 'missing' %}border-stone-200 bg-stone-100/85{% else %}border-emerald-200 bg-emerald-50/85{% endif %}">
+              <section class="min-w-0 overflow-hidden rounded-[1.1rem] border p-4 {% if item.response_state == 'canceled' %}border-amber-200 bg-amber-50/85{% elif item.response_state == 'update' %}border-sky-200 bg-sky-50/85{% elif item.response_state == 'missing' %}border-stone-200 bg-stone-100/85{% else %}border-emerald-200 bg-emerald-50/85{% endif %}">
                 <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] {% if item.response_state == 'canceled' %}text-amber-700{% elif item.response_state == 'update' %}text-sky-700{% elif item.response_state == 'missing' %}text-stone-700{% else %}text-emerald-700{% endif %}">Response</p>
                 <p class="mt-3 whitespace-pre-wrap break-words text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">{{ item.response_excerpt }}</p>
               </section>

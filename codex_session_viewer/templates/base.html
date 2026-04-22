@@ -36,7 +36,79 @@
           </div>
         {% else %}
           {% set open_review_count = review_queue_open_count(request) %}
-          <div class="flex flex-wrap items-center gap-3">
+          <div class="sm:hidden">
+            <div class="flex items-center justify-between gap-3">
+              <a
+                href="/"
+                aria-label="Projects"
+                class="inline-flex h-10 w-10 items-center justify-center rounded-full border transition {% if current_path == '/' or current_path.startswith('/projects') or current_path.startswith('/groups') or current_path.startswith('/sessions') or current_path == '/search' %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}"
+              >
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" class="h-4 w-4" aria-hidden="true">
+                  <rect x="3" y="3" width="5.5" height="5.5" rx="1.2"></rect>
+                  <rect x="11.5" y="3" width="5.5" height="5.5" rx="1.2"></rect>
+                  <rect x="3" y="11.5" width="5.5" height="5.5" rx="1.2"></rect>
+                  <rect x="11.5" y="11.5" width="5.5" height="5.5" rx="1.2"></rect>
+                </svg>
+              </a>
+              <span class="sr-only">Agent Operations Viewer</span>
+              <div class="ml-auto flex items-center gap-2">
+                <details class="relative">
+                  <summary class="inline-flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#6B7280] transition hover:bg-[#F9FAFB] hover:text-[#1F2937]">
+                    <span class="sr-only">Open search</span>
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" class="h-4 w-4" aria-hidden="true">
+                      <circle cx="9" cy="9" r="4.75"></circle>
+                      <path d="m13 13 4 4" stroke-linecap="round"></path>
+                    </svg>
+                  </summary>
+                  <div class="absolute right-0 z-40 mt-2 w-[min(22rem,calc(100vw-2.5rem))] rounded-[1.1rem] border border-[#E5E7EB] bg-white p-3 shadow-[0_18px_45px_-28px_rgba(31,41,55,0.22)]">
+                    <form action="/search" method="get" class="min-w-0">
+                      <label class="sr-only" for="nav-search-mobile">Search</label>
+                      <input
+                        id="nav-search-mobile"
+                        type="text"
+                        name="q"
+                        value="{{ search_query|default('', true) }}"
+                        placeholder="Search projects, prompts, commands"
+                        class="w-full rounded-2xl border border-[#E5E7EB] bg-white px-4 py-2.5 text-sm text-[#1F2937] outline-none transition focus:border-[#2563EB] focus:ring-2 focus:ring-blue-200/70"
+                      />
+                    </form>
+                  </div>
+                </details>
+                <details class="relative">
+                  <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-4 py-2 text-sm font-semibold text-[#6B7280] transition hover:bg-[#F9FAFB] hover:text-[#1F2937]">
+                    <span>Menu</span>
+                    {% if open_review_count %}
+                      <span class="rounded-full bg-[#F3F4F6] px-2 py-0.5 text-[0.68rem] font-semibold text-[#6B7280]">{{ open_review_count }}</span>
+                    {% endif %}
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" class="h-4 w-4" aria-hidden="true">
+                      <path d="M4 6.5h12M4 10h12M4 13.5h12" stroke-linecap="round"></path>
+                    </svg>
+                  </summary>
+                  <div class="absolute right-0 z-40 mt-2 w-64 rounded-[1.1rem] border border-[#E5E7EB] bg-white p-2 shadow-[0_18px_45px_-28px_rgba(31,41,55,0.22)]">
+                    <a href="/machines" class="flex items-center justify-between rounded-[0.85rem] px-3 py-2 text-sm font-semibold transition {% if current_path.startswith('/machines') or current_path.startswith('/remotes') %}bg-[#2563EB] text-white{% else %}text-[#1F2937] hover:bg-[#F9FAFB]{% endif %}">
+                      <span>Machines</span>
+                    </a>
+                    <a href="/queue" class="mt-1 flex items-center justify-between rounded-[0.85rem] px-3 py-2 text-sm font-semibold transition {% if current_path.startswith('/queue') %}bg-[#2563EB] text-white{% else %}text-[#1F2937] hover:bg-[#F9FAFB]{% endif %}">
+                      <span>Queue</span>
+                      <span data-review-queue-count class="{% if not open_review_count %}hidden {% endif %}rounded-full {% if current_path.startswith('/queue') %}bg-white/20 text-white{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %} px-2 py-0.5 text-[0.68rem] font-semibold">{{ open_review_count }}</span>
+                    </a>
+                    <a href="/settings" class="mt-1 flex items-center justify-between rounded-[0.85rem] px-3 py-2 text-sm font-semibold transition {% if current_path.startswith('/settings') %}bg-[#2563EB] text-white{% else %}text-[#1F2937] hover:bg-[#F9FAFB]{% endif %}">
+                      <span>{% if request.state.auth_user %}{{ request.state.auth_user.display_name }}{% else %}Settings{% endif %}</span>
+                    </a>
+                    {% if request.state.auth_enabled %}
+                      <form action="/logout" method="post" class="mt-1">
+                        <button type="submit" class="block w-full rounded-[0.85rem] px-3 py-2 text-left text-sm font-semibold text-[#1F2937] transition hover:bg-[#F9FAFB]">
+                          Log out
+                        </button>
+                      </form>
+                    {% endif %}
+                  </div>
+                </details>
+              </div>
+            </div>
+          </div>
+
+          <div class="hidden sm:flex sm:flex-wrap sm:items-center sm:gap-3">
             <div class="flex min-w-0 items-center gap-3">
               <a
                 href="/"

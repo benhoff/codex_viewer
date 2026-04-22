@@ -953,12 +953,17 @@ def _hydrate_materialized_issue(
         "signal_badges": _json_badges(payload.get("signal_badges")),
         "files": _json_string_list(payload.get("files")),
         "verification_labels": _json_string_list(payload.get("verification_labels")),
-        "session_href": (
-            f"/sessions/{quote(session_id, safe='')}?view=audit&turn={turn_number}&focus=1"
-            if turn_number > 0
-            else f"/sessions/{quote(session_id, safe='')}"
-        ),
+        "session_href": _issue_session_href(session_id, turn_number, issue_kind),
     }
+
+
+def _issue_session_href(session_id: str, turn_number: int, issue_kind: str) -> str:
+    session_path = f"/sessions/{quote(session_id, safe='')}"
+    if turn_number <= 0:
+        return session_path
+    if issue_kind == "claim_evidence_mismatch":
+        return f"{session_path}?view=audit&turn={turn_number}&focus=1&review=claim_evidence_mismatch"
+    return f"{session_path}?view=audit&turn={turn_number}&focus=1"
 
 
 def _collect_materialized_verification_successes(
@@ -1202,9 +1207,9 @@ def _build_claim_mismatch_issue(
         signature="claim_evidence_mismatch",
         status_tone="rose",
         status_label="Evidence mismatch",
-        title="Response claims do not match the recorded work",
+        title="Response may overstate completed work",
         status_title=shorten(str(warnings[0]), 140),
-        next_action="Review the response against the commands, patches, and verification evidence before trusting it.",
+        next_action="Open the focused review panel and compare the response against the recorded commands, patches, files, and verification evidence.",
         severity=40,
         files=_turn_files_touched(turn),
         badges=[_badge(_count_label(mismatch_count, "mismatch"), "rose")],

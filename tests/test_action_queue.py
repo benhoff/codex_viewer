@@ -573,7 +573,7 @@ class ActionQueueTests(unittest.TestCase):
         self.assertEqual(signal["status_tone"], "amber")
         self.assertFalse(bool(signal["has_attention"]))
         self.assertEqual(int(signal["attention_count"]), 0)
-        self.assertIn("Response claims do not match", str(signal["status_title"]))
+        self.assertIn("Response may overstate completed work", str(signal["status_title"]))
 
     def test_repo_action_signal_prefers_setup_blocker_over_mismatch(self) -> None:
         mismatch_session = raw_session_jsonl(
@@ -637,6 +637,35 @@ class ActionQueueTests(unittest.TestCase):
         self.assertEqual(signal["status_tone"], "rose")
         self.assertTrue(bool(signal["has_attention"]))
         self.assertIn("Environment setup blocked", str(signal["status_title"]))
+
+    def test_claim_mismatch_issue_links_to_focused_review_panel(self) -> None:
+        raw_jsonl = raw_session_jsonl(
+            "queue-mismatch-review-link",
+            cwd="/workspace/codex",
+            records=[
+                event_msg(
+                    {
+                        "type": "user_message",
+                        "message": "Update the TUI styling and tell me whether tests passed.",
+                    },
+                    timestamp="2026-04-20T03:19:15Z",
+                ),
+                turn_complete_record(
+                    "Updated the styling and tests passed.",
+                    timestamp="2026-04-20T03:19:18Z",
+                ),
+            ],
+        )
+
+        settings = self._ingest_sessions([(raw_jsonl, "queue-host")])
+        action_queue = self._load_action_queue(settings)
+
+        mismatch_item = next(item for item in action_queue if item["issue_kind"] == "claim_evidence_mismatch")
+        self.assertEqual(mismatch_item["title"], "Response may overstate completed work")
+        self.assertEqual(
+            mismatch_item["session_href"],
+            f"/sessions/{mismatch_item['session_id']}?view=audit&turn=1&focus=1&review=claim_evidence_mismatch",
+        )
 
     def test_repo_action_signal_honors_owner_scoped_ignore_state(self) -> None:
         raw_jsonl = raw_session_jsonl(

@@ -289,6 +289,42 @@ def render_login_page(
     )
 
 
+def _build_posix_agent_snippet(server_url: str, token: str, interval_seconds: int) -> str:
+    return "\n".join(
+        [
+            "cat > .env <<EOF",
+            f"CODEX_VIEWER_SERVER_URL={server_url}",
+            f"CODEX_VIEWER_SYNC_API_TOKEN={token}",
+            "CODEX_VIEWER_SYNC_MODE=remote",
+            "CODEX_VIEWER_SOURCE_HOST=$(hostname)",
+            "# Optional if this machine also stores Claude sessions:",
+            "# CODEX_SESSION_ROOTS=$HOME/.codex/sessions,$HOME/.claude/projects",
+            "EOF",
+            "",
+            "./scripts/bootstrap-local.sh --skip-css",
+            f"./scripts/start-agent-daemon.sh --interval {interval_seconds}",
+        ]
+    )
+
+
+def _build_powershell_agent_snippet(server_url: str, token: str, interval_seconds: int) -> str:
+    return "\n".join(
+        [
+            '@"',
+            f"CODEX_VIEWER_SERVER_URL={server_url}",
+            f"CODEX_VIEWER_SYNC_API_TOKEN={token}",
+            "CODEX_VIEWER_SYNC_MODE=remote",
+            "CODEX_VIEWER_SOURCE_HOST=$env:COMPUTERNAME",
+            "# Optional if this machine also stores Claude sessions:",
+            "# CODEX_SESSION_ROOTS=C:/Users/YOU/.codex/sessions,C:/Users/YOU/.claude/projects",
+            '"@ | Set-Content -Encoding Ascii .env',
+            "",
+            ".\\scripts\\bootstrap-local.ps1 -SkipCss",
+            f".\\scripts\\start-agent-daemon.ps1 -Interval {interval_seconds}",
+        ]
+    )
+
+
 def render_setup_page(
     request: Request,
     *,
@@ -303,17 +339,17 @@ def render_setup_page(
             onboarding = reconcile_onboarding_state(connection, context.settings)
         api_tokens = list_api_tokens(connection)
     snippet = None
+    windows_snippet = None
     if created_token is not None:
-        snippet = "\n".join(
-            [
-                f"CODEX_VIEWER_SERVER_URL={server_url}",
-                f"CODEX_VIEWER_SYNC_API_TOKEN={created_token['token']}",
-                "CODEX_VIEWER_SYNC_MODE=remote",
-                "CODEX_VIEWER_SOURCE_HOST=$(hostname)",
-                "CODEX_SESSION_ROOTS=$HOME/.codex/sessions",
-                "",
-                f"PYTHONPATH=.deps python3 -m codex_session_viewer daemon --interval {context.settings.sync_interval_seconds}",
-            ]
+        snippet = _build_posix_agent_snippet(
+            server_url,
+            created_token["token"],
+            context.settings.sync_interval_seconds,
+        )
+        windows_snippet = _build_powershell_agent_snippet(
+            server_url,
+            created_token["token"],
+            context.settings.sync_interval_seconds,
         )
     return context.templates.TemplateResponse(
         request,
@@ -329,6 +365,7 @@ def render_setup_page(
             "onboarding": onboarding,
             "setup_server_url": server_url,
             "agent_snippet": snippet,
+            "agent_windows_snippet": windows_snippet,
         },
     )
 
@@ -582,6 +619,8 @@ def build_group_signal_map(
 def build_repo_nav_items(
     repo_groups: list[object],
     group_signals: dict[str, dict[str, object]],
+    *,
+    sort_mode: str = "alpha",
 ) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     for group in repo_groups:
@@ -594,9 +633,25 @@ def build_repo_nav_items(
                 "detail_href": group.detail_href,
                 "status_tone": status_tone,
                 "status_title": status_title,
+                "latest_recent_timestamp": str(signal.get("latest_recent_timestamp") or ""),
+                "latest_timestamp": str(group.latest_timestamp or ""),
+                "recent_turn_count": int(signal.get("recent_turn_count", 0) or 0),
+                "has_attention": bool(signal.get("has_attention")),
+                "attention_score": int(signal.get("attention_score", 0) or 0),
             }
         )
-    return sorted(items, key=lambda item: str(item["display_label"]).lower())
+    items.sort(key=lambda item: str(item["display_label"]).lower())
+    if sort_mode == "activity":
+        items.sort(
+            key=lambda item: (
+                str(item["latest_recent_timestamp"] or item["latest_timestamp"] or ""),
+                int(item["recent_turn_count"]),
+                1 if item["has_attention"] else 0,
+                int(item["attention_score"]),
+            ),
+            reverse=True,
+        )
+    return items
 
 
 def build_active_repos_panel(
@@ -1203,9 +1258,14 @@ def index(
             group_signals,
             limit=context.settings.page_size,
         )
-        repo_nav_items = build_repo_nav_items(
+        desktop_repo_nav_items = build_repo_nav_items(
             repo_groups,
             group_signals,
+        )
+        mobile_repo_nav_items = build_repo_nav_items(
+            repo_groups,
+            group_signals,
+            sort_mode="activity",
         )
 
     visible_hosts = {
@@ -1234,10 +1294,12 @@ def index(
         context={
             "request": request,
             "settings": context.settings,
-            "repo_nav_items": repo_nav_items,
+            "desktop_repo_nav_items": desktop_repo_nav_items,
+            "mobile_repo_nav_items": mobile_repo_nav_items,
             "active_repos": active_repos,
             "active_repo_total": active_repo_total,
             "group_total": len(repo_groups),
+            "mobile_project_initial_limit": 7,
             "stats": stats,
             "q": q or "",
             "host": host or "",

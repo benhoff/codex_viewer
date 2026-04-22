@@ -22,7 +22,7 @@ from ...session_artifacts import resolve_session_raw_text
 from ...session_exports import build_session_bundle, export_json_payload
 from ...session_insights import session_agent_snapshot, usage_pressure_snapshot
 from ...session_status import terminal_turn_summary
-from ...session_view import build_session_audit_summary, build_turns
+from ...session_view import build_session_audit_summary, build_turn_review_focus, build_turns
 from ...turn_index import fetch_session_turn_window, turn_window_size
 from ..context import get_app_context
 
@@ -118,6 +118,7 @@ def session_detail(
     before_turn: int | None = Query(default=None),
     page: int | None = Query(default=None),
     focus: int | None = Query(default=None),
+    review: str | None = Query(default=None),
 ) -> HTMLResponse:
     context = get_app_context(request)
     owner_scope = owner_scope_from_request(request)
@@ -201,6 +202,13 @@ def session_detail(
     session_display_summary = terminal_turn_summary(events) or str(session["summary"])
     audit_summary = build_session_audit_summary(session, turns_chrono)
     audit_focus_turn = int(requested_turn) if session_view_mode == "audit" and focus and requested_turn else None
+    review_focus = None
+    if audit_focus_turn:
+        focused_turn_data = next(
+            (item for item in turns_chrono if int(item.get("number") or 0) == audit_focus_turn),
+            None,
+        )
+        review_focus = build_turn_review_focus(focused_turn_data, review)
     current_page = int(window["current_page"] or 1)
     total_pages = int(window["total_pages"] or 1)
 
@@ -244,17 +252,22 @@ def session_detail(
     audit_focus = None
     if audit_focus_turn:
         total_turns = int(window["total_turns"] or 0)
+        review_suffix = (
+            f"&review={quote(str(review_focus.get('kind') or ''), safe='')}"
+            if isinstance(review_focus, dict) and review_focus.get("kind")
+            else ""
+        )
         audit_focus = {
             "turn_number": audit_focus_turn,
             "back_to_conversation_href": f"{request.url.path}?view=conversation&turn={audit_focus_turn}",
             "full_audit_href": f"{request.url.path}?view=audit&turn={audit_focus_turn}",
             "prev_href": (
-                f"{request.url.path}?view=audit&turn={audit_focus_turn - 1}&focus=1"
+                f"{request.url.path}?view=audit&turn={audit_focus_turn - 1}&focus=1{review_suffix}"
                 if audit_focus_turn > 1
                 else None
             ),
             "next_href": (
-                f"{request.url.path}?view=audit&turn={audit_focus_turn + 1}&focus=1"
+                f"{request.url.path}?view=audit&turn={audit_focus_turn + 1}&focus=1{review_suffix}"
                 if total_turns and audit_focus_turn < total_turns
                 else None
             ),
@@ -274,6 +287,7 @@ def session_detail(
             "audit_summary": audit_summary,
             "audit_focus": audit_focus,
             "audit_focus_turn": audit_focus_turn,
+            "review_focus": review_focus,
             "agent_snapshot": agent_snapshot,
             "usage_pressure": usage_pressure,
             "parent_session_href": parent_session_href,

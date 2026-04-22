@@ -131,20 +131,20 @@ TURN_STREAM_SELECT = f"""
     s.memory_mode,
     s.command_failure_count,
     s.aborted_turn_count,
-    s.latest_usage_timestamp,
-    s.latest_input_tokens,
-    s.latest_cached_input_tokens,
-    s.latest_output_tokens,
-    s.latest_reasoning_output_tokens,
-    s.latest_total_tokens,
-    s.latest_context_window,
-    s.latest_context_remaining_percent,
-    s.latest_primary_limit_used_percent,
-    s.latest_primary_limit_resets_at,
-    s.latest_secondary_limit_used_percent,
-    s.latest_secondary_limit_resets_at,
-    s.latest_rate_limit_name,
-    s.latest_rate_limit_reached_type,
+    COALESCE(st.latest_usage_timestamp, s.latest_usage_timestamp) AS latest_usage_timestamp,
+    COALESCE(st.latest_input_tokens, s.latest_input_tokens) AS latest_input_tokens,
+    COALESCE(st.latest_cached_input_tokens, s.latest_cached_input_tokens) AS latest_cached_input_tokens,
+    COALESCE(st.latest_output_tokens, s.latest_output_tokens) AS latest_output_tokens,
+    COALESCE(st.latest_reasoning_output_tokens, s.latest_reasoning_output_tokens) AS latest_reasoning_output_tokens,
+    COALESCE(st.latest_total_tokens, s.latest_total_tokens) AS latest_total_tokens,
+    COALESCE(st.latest_context_window, s.latest_context_window) AS latest_context_window,
+    COALESCE(st.latest_context_remaining_percent, s.latest_context_remaining_percent) AS latest_context_remaining_percent,
+    COALESCE(st.latest_primary_limit_used_percent, s.latest_primary_limit_used_percent) AS latest_primary_limit_used_percent,
+    COALESCE(st.latest_primary_limit_resets_at, s.latest_primary_limit_resets_at) AS latest_primary_limit_resets_at,
+    COALESCE(st.latest_secondary_limit_used_percent, s.latest_secondary_limit_used_percent) AS latest_secondary_limit_used_percent,
+    COALESCE(st.latest_secondary_limit_resets_at, s.latest_secondary_limit_resets_at) AS latest_secondary_limit_resets_at,
+    COALESCE(st.latest_rate_limit_name, s.latest_rate_limit_name) AS latest_rate_limit_name,
+    COALESCE(st.latest_rate_limit_reached_type, s.latest_rate_limit_reached_type) AS latest_rate_limit_reached_type,
     p.id AS project_id,
     p.current_group_key AS current_project_group_key,
     p.display_label AS current_project_display_label,
@@ -387,6 +387,35 @@ def apply_project_session_preview(
     session_item["action_status_label"] = status_label
     session_item["action_status_tone"] = status_tone
     session_item["action_badges"] = _project_session_action_badges(ordered_issues)
+
+
+def _attention_session_item(
+    session: dict[str, Any],
+    issues: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    session_issues = list(issues or [])
+    if not session_issues and not bool(session.get("needs_attention")):
+        return None
+
+    issue_driven = bool(session_issues)
+    detail = str(session.get("display_detail") or "")
+    if not issue_driven:
+        detail = str(session.get("status_title") or detail or "")
+    if not detail:
+        detail = str(session.get("display_detail") or session.get("status_title") or "")
+
+    return {
+        "id": session["id"],
+        "href": session["href"],
+        "title": session["display_title"],
+        "detail": detail,
+        "host": session["host"],
+        "timestamp": session["last_turn_timestamp"] or session["session_timestamp"] or "",
+        "signal_badges": list(session.get("action_badges") or session.get("signal_badges") or []),
+        "status_tone": str(session.get("action_status_tone") or session.get("status_tone") or ""),
+        "status_label": str(session.get("action_status_label") or session.get("status_label") or ""),
+        "attention_score": int(session.get("attention_score") or 0),
+    }
 
 
 def slugify_project_segment(value: str | None, fallback: str) -> str:
@@ -1813,7 +1842,7 @@ def fetch_turn_stream(
                 "project_label": project["display_label"],
                 "project_detail_href": detail_href,
                 "host": project["source_host"],
-                "session_href": f"/sessions/{quote(str(row['session_id']), safe='')}?turn={int(row['turn_number'] or 0)}",
+                "session_href": f"/sessions/{quote(str(row['session_id']), safe='')}?view=conversation&turn={int(row['turn_number'] or 0)}",
                 "audit_href": f"/sessions/{quote(str(row['session_id']), safe='')}?view=audit&turn={int(row['turn_number'] or 0)}",
             }
         )
@@ -2234,23 +2263,21 @@ def fetch_group_detail(
         )
 
     attention_sessions = [
-        {
-            "id": session["id"],
-            "href": session["href"],
-            "title": session["display_title"],
-            "detail": session["display_detail"],
-            "host": session["host"],
-            "timestamp": session["last_turn_timestamp"] or session["session_timestamp"] or "",
-            "signal_badges": list(session.get("action_badges") or []),
-            "status_tone": str(session.get("action_status_tone") or ""),
-            "status_label": str(session.get("action_status_label") or ""),
-            "attention_score": int(session.get("attention_score") or 0),
-        }
+        attention_item
         for session in all_sessions
-        if issues_by_session.get(str(session["id"]))
+        if (
+            attention_item := _attention_session_item(
+                session,
+                issues_by_session.get(str(session["id"]), []),
+            )
+        )
+        is not None
     ]
     attention_sessions.sort(
-        key=lambda item: str(item["timestamp"] or ""),
+        key=lambda item: (
+            int(item["attention_score"] or 0),
+            str(item["timestamp"] or ""),
+        ),
         reverse=True,
     )
     attention_sessions_preview_limit = 3

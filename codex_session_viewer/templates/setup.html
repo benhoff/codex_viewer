@@ -286,7 +286,7 @@
               <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Connect Agent</p>
               <h2 class="mt-2 font-display text-2xl text-stone-900">Machine Configuration</h2>
               <p class="mt-2 text-sm leading-6 text-stone-600">
-                Paste this into the first machine after creating a token, then start the daemon and leave this page open while it checks in.
+                Use the matching launch block for the target machine after creating a token, then leave this page open while the daemon checks in.
               </p>
             </div>
             <span class="rounded-full {% if onboarding.agent_seen %}bg-emerald-100 text-emerald-800{% elif onboarding.token_count %}bg-amber-100 text-amber-800{% else %}bg-stone-100 text-stone-700{% endif %} px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em]">
@@ -295,10 +295,28 @@
           </div>
 
           {% if agent_snippet %}
-            <pre id="agent-config-snippet" class="mt-5 overflow-x-auto whitespace-pre-wrap break-all rounded-[1.1rem] bg-stone-950 p-4 text-[0.92rem] leading-6 text-stone-50">{{ agent_snippet }}</pre>
-            <div class="mt-4 flex flex-wrap items-center gap-3">
-              <button type="button" id="copy-agent-snippet" class="rounded-2xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-stone-700">Copy Snippet</button>
-              <p id="copy-agent-snippet-status" class="text-sm text-stone-600"></p>
+            <div class="mt-5 grid gap-4 xl:grid-cols-2">
+              <div>
+                <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">macOS / Linux</p>
+                <pre id="agent-config-snippet" class="mt-2 overflow-x-auto whitespace-pre-wrap break-all rounded-[1.1rem] bg-stone-950 p-4 text-[0.92rem] leading-6 text-stone-50">{{ agent_snippet }}</pre>
+                <div class="mt-3 flex flex-wrap items-center gap-3">
+                  <button type="button" id="copy-agent-snippet" class="rounded-2xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-stone-700">Copy macOS/Linux Snippet</button>
+                  <p id="copy-agent-snippet-status" class="text-sm text-stone-600"></p>
+                </div>
+              </div>
+              {% if agent_windows_snippet %}
+                <div>
+                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Windows PowerShell</p>
+                  <pre id="agent-config-snippet-windows" class="mt-2 overflow-x-auto whitespace-pre-wrap break-all rounded-[1.1rem] bg-stone-950 p-4 text-[0.92rem] leading-6 text-stone-50">{{ agent_windows_snippet }}</pre>
+                  <div class="mt-3 flex flex-wrap items-center gap-3">
+                    <button type="button" id="copy-agent-snippet-windows" class="rounded-2xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-stone-700">Copy Windows Snippet</button>
+                    <p id="copy-agent-snippet-windows-status" class="text-sm text-stone-600"></p>
+                  </div>
+                </div>
+              {% endif %}
+            </div>
+            <div class="mt-4 rounded-[1.2rem] border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-700">
+              macOS auto-start examples and Windows Task Scheduler commands are documented in `docs/agent-daemon-windows-macos.md` in this repo.
             </div>
           {% elif onboarding.token_count and can_manage_setup_tokens %}
             <div class="mt-5 rounded-[1.2rem] border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
@@ -348,6 +366,15 @@
       if (snippetButton && snippetValue) {
         snippetButton.addEventListener("click", () => {
           copyText(snippetValue.textContent || "", snippetStatus, "Snippet copied.");
+        });
+      }
+
+      const windowsSnippetButton = document.getElementById("copy-agent-snippet-windows");
+      const windowsSnippetStatus = document.getElementById("copy-agent-snippet-windows-status");
+      const windowsSnippetValue = document.getElementById("agent-config-snippet-windows");
+      if (windowsSnippetButton && windowsSnippetValue) {
+        windowsSnippetButton.addEventListener("click", () => {
+          copyText(windowsSnippetValue.textContent || "", windowsSnippetStatus, "Snippet copied.");
         });
       }
 
