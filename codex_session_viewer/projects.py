@@ -389,6 +389,35 @@ def apply_project_session_preview(
     session_item["action_badges"] = _project_session_action_badges(ordered_issues)
 
 
+def _attention_session_item(
+    session: dict[str, Any],
+    issues: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    session_issues = list(issues or [])
+    if not session_issues and not bool(session.get("needs_attention")):
+        return None
+
+    issue_driven = bool(session_issues)
+    detail = str(session.get("display_detail") or "")
+    if not issue_driven:
+        detail = str(session.get("status_title") or detail or "")
+    if not detail:
+        detail = str(session.get("display_detail") or session.get("status_title") or "")
+
+    return {
+        "id": session["id"],
+        "href": session["href"],
+        "title": session["display_title"],
+        "detail": detail,
+        "host": session["host"],
+        "timestamp": session["last_turn_timestamp"] or session["session_timestamp"] or "",
+        "signal_badges": list(session.get("action_badges") or session.get("signal_badges") or []),
+        "status_tone": str(session.get("action_status_tone") or session.get("status_tone") or ""),
+        "status_label": str(session.get("action_status_label") or session.get("status_label") or ""),
+        "attention_score": int(session.get("attention_score") or 0),
+    }
+
+
 def slugify_project_segment(value: str | None, fallback: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
     return normalized or fallback
@@ -2203,23 +2232,21 @@ def fetch_group_detail(
         )
 
     attention_sessions = [
-        {
-            "id": session["id"],
-            "href": session["href"],
-            "title": session["display_title"],
-            "detail": session["display_detail"],
-            "host": session["host"],
-            "timestamp": session["last_turn_timestamp"] or session["session_timestamp"] or "",
-            "signal_badges": list(session.get("action_badges") or []),
-            "status_tone": str(session.get("action_status_tone") or ""),
-            "status_label": str(session.get("action_status_label") or ""),
-            "attention_score": int(session.get("attention_score") or 0),
-        }
+        attention_item
         for session in all_sessions
-        if issues_by_session.get(str(session["id"]))
+        if (
+            attention_item := _attention_session_item(
+                session,
+                issues_by_session.get(str(session["id"]), []),
+            )
+        )
+        is not None
     ]
     attention_sessions.sort(
-        key=lambda item: str(item["timestamp"] or ""),
+        key=lambda item: (
+            int(item["attention_score"] or 0),
+            str(item["timestamp"] or ""),
+        ),
         reverse=True,
     )
     attention_sessions_preview_limit = 3

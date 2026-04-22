@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 from pathlib import Path
 
@@ -31,6 +32,27 @@ from ..context import get_settings
 
 router = APIRouter()
 RAW_SYNC_BATCH_MAX_ITEMS = 25
+
+
+async def _read_json_request_payload(request: Request) -> object:
+    try:
+        body = await request.body()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail="Unable to read request body") from exc
+
+    content_encoding = request.headers.get("content-encoding", "").strip().lower()
+    if content_encoding == "gzip":
+        try:
+            body = gzip.decompress(body)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail="Invalid gzip request body") from exc
+    elif content_encoding not in {"", "identity"}:
+        raise HTTPException(status_code=400, detail="Unsupported content encoding")
+
+    try:
+        return json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
 
 @router.get("/api/health")
@@ -71,10 +93,7 @@ def sync_manifest(request: Request, host: str = Query(...)) -> JSONResponse:
 async def sync_heartbeat(request: Request) -> JSONResponse:
     require_sync_api_auth(request)
     settings = get_settings(request)
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+    payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Heartbeat payload must be an object")
 
@@ -118,10 +137,7 @@ async def sync_heartbeat(request: Request) -> JSONResponse:
 async def sync_session(request: Request) -> JSONResponse:
     require_sync_api_auth(request)
     settings = get_settings(request)
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+    payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Sync payload must be an object")
     try:
@@ -164,10 +180,7 @@ async def sync_session(request: Request) -> JSONResponse:
 async def sync_session_raw(request: Request) -> JSONResponse:
     require_sync_api_auth(request)
     settings = get_settings(request)
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+    payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Raw sync payload must be an object")
 
@@ -191,10 +204,7 @@ async def sync_session_raw(request: Request) -> JSONResponse:
 async def sync_sessions_raw_batch(request: Request) -> JSONResponse:
     require_sync_api_auth(request)
     settings = get_settings(request)
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+    payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Raw sync batch payload must be an object")
 

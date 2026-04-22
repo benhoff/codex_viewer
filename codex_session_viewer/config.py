@@ -173,6 +173,12 @@ class Settings:
     auth_proxy_login_url: str | None
     auth_proxy_logout_url: str | None
     auth_cookie_secure: bool
+    remote_gzip_min_bytes: int = 1024
+    remote_prepare_workers: int = 4
+    remote_upload_workers: int = 2
+    remote_watch_mode: str = "auto"
+    remote_watch_debounce_seconds: float = 1.0
+    remote_watch_poll_seconds: float = 1.0
 
     @classmethod
     def from_env(cls, project_root: Path | None = None) -> "Settings":
@@ -204,6 +210,18 @@ class Settings:
         sync_interval_seconds = int(os.getenv("CODEX_VIEWER_SYNC_INTERVAL", "30"))
         remote_timeout_seconds = int(os.getenv("CODEX_VIEWER_REMOTE_TIMEOUT", "15"))
         remote_batch_size = max(1, min(int(os.getenv("CODEX_VIEWER_REMOTE_BATCH_SIZE", "25")), 25))
+        remote_gzip_min_bytes = max(0, int(os.getenv("CODEX_VIEWER_REMOTE_GZIP_MIN_BYTES", "1024")))
+        remote_prepare_workers = max(1, int(os.getenv("CODEX_VIEWER_REMOTE_PREPARE_WORKERS", "4")))
+        remote_upload_workers = max(1, int(os.getenv("CODEX_VIEWER_REMOTE_UPLOAD_WORKERS", "2")))
+        remote_watch_mode = (os.getenv("CODEX_VIEWER_REMOTE_WATCH_MODE") or "auto").strip().lower() or "auto"
+        remote_watch_debounce_seconds = max(
+            0.0,
+            float(os.getenv("CODEX_VIEWER_REMOTE_WATCH_DEBOUNCE_SECONDS", "1.0")),
+        )
+        remote_watch_poll_seconds = max(
+            0.1,
+            float(os.getenv("CODEX_VIEWER_REMOTE_WATCH_POLL_SECONDS", "1.0")),
+        )
         log_level = os.getenv("CODEX_VIEWER_LOG_LEVEL", "info")
         source_host = os.getenv("CODEX_VIEWER_SOURCE_HOST", socket.gethostname())
         auth_mode = _normalize_auth_mode(os.getenv("CODEX_VIEWER_AUTH_MODE"))
@@ -240,6 +258,12 @@ class Settings:
             sync_interval_seconds=sync_interval_seconds,
             remote_timeout_seconds=remote_timeout_seconds,
             remote_batch_size=remote_batch_size,
+            remote_gzip_min_bytes=remote_gzip_min_bytes,
+            remote_prepare_workers=remote_prepare_workers,
+            remote_upload_workers=remote_upload_workers,
+            remote_watch_mode=remote_watch_mode,
+            remote_watch_debounce_seconds=remote_watch_debounce_seconds,
+            remote_watch_poll_seconds=remote_watch_poll_seconds,
             log_level=log_level,
             source_host=source_host,
             auth_mode=auth_mode,
@@ -256,6 +280,9 @@ class Settings:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         if self.auth_enabled() and not self.session_secret:
             self.session_secret = load_or_create_session_secret(self.data_dir)
+
+    def agent_state_db_path(self) -> Path:
+        return Path(os.getenv("CODEX_VIEWER_AGENT_STATE_DB", self.data_dir / "agent_sync.sqlite3")).expanduser()
 
     def auth_enabled(self) -> bool:
         return self.auth_mode != "none"

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -10,10 +13,19 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from .agent_state import (
+    connect_agent_state,
+    fetch_agent_file_states,
+    mark_agent_file_deleted,
+    mark_agent_file_uploaded,
+    mark_missing_agent_files_deleted,
+    upsert_agent_file_state,
+)
 from .config import Settings
 from .importer import (
     iter_session_files,
     parse_session_text,
+    prescan_session_source,
     SessionParseError,
 )
 from .session_artifacts import read_session_source_text
@@ -27,6 +39,51 @@ class RemoteSyncError(RuntimeError):
 
 class RestartRequired(RuntimeError):
     pass
+
+
+@dataclass(slots=True)
+class SessionFileCandidate:
+    source_root: Path
+    path: Path
+    file_size: int
+    file_mtime_ns: int
+    reason: str
+
+
+@dataclass(slots=True)
+class PreparedUpload:
+    payload: dict[str, object]
+    session_id: str
+    path: Path
+    source_root: Path
+    file_size: int
+    file_mtime_ns: int
+    reason: str
+    session_format: str | None
+    inferred_project_key: str | None
+    inferred_project_label: str | None
+
+
+@dataclass(slots=True)
+class PreparedSkip:
+    path: Path
+    source_root: Path
+    file_size: int
+    file_mtime_ns: int
+    reason: str
+    session_format: str | None
+    session_id: str | None
+    inferred_project_key: str | None
+    inferred_project_label: str | None
+
+
+@dataclass(slots=True)
+class UploadOutcome:
+    session_id: str
+    path: Path
+    reason: str
+    status: str
+    error: str | None = None
 
 
 def utc_now_iso() -> str:
@@ -70,7 +127,12 @@ def json_request(
     body = None
     headers = build_headers(settings)
     if payload is not None:
-        body = json.dumps(payload).encode("utf-8")
+        raw_body = json.dumps(payload).encode("utf-8")
+        if len(raw_body) >= settings.remote_gzip_min_bytes:
+            body = gzip.compress(raw_body, compresslevel=6)
+            headers["Content-Encoding"] = "gzip"
+        else:
+            body = raw_body
         headers["Content-Type"] = "application/json"
     request = Request(f"{base_url}{path}", data=body, method=method.upper(), headers=headers)
     try:
@@ -247,7 +309,7 @@ def build_raw_upload_payload(
     raw_jsonl: str,
     file_size: int,
     file_mtime_ns: int,
-) -> dict[str, object]:
+    ) -> dict[str, object]:
     return {
         "source_host": settings.source_host,
         "source_root": str(source_root),
@@ -256,6 +318,176 @@ def build_raw_upload_payload(
         "file_mtime_ns": file_mtime_ns,
         "raw_jsonl": raw_jsonl,
     }
+
+
+def _same_cached_file_version(cached_state: dict[str, object] | None, *, file_size: int, file_mtime_ns: int) -> bool:
+    if cached_state is None:
+        return False
+    return cached_state["file_size"] == file_size and cached_state["file_mtime_ns"] == file_mtime_ns
+
+
+def _match_source_root(path: Path, roots: list[Path]) -> Path | None:
+    expanded_path = path.expanduser()
+    matches: list[Path] = []
+    for root in roots:
+        expanded_root = root.expanduser()
+        try:
+            expanded_path.relative_to(expanded_root)
+        except ValueError:
+            continue
+        matches.append(expanded_root)
+    if not matches:
+        return None
+    return max(matches, key=lambda item: len(item.parts))
+
+
+def _iter_candidate_session_files(
+    session_roots: list[Path],
+    candidate_paths: list[Path] | None,
+) -> list[tuple[Path, Path]]:
+    if candidate_paths is None:
+        return list(iter_session_files(session_roots))
+
+    resolved_candidates: list[tuple[Path, Path]] = []
+    seen_paths: set[str] = set()
+    for raw_path in sorted(candidate_paths, key=lambda item: str(item)):
+        path = raw_path.expanduser()
+        if str(path) in seen_paths:
+            continue
+        seen_paths.add(str(path))
+        if path.suffix.lower() != ".jsonl" or not path.exists() or not path.is_file():
+            continue
+        source_root = _match_source_root(path, session_roots)
+        if source_root is None:
+            continue
+        resolved_candidates.append((source_root, path))
+    return resolved_candidates
+
+
+def _prepare_upload_candidate(
+    settings: Settings,
+    candidate: SessionFileCandidate,
+    ignored_keys: set[str],
+) -> PreparedUpload | PreparedSkip:
+    prescanned = prescan_session_source(
+        candidate.path,
+        candidate.source_root,
+        settings.source_host,
+    )
+    if prescanned is not None and prescanned.inferred_project_key in ignored_keys:
+        return PreparedSkip(
+            path=candidate.path,
+            source_root=candidate.source_root,
+            file_size=candidate.file_size,
+            file_mtime_ns=candidate.file_mtime_ns,
+            reason=candidate.reason,
+            session_format=prescanned.session_format,
+            session_id=prescanned.session_id,
+            inferred_project_key=prescanned.inferred_project_key,
+            inferred_project_label=prescanned.inferred_project_label,
+        )
+
+    raw_jsonl = read_session_source_text(candidate.path)
+    parsed = parse_session_text(
+        raw_jsonl,
+        candidate.path,
+        candidate.source_root,
+        settings.source_host,
+        file_size=candidate.file_size,
+        file_mtime_ns=candidate.file_mtime_ns,
+    )
+    if parsed.inferred_project_key in ignored_keys:
+        return PreparedSkip(
+            path=candidate.path,
+            source_root=candidate.source_root,
+            file_size=candidate.file_size,
+            file_mtime_ns=candidate.file_mtime_ns,
+            reason=candidate.reason,
+            session_format=prescanned.session_format if prescanned is not None else None,
+            session_id=parsed.session_id,
+            inferred_project_key=parsed.inferred_project_key,
+            inferred_project_label=parsed.inferred_project_label,
+        )
+
+    return PreparedUpload(
+        payload=build_raw_upload_payload(
+            settings,
+            source_root=candidate.source_root,
+            path=candidate.path,
+            raw_jsonl=raw_jsonl,
+            file_size=candidate.file_size,
+            file_mtime_ns=candidate.file_mtime_ns,
+        ),
+        session_id=parsed.session_id,
+        path=candidate.path,
+        source_root=candidate.source_root,
+        file_size=candidate.file_size,
+        file_mtime_ns=candidate.file_mtime_ns,
+        reason=candidate.reason,
+        session_format=prescanned.session_format if prescanned is not None else None,
+        inferred_project_key=parsed.inferred_project_key,
+        inferred_project_label=parsed.inferred_project_label,
+    )
+
+
+def _validate_upload_status(response: dict[str, Any]) -> str:
+    status = str(response.get("status") or "").strip().lower() or "ok"
+    if status not in {"ok", "ignored"}:
+        raise RemoteSyncError(f"Remote sync response had unexpected status {status!r}")
+    return status
+
+
+def _upload_prepared_chunk(
+    settings: Settings,
+    chunk: list[PreparedUpload],
+    *,
+    batch_uploads_enabled: bool,
+) -> list[UploadOutcome]:
+    if batch_uploads_enabled and len(chunk) > 1:
+        try:
+            response = upload_raw_sessions_batch(settings, [item.payload for item in chunk])
+            results = response.get("results")
+            if not isinstance(results, list) or len(results) != len(chunk):
+                raise RemoteSyncError("Remote batch sync response was missing per-session results")
+            outcomes: list[UploadOutcome] = []
+            for result, item in zip(results, chunk):
+                if not isinstance(result, dict):
+                    raise RemoteSyncError("Remote batch sync response contained an invalid item")
+                outcomes.append(
+                    UploadOutcome(
+                        session_id=item.session_id,
+                        path=item.path,
+                        reason=item.reason,
+                        status=_validate_upload_status(result),
+                    )
+                )
+            return outcomes
+        except Exception:
+            pass
+
+    outcomes: list[UploadOutcome] = []
+    for item in chunk:
+        try:
+            response = upload_raw_session(settings, item.payload)
+            outcomes.append(
+                UploadOutcome(
+                    session_id=item.session_id,
+                    path=item.path,
+                    reason=item.reason,
+                    status=_validate_upload_status(response),
+                )
+            )
+        except Exception as exc:
+            outcomes.append(
+                UploadOutcome(
+                    session_id=item.session_id,
+                    path=item.path,
+                    reason=item.reason,
+                    status="failed",
+                    error=exception_summary(exc),
+                )
+            )
+    return outcomes
 
 
 def invalid_session_cache_key(path: Path, file_size: int, file_mtime_ns: int) -> tuple[str, int, int]:
@@ -270,7 +502,12 @@ def remember_invalid_session(path: Path, file_size: int, file_mtime_ns: int, mes
     INVALID_SESSION_CACHE[invalid_session_cache_key(path, file_size, file_mtime_ns)] = message
 
 
-def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, int]:
+def sync_sessions_remote(
+    settings: Settings,
+    force: bool = False,
+    *,
+    candidate_paths: list[Path] | None = None,
+) -> dict[str, int]:
     logger = logging.getLogger("codex_session_viewer.remote_sync")
     manifest, ignored_keys, server_meta, actions = ({}, set(), {}, {}) if force else fetch_remote_manifest(settings)
     uploaded = 0
@@ -278,7 +515,6 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
     failed = 0
     last_failed_source_path: str | None = None
     last_failure_detail: str | None = None
-    pending_uploads: list[tuple[dict[str, object], str, Path, str]] = []
     batch_uploads_enabled = settings.remote_batch_size > 1
     compatibility = evaluate_server_compatibility(settings, server_meta)
     resend_raw_action = actions.get("resend_raw") if isinstance(actions.get("resend_raw"), dict) else None
@@ -328,154 +564,279 @@ def sync_sessions_remote(settings: Settings, force: bool = False) -> dict[str, i
         )
         return {"uploaded": 0, "skipped": 0, "failed": 0}
 
-    def handle_upload_response(
-        response: dict[str, Any],
-        *,
-        session_id: str,
-        path: Path,
-        reason: str,
-    ) -> None:
-        nonlocal uploaded, skipped
-        status = str(response.get("status") or "").strip().lower() or "ok"
-        if status == "ignored":
-            skipped += 1
-            logger.info("Skipped ignored session %s from %s (%s)", session_id, path, reason)
-            return
-        if status != "ok":
-            raise RemoteSyncError(f"Remote sync response had unexpected status {status!r}")
-        uploaded += 1
-        logger.info("Uploaded session %s from %s (%s)", session_id, path, reason)
+    with connect_agent_state(settings.agent_state_db_path()) as state_connection:
+        cached_states = fetch_agent_file_states(state_connection, roots=settings.session_roots)
+        seen_paths: set[str] = set()
+        candidates: list[SessionFileCandidate] = []
 
-    def upload_single_pending(item: tuple[dict[str, object], str, Path, str]) -> None:
-        payload, session_id, path, reason = item
-        response = upload_raw_session(settings, payload)
-        handle_upload_response(response, session_id=session_id, path=path, reason=reason)
-
-    def flush_pending_uploads() -> None:
-        nonlocal failed, last_failed_source_path, last_failure_detail, batch_uploads_enabled
-        if not pending_uploads:
-            return
-
-        batch = list(pending_uploads)
-        pending_uploads.clear()
-
-        if batch_uploads_enabled and len(batch) > 1:
-            try:
-                response = upload_raw_sessions_batch(settings, [item[0] for item in batch])
-                results = response.get("results")
-                if not isinstance(results, list) or len(results) != len(batch):
-                    raise RemoteSyncError("Remote batch sync response was missing per-session results")
-                for result, item in zip(results, batch):
-                    _, session_id, path, reason = item
-                    if not isinstance(result, dict):
-                        raise RemoteSyncError("Remote batch sync response contained an invalid item")
-                    handle_upload_response(result, session_id=session_id, path=path, reason=reason)
-                return
-            except Exception as exc:
-                batch_uploads_enabled = False
-                logger.warning(
-                    "Batch upload failed; retrying sessions individually for the rest of this pass: %s",
-                    exception_summary(exc),
-                )
-
-        for item in batch:
-            try:
-                upload_single_pending(item)
-            except Exception as exc:
-                failed += 1
-                last_failed_source_path = str(item[2])
-                last_failure_detail = exception_summary(exc)
-                logger.exception("Failed to upload session from %s", item[2])
-
-    for source_root, path in iter_session_files(settings.session_roots):
-        stat = path.stat()
-        cached_parse_error = INVALID_SESSION_CACHE.get(
-            invalid_session_cache_key(path, stat.st_size, stat.st_mtime_ns)
-        )
-        if cached_parse_error is not None:
-            skipped += 1
-            continue
-        try:
-            if raw_resend_token:
-                raw_jsonl = read_session_source_text(path)
-                parsed = parse_session_text(
-                    raw_jsonl,
-                    path,
-                    source_root,
-                    settings.source_host,
-                    file_size=stat.st_size,
-                    file_mtime_ns=stat.st_mtime_ns,
-                )
-                if parsed.inferred_project_key in ignored_keys:
-                    skipped += 1
+        explicit_paths = [path.expanduser() for path in candidate_paths or []]
+        if candidate_paths is not None:
+            deleted_at = utc_now_iso()
+            for path in explicit_paths:
+                if path.exists() or str(path) not in cached_states:
                     continue
-                pending_uploads.append(
-                    (
-                        build_raw_upload_payload(
-                            settings,
-                            source_root=source_root,
-                            path=path,
-                            raw_jsonl=raw_jsonl,
-                            file_size=stat.st_size,
-                            file_mtime_ns=stat.st_mtime_ns,
-                        ),
-                        parsed.session_id,
-                        path,
-                        f"raw-resend:{raw_resend_token}",
-                    )
+                mark_agent_file_deleted(
+                    state_connection,
+                    source_path=path,
+                    deleted_at=deleted_at,
                 )
-            else:
-                needs_upload, reason = remote_entry_needs_upload(
-                    manifest.get(str(path)),
+
+        for source_root, path in _iter_candidate_session_files(settings.session_roots, candidate_paths):
+            stat = path.stat()
+            seen_paths.add(str(path))
+            cached_state = cached_states.get(str(path))
+            cached_parse_error = INVALID_SESSION_CACHE.get(
+                invalid_session_cache_key(path, stat.st_size, stat.st_mtime_ns)
+            )
+            if cached_parse_error is not None:
+                skipped += 1
+                upsert_agent_file_state(
+                    state_connection,
+                    source_root=source_root,
                     source_path=path,
                     file_size=stat.st_size,
                     file_mtime_ns=stat.st_mtime_ns,
-                    force=force,
+                    last_seen_at=utc_now_iso(),
+                    state="invalid",
+                    invalid_reason=cached_parse_error,
                 )
-                if not needs_upload:
+                continue
+
+            if _same_cached_file_version(cached_state, file_size=stat.st_size, file_mtime_ns=stat.st_mtime_ns):
+                cached_project_key = str(cached_state["inferred_project_key"] or "").strip()
+                cached_state_name = str(cached_state["state"] or "").strip()
+                if cached_state_name == "invalid":
+                    skipped += 1
+                    continue
+                if cached_project_key and cached_project_key in ignored_keys:
                     skipped += 1
                     continue
 
-                raw_jsonl = read_session_source_text(path)
-                parsed = parse_session_text(
-                    raw_jsonl,
-                    path,
-                    source_root,
-                    settings.source_host,
-                    file_size=stat.st_size,
-                    file_mtime_ns=stat.st_mtime_ns,
-                )
-                if parsed.inferred_project_key in ignored_keys:
-                    skipped += 1
-                    continue
-                pending_uploads.append(
-                    (
-                        build_raw_upload_payload(
-                            settings,
-                            source_root=source_root,
-                            path=path,
-                            raw_jsonl=raw_jsonl,
-                            file_size=stat.st_size,
-                            file_mtime_ns=stat.st_mtime_ns,
-                        ),
-                        parsed.session_id,
-                        path,
-                        reason,
+            if raw_resend_token:
+                candidates.append(
+                    SessionFileCandidate(
+                        source_root=source_root,
+                        path=path,
+                        file_size=stat.st_size,
+                        file_mtime_ns=stat.st_mtime_ns,
+                        reason=f"raw-resend:{raw_resend_token}",
                     )
                 )
-            if len(pending_uploads) >= settings.remote_batch_size:
-                flush_pending_uploads()
-        except SessionParseError as exc:
-            skipped += 1
-            remember_invalid_session(path, stat.st_size, stat.st_mtime_ns, str(exc))
-            logger.warning("Skipping malformed session file %s", exc)
-        except Exception as exc:
-            failed += 1
-            last_failed_source_path = str(path)
-            last_failure_detail = exception_summary(exc)
-            logger.exception("Failed to upload session from %s", path)
+                continue
 
-    flush_pending_uploads()
+            needs_upload, reason = remote_entry_needs_upload(
+                manifest.get(str(path)),
+                source_path=path,
+                file_size=stat.st_size,
+                file_mtime_ns=stat.st_mtime_ns,
+                force=force,
+            )
+            if not needs_upload:
+                skipped += 1
+                upsert_agent_file_state(
+                    state_connection,
+                    source_root=source_root,
+                    source_path=path,
+                    file_size=stat.st_size,
+                    file_mtime_ns=stat.st_mtime_ns,
+                    last_seen_at=utc_now_iso(),
+                    state="uploaded",
+                    session_format=str(cached_state["session_format"]) if cached_state and cached_state["session_format"] else None,
+                    session_id=str(cached_state["session_id"]) if cached_state and cached_state["session_id"] else None,
+                    inferred_project_key=(
+                        str(cached_state["inferred_project_key"])
+                        if cached_state and cached_state["inferred_project_key"]
+                        else None
+                    ),
+                    inferred_project_label=(
+                        str(cached_state["inferred_project_label"])
+                        if cached_state and cached_state["inferred_project_label"]
+                        else None
+                    ),
+                )
+                continue
+
+            candidates.append(
+                SessionFileCandidate(
+                    source_root=source_root,
+                    path=path,
+                    file_size=stat.st_size,
+                    file_mtime_ns=stat.st_mtime_ns,
+                    reason=reason,
+                )
+            )
+
+        if candidate_paths is None:
+            mark_missing_agent_files_deleted(
+                state_connection,
+                roots=settings.session_roots,
+                seen_paths=seen_paths,
+                deleted_at=utc_now_iso(),
+            )
+
+        prepared_uploads: list[PreparedUpload] = []
+        if candidates:
+            with ThreadPoolExecutor(max_workers=settings.remote_prepare_workers) as executor:
+                future_map = {
+                    executor.submit(_prepare_upload_candidate, settings, candidate, ignored_keys): candidate
+                    for candidate in candidates
+                }
+                for future in as_completed(future_map):
+                    candidate = future_map[future]
+                    try:
+                        prepared = future.result()
+                    except SessionParseError as exc:
+                        skipped += 1
+                        remember_invalid_session(
+                            candidate.path,
+                            candidate.file_size,
+                            candidate.file_mtime_ns,
+                            str(exc),
+                        )
+                        upsert_agent_file_state(
+                            state_connection,
+                            source_root=candidate.source_root,
+                            source_path=candidate.path,
+                            file_size=candidate.file_size,
+                            file_mtime_ns=candidate.file_mtime_ns,
+                            last_seen_at=utc_now_iso(),
+                            state="invalid",
+                            invalid_reason=str(exc),
+                        )
+                        logger.warning("Skipping malformed session file %s", exc)
+                        continue
+                    except Exception as exc:
+                        failed += 1
+                        last_failed_source_path = str(candidate.path)
+                        last_failure_detail = exception_summary(exc)
+                        logger.exception("Failed to prepare session from %s", candidate.path)
+                        upsert_agent_file_state(
+                            state_connection,
+                            source_root=candidate.source_root,
+                            source_path=candidate.path,
+                            file_size=candidate.file_size,
+                            file_mtime_ns=candidate.file_mtime_ns,
+                            last_seen_at=utc_now_iso(),
+                            state="failed",
+                        )
+                        continue
+
+                    if isinstance(prepared, PreparedSkip):
+                        skipped += 1
+                        upsert_agent_file_state(
+                            state_connection,
+                            source_root=prepared.source_root,
+                            source_path=prepared.path,
+                            file_size=prepared.file_size,
+                            file_mtime_ns=prepared.file_mtime_ns,
+                            last_seen_at=utc_now_iso(),
+                            state="ignored",
+                            session_format=prepared.session_format,
+                            session_id=prepared.session_id,
+                            inferred_project_key=prepared.inferred_project_key,
+                            inferred_project_label=prepared.inferred_project_label,
+                        )
+                        logger.info(
+                            "Skipped ignored session %s from %s (%s)",
+                            prepared.session_id or prepared.path.stem,
+                            prepared.path,
+                            prepared.reason,
+                        )
+                        continue
+
+                    prepared_uploads.append(prepared)
+                    upsert_agent_file_state(
+                        state_connection,
+                        source_root=prepared.source_root,
+                        source_path=prepared.path,
+                        file_size=prepared.file_size,
+                        file_mtime_ns=prepared.file_mtime_ns,
+                        last_seen_at=utc_now_iso(),
+                        state="prepared",
+                        session_format=prepared.session_format,
+                        session_id=prepared.session_id,
+                        inferred_project_key=prepared.inferred_project_key,
+                        inferred_project_label=prepared.inferred_project_label,
+                    )
+
+        if prepared_uploads:
+            prepared_uploads.sort(key=lambda item: str(item.path))
+            prepared_by_path = {str(item.path): item for item in prepared_uploads}
+            chunk_size = max(1, settings.remote_batch_size)
+            chunks = [
+                prepared_uploads[index : index + chunk_size]
+                for index in range(0, len(prepared_uploads), chunk_size)
+            ]
+            with ThreadPoolExecutor(max_workers=settings.remote_upload_workers) as executor:
+                future_map = {
+                    executor.submit(
+                        _upload_prepared_chunk,
+                        settings,
+                        chunk,
+                        batch_uploads_enabled=batch_uploads_enabled,
+                    ): chunk
+                    for chunk in chunks
+                }
+                for future in as_completed(future_map):
+                    chunk = future_map[future]
+                    try:
+                        outcomes = future.result()
+                    except Exception as exc:
+                        summary = exception_summary(exc)
+                        for item in chunk:
+                            failed += 1
+                            last_failed_source_path = str(item.path)
+                            last_failure_detail = summary
+                            logger.exception("Failed to upload session from %s", item.path)
+                        continue
+
+                    for outcome in outcomes:
+                        prepared_item = prepared_by_path.get(str(outcome.path))
+                        if outcome.status == "ignored":
+                            skipped += 1
+                            logger.info(
+                                "Skipped ignored session %s from %s (%s)",
+                                outcome.session_id,
+                                outcome.path,
+                                outcome.reason,
+                            )
+                            upsert_agent_file_state(
+                                state_connection,
+                                source_root=(
+                                    prepared_item.source_root
+                                    if prepared_item is not None
+                                    else _match_source_root(outcome.path, settings.session_roots) or outcome.path.parent
+                                ),
+                                source_path=outcome.path,
+                                file_size=prepared_item.file_size if prepared_item is not None else 0,
+                                file_mtime_ns=prepared_item.file_mtime_ns if prepared_item is not None else 0,
+                                last_seen_at=utc_now_iso(),
+                                state="ignored",
+                            )
+                            continue
+                        if outcome.status == "ok":
+                            uploaded += 1
+                            logger.info(
+                                "Uploaded session %s from %s (%s)",
+                                outcome.session_id,
+                                outcome.path,
+                                outcome.reason,
+                            )
+                            mark_agent_file_uploaded(
+                                state_connection,
+                                source_path=outcome.path,
+                                uploaded_at=utc_now_iso(),
+                            )
+                            continue
+
+                        failed += 1
+                        last_failed_source_path = str(outcome.path)
+                        last_failure_detail = outcome.error
+                        logger.error(
+                            "Failed to upload session from %s: %s",
+                            outcome.path,
+                            outcome.error or "unknown error",
+                        )
 
     stats = {"uploaded": uploaded, "skipped": skipped, "failed": failed}
     sync_completed_at = utc_now_iso()
