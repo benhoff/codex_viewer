@@ -2,10 +2,15 @@
 
 {% block title %}{{ project.repository or project.display_label }} | Agent Operations Viewer{% endblock %}
 
-{% block content %}
+  {% block content %}
   <div class="mx-auto w-full max-w-5xl">
     <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-      <div class="flex flex-wrap gap-2 sm:gap-3">
+      <div class="flex items-center gap-2 sm:hidden">
+        <a href="{{ group_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Back
+        </a>
+      </div>
+      <div class="hidden flex-wrap gap-2 sm:flex sm:gap-3">
         <a href="{{ group_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
           Back to project
         </a>
@@ -27,23 +32,49 @@
           Markdown
         </a>
       </div>
-      <div data-session-view-toggle-group class="flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/80 p-1 shadow-[0_14px_35px_-24px_rgba(41,37,36,0.35)]">
-        <a
-          href="{{ request.url.path }}?view=conversation"
-          data-session-view-toggle
-          data-target-view="conversation"
-          class="rounded-full px-4 py-2 text-sm font-semibold transition {% if session_view_mode == 'conversation' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}"
-        >
-          Conversation
-        </a>
-        <a
-          href="{{ request.url.path }}?view=audit"
-          data-session-view-toggle
-          data-target-view="audit"
-          class="rounded-full px-4 py-2 text-sm font-semibold transition {% if session_view_mode == 'audit' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}"
-        >
-          Audit
-        </a>
+      <div class="flex items-center gap-2 sm:ml-auto">
+        <details class="relative sm:hidden">
+          <summary class="inline-flex cursor-pointer list-none items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+            More
+          </summary>
+          <div class="absolute right-0 z-20 mt-2 flex min-w-[13rem] flex-col gap-1 rounded-[1rem] border border-stone-200 bg-white/95 p-2 shadow-[0_18px_45px_-30px_rgba(41,37,36,0.24)]">
+            {% if edit_href %}
+              <a href="{{ edit_href }}" class="rounded-[0.85rem] px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                Edit project
+              </a>
+            {% endif %}
+            <a href="{{ request.url.path }}/export/bundle" class="rounded-[0.85rem] px-3 py-2 text-sm font-semibold text-sky-800 transition hover:bg-sky-50">
+              Export bundle
+            </a>
+            <a href="{{ request.url.path }}/export/raw" class="rounded-[0.85rem] px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+              Raw JSONL
+            </a>
+            <a href="{{ request.url.path }}/export/json" class="rounded-[0.85rem] px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+              JSON
+            </a>
+            <a href="{{ request.url.path }}/export/markdown" class="rounded-[0.85rem] px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+              Markdown
+            </a>
+          </div>
+        </details>
+        <div data-session-view-toggle-group class="flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/80 p-1 shadow-[0_14px_35px_-24px_rgba(41,37,36,0.35)]">
+          <a
+            href="{{ request.url.path }}?view=conversation"
+            data-session-view-toggle
+            data-target-view="conversation"
+            class="rounded-full px-3 py-2 text-sm font-semibold transition sm:px-4 {% if session_view_mode == 'conversation' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}"
+          >
+            Conversation
+          </a>
+          <a
+            href="{{ request.url.path }}?view=audit"
+            data-session-view-toggle
+            data-target-view="audit"
+            class="rounded-full px-3 py-2 text-sm font-semibold transition sm:px-4 {% if session_view_mode == 'audit' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}"
+          >
+            Audit
+          </a>
+        </div>
       </div>
     </div>
 
@@ -62,7 +93,14 @@
           </div>
         </div>
 
-        <div class="grid w-full grid-cols-2 gap-3 lg:w-[20rem]">
+        <div class="mt-1 flex flex-wrap gap-2 sm:hidden">
+          <span class="rounded-full bg-stone-900 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-50">{{ session.event_count }} events</span>
+          <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-rose-800">{{ session.user_message_count }} prompts</span>
+          <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">{{ session.assistant_message_count }} replies</span>
+          <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-sky-800">{{ session.tool_call_count }} tool calls</span>
+        </div>
+
+        <div class="hidden w-full grid-cols-2 gap-3 sm:grid lg:w-[20rem]">
           <div class="rounded-[1.15rem] bg-stone-900 p-4 text-stone-50">
             <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-300">Events</p>
             <p class="mt-2 text-2xl font-semibold">{{ session.event_count }}</p>
@@ -86,16 +124,22 @@
     {% set has_usage_metrics = usage_pressure.usage_timestamp or usage_pressure.total_tokens or usage_pressure.context_window or usage_pressure.primary_limit_used_percent is not none or usage_pressure.secondary_limit_used_percent is not none or usage_pressure.rate_limit_name %}
     {% if agent_snapshot.has_agent or has_usage_metrics %}
     <section class="mb-6 grid gap-4 lg:grid-cols-2">
-      <article class="rounded-[1.4rem] border border-stone-900/10 bg-white/80 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.24)] backdrop-blur">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Agent Lineage</p>
-            <h2 class="mt-2 text-xl font-semibold text-stone-900">Role and parent session</h2>
+      <details class="rounded-[1.4rem] border border-stone-900/10 bg-white/80 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.24)] backdrop-blur">
+        <summary class="list-none cursor-pointer">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Agent Lineage</p>
+              <h2 class="mt-2 text-xl font-semibold text-stone-900">Role and parent session</h2>
+              <p class="mt-2 text-sm text-stone-600">{{ agent_snapshot.agent_nickname or "Top-level session" }}</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              {% if agent_snapshot.has_agent %}
+                <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-sky-800">{{ agent_snapshot.agent_role_label }}</span>
+              {% endif %}
+              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">Show details</span>
+            </div>
           </div>
-          {% if agent_snapshot.has_agent %}
-            <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-sky-800">{{ agent_snapshot.agent_role_label }}</span>
-          {% endif %}
-        </div>
+        </summary>
         <div class="mt-4 grid gap-3 sm:grid-cols-2">
           <div class="rounded-[1rem] bg-stone-50/90 p-4">
             <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Nickname</p>
@@ -122,19 +166,24 @@
             {% endif %}
           </div>
         </div>
-      </article>
+      </details>
 
-      <article class="rounded-[1.4rem] border p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.24)] backdrop-blur {% if usage_pressure.status_tone == 'rose' %}border-rose-200 bg-rose-50/75{% elif usage_pressure.status_tone == 'amber' %}border-amber-200 bg-amber-50/75{% else %}border-stone-900/10 bg-white/80{% endif %}">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] {% if usage_pressure.status_tone == 'rose' %}text-rose-700{% elif usage_pressure.status_tone == 'amber' %}text-amber-700{% else %}text-stone-500{% endif %}">Usage Pressure</p>
-            <h2 class="mt-2 text-xl font-semibold text-stone-900">{{ usage_pressure.status_label }}</h2>
-            <p class="mt-2 text-sm text-stone-600">{{ usage_pressure.status_title }}</p>
+      <details class="rounded-[1.4rem] border p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.24)] backdrop-blur {% if usage_pressure.status_tone == 'rose' %}border-rose-200 bg-rose-50/75{% elif usage_pressure.status_tone == 'amber' %}border-amber-200 bg-amber-50/75{% else %}border-stone-900/10 bg-white/80{% endif %}">
+        <summary class="list-none cursor-pointer">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] {% if usage_pressure.status_tone == 'rose' %}text-rose-700{% elif usage_pressure.status_tone == 'amber' %}text-amber-700{% else %}text-stone-500{% endif %}">Usage Pressure</p>
+              <h2 class="mt-2 text-xl font-semibold text-stone-900">{{ usage_pressure.status_label }}</h2>
+              <p class="mt-2 text-sm text-stone-600">{{ usage_pressure.status_title }}</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              {% if usage_pressure.usage_timestamp %}
+                <span class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ usage_pressure.usage_timestamp|full_timestamp }}">{{ usage_pressure.usage_timestamp|humanize_timestamp }}</span>
+              {% endif %}
+              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">Show details</span>
+            </div>
           </div>
-          {% if usage_pressure.usage_timestamp %}
-            <span class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ usage_pressure.usage_timestamp|full_timestamp }}">{{ usage_pressure.usage_timestamp|humanize_timestamp }}</span>
-          {% endif %}
-        </div>
+        </summary>
         <div class="mt-4 flex flex-wrap gap-2">
           {% for badge in usage_pressure.badges %}
             <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">{{ badge.label }}</span>
@@ -175,7 +224,7 @@
             {% endif %}
           </div>
         </div>
-      </article>
+      </details>
     </section>
     {% endif %}
 
@@ -331,7 +380,7 @@
           {% set saved_turn_status = saved_turn_states.get(turn.number) %}
           {% if session_view_mode == 'audit' and audit_focus_turn == turn.number and audit_focus %}
             {% if review_focus and review_focus.turn_number == turn.number %}
-              <section id="turn-{{ turn.number }}-review" class="rounded-[1.2rem] border border-rose-200 bg-rose-50/85 px-4 py-4 shadow-[0_14px_35px_-24px_rgba(190,24,93,0.2)]">
+              <section id="turn-{{ turn.number }}-review" data-session-focus-panel="{{ turn.number }}" class="rounded-[1.2rem] border border-rose-200 bg-rose-50/85 px-4 py-4 shadow-[0_14px_35px_-24px_rgba(190,24,93,0.2)]">
                 <div class="flex flex-col gap-4">
                   <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="min-w-0 flex-1">
@@ -405,7 +454,7 @@
                 </div>
               </section>
             {% else %}
-              <section class="rounded-[1.2rem] border border-sky-200 bg-sky-50/80 px-4 py-3 shadow-[0_14px_35px_-24px_rgba(14,116,144,0.18)]">
+              <section data-session-focus-panel="{{ turn.number }}" class="rounded-[1.2rem] border border-sky-200 bg-sky-50/80 px-4 py-3 shadow-[0_14px_35px_-24px_rgba(14,116,144,0.18)]">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                   <div class="flex flex-wrap items-center gap-2">
                     <span class="rounded-full bg-sky-900 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white">Audit view</span>
@@ -1472,6 +1521,15 @@
         return Array.from(document.querySelectorAll("[data-turn-card]"));
       }
 
+      function focusPanelForTurn(turnNumber) {
+        if (!turnNumber) {
+          return null;
+        }
+        return Array.from(document.querySelectorAll("[data-session-focus-panel]")).find(
+          (panel) => panel.dataset.sessionFocusPanel === String(turnNumber)
+        ) || null;
+      }
+
       function turnScrollOffset() {
         const nav = document.querySelector("nav.sticky");
         if (!nav) {
@@ -1793,7 +1851,11 @@
         if (activeTurn) {
           activeTurn.open = true;
           requestAnimationFrame(() => {
-            scrollElementIntoPlace(activeTurn, "auto");
+            const focusPanel = focusedAuditTurn ? focusPanelForTurn(focusedAuditTurn) : null;
+            scrollElementIntoPlace(focusPanel || activeTurn, "auto");
+            if (focusPanel) {
+              flashHashTarget(focusPanel);
+            }
             if (explicitTurn || focusedAuditTurn) {
               flashCollapsedTurn(activeTurn);
             }
@@ -1920,9 +1982,13 @@
             targetTurn = applyFocusedAuditState(focusedAuditTurn) || targetTurn;
           }
           requestAnimationFrame(() => {
+            const focusPanel = focusedAuditTurn ? focusPanelForTurn(focusedAuditTurn) : null;
             if (targetTurn) {
               targetTurn.open = true;
-              scrollElementIntoPlace(targetTurn, scrollBehavior);
+              scrollElementIntoPlace(focusPanel || targetTurn, scrollBehavior);
+              if (focusPanel) {
+                flashHashTarget(focusPanel);
+              }
               flashCollapsedTurn(targetTurn);
               writeSessionViewState(targetTurn);
               return;

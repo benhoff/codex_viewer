@@ -78,7 +78,7 @@
             </p>
           {% endif %}
           {% if queue_project %}
-            <div class="mt-3 flex flex-wrap items-center gap-2">
+            <div class="mt-3 hidden flex-wrap items-center gap-2 sm:flex">
               <a href="{{ queue_global_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-stone-50">
                 All projects
               </a>
@@ -87,7 +87,7 @@
               </a>
             </div>
           {% elif queue_projects %}
-            <div class="mt-4 flex flex-wrap items-center gap-2">
+            <div class="mt-4 hidden flex-wrap items-center gap-2 sm:flex">
               <a href="/queue?status={{ queue_status }}&sort={{ queue_sort }}{% if queue_group_mode != 'flat' %}&group={{ queue_group_mode }}{% endif %}" class="inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition {% if not request.query_params.get('project') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white text-stone-700 hover:bg-stone-50{% endif %}">
                 All projects
               </a>
@@ -100,7 +100,7 @@
             </div>
           {% endif %}
         </div>
-        <div class="flex flex-wrap items-center justify-end gap-2">
+        <div class="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:items-end">
           <div class="flex items-center gap-2 rounded-full border border-stone-900/10 bg-stone-50/80 p-1">
             <a href="/queue?status=open&sort={{ queue_sort }}{{ queue_scope_suffix }}" class="rounded-full px-4 py-2 text-sm font-semibold transition {% if queue_status == 'open' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-white{% endif %}">
               Open
@@ -119,26 +119,90 @@
               {% endif %}
             </a>
           </div>
-          <div class="flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/80 py-1 pl-2 pr-1">
-            <span class="px-3 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Order</span>
-            <a href="/queue?status={{ queue_status }}&sort=newest{{ queue_scope_suffix }}" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_sort == 'newest' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
-              Newest first
-            </a>
-            <a href="/queue?status={{ queue_status }}&sort=oldest{{ queue_scope_suffix }}" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_sort == 'oldest' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
-              Oldest first
-            </a>
-          </div>
-          {% if not queue_project %}
+          <details class="sm:hidden rounded-[1.1rem] border border-stone-900/10 bg-white/80 p-3">
+            <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+              <span class="text-sm font-semibold text-stone-700">Filters</span>
+              <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-600">
+                {{ queue_sort }}{% if not queue_project %} · {{ "project" if queue_group_mode == "project" else "flat" }}{% endif %}
+              </span>
+            </summary>
+            <div class="mt-3 space-y-3 border-t border-stone-200/80 pt-3">
+              {% if queue_project %}
+                <div class="flex flex-wrap items-center gap-2">
+                  <a href="{{ queue_global_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-stone-50">
+                    All projects
+                  </a>
+                  <a href="{{ queue_project.detail_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-stone-50">
+                    Back to project
+                  </a>
+                </div>
+              {% elif queue_projects %}
+                <div class="space-y-2">
+                  <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Project</p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <a href="/queue?status={{ queue_status }}&sort={{ queue_sort }}{% if queue_group_mode != 'flat' %}&group={{ queue_group_mode }}{% endif %}" class="inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition {% if not request.query_params.get('project') %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white text-stone-700 hover:bg-stone-50{% endif %}">
+                      All projects
+                    </a>
+                    {% for project in queue_projects %}
+                      <a href="/queue?status={{ queue_status }}&sort={{ queue_sort }}&project={{ project.project_key|urlencode }}" class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition {% if request.query_params.get('project') == project.project_key %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white text-stone-700 hover:bg-stone-50{% endif %}">
+                        <span class="max-w-[15rem] truncate">{{ project.project_label }}</span>
+                        <span class="rounded-full {% if request.query_params.get('project') == project.project_key %}bg-white/15 text-white{% else %}bg-stone-100 text-stone-700{% endif %} px-2 py-0.5 text-[0.64rem] font-semibold">{{ project.visible_count }}</span>
+                      </a>
+                    {% endfor %}
+                  </div>
+                </div>
+              {% endif %}
+
+              <div class="space-y-2">
+                <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Order</p>
+                <div class="flex flex-wrap items-center gap-2">
+                  <a href="/queue?status={{ queue_status }}&sort=newest{{ queue_scope_suffix }}" class="rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition {% if queue_sort == 'newest' %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white text-stone-700 hover:bg-stone-50{% endif %}">
+                    Newest first
+                  </a>
+                  <a href="/queue?status={{ queue_status }}&sort=oldest{{ queue_scope_suffix }}" class="rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition {% if queue_sort == 'oldest' %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white text-stone-700 hover:bg-stone-50{% endif %}">
+                    Oldest first
+                  </a>
+                </div>
+              </div>
+
+              {% if not queue_project %}
+                <div class="space-y-2">
+                  <p class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Layout</p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <a href="/queue?status={{ queue_status }}&sort={{ queue_sort }}" class="rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition {% if queue_group_mode == 'flat' %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white text-stone-700 hover:bg-stone-50{% endif %}">
+                      Flat
+                    </a>
+                    <a href="/queue?status={{ queue_status }}&sort={{ queue_sort }}&group=project" class="rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition {% if queue_group_mode == 'project' %}border-stone-900 bg-stone-900 text-white{% else %}border-stone-900/10 bg-white text-stone-700 hover:bg-stone-50{% endif %}">
+                      Group by project
+                    </a>
+                  </div>
+                </div>
+              {% endif %}
+            </div>
+          </details>
+
+          <div class="hidden flex-wrap items-center justify-end gap-2 sm:flex">
             <div class="flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/80 py-1 pl-2 pr-1">
-              <span class="px-3 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Layout</span>
-              <a href="/queue?status={{ queue_status }}&sort={{ queue_sort }}" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_group_mode == 'flat' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
-                Flat
+              <span class="px-3 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Order</span>
+              <a href="/queue?status={{ queue_status }}&sort=newest{{ queue_scope_suffix }}" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_sort == 'newest' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
+                Newest first
               </a>
-              <a href="/queue?status={{ queue_status }}&sort={{ queue_sort }}&group=project" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_group_mode == 'project' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
-                Group by project
+              <a href="/queue?status={{ queue_status }}&sort=oldest{{ queue_scope_suffix }}" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_sort == 'oldest' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
+                Oldest first
               </a>
             </div>
-          {% endif %}
+            {% if not queue_project %}
+              <div class="flex items-center gap-1 rounded-full border border-stone-900/10 bg-white/80 py-1 pl-2 pr-1">
+                <span class="px-3 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500">Layout</span>
+                <a href="/queue?status={{ queue_status }}&sort={{ queue_sort }}" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_group_mode == 'flat' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
+                  Flat
+                </a>
+                <a href="/queue?status={{ queue_status }}&sort={{ queue_sort }}&group=project" class="rounded-full px-3 py-2 text-sm font-semibold transition {% if queue_group_mode == 'project' %}bg-stone-900 text-white{% else %}text-stone-700 hover:bg-stone-50{% endif %}">
+                  Group by project
+                </a>
+              </div>
+            {% endif %}
+          </div>
         </div>
       </div>
     </section>
