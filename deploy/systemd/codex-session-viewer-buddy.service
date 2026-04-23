@@ -1,0 +1,18 @@
+[Unit]
+Description=Agent Operations Viewer FastAPI server (buddy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hoff
+Group=hoff
+WorkingDirectory=/opt/codex_viewer_buddy
+EnvironmentFile=-/opt/codex_viewer_buddy/deploy/systemd/codex-session-viewer-buddy.env
+ExecStart=/opt/codex_viewer_buddy/scripts/start-server.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

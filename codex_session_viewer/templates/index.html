@@ -19,6 +19,28 @@
     </aside>
 
     <div class="min-w-0">
+      {% if setup_verification_pending %}
+        <section class="mb-5 rounded-[1.35rem] border border-sky-200 bg-sky-50/90 p-4 shadow-[0_18px_45px_-30px_rgba(37,99,235,0.18)]">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-sky-700">First Machine Pending</p>
+            <h2 class="mt-2 text-lg font-semibold text-sky-950">First machine still pending</h2>
+            <p class="mt-2 max-w-3xl text-sm leading-6 text-sky-900">
+              {{ onboarding.next_action or onboarding.overall_reason or "Open Machines to watch for the first heartbeat and session upload." }}
+            </p>
+          </div>
+            <div class="flex flex-wrap gap-2">
+              <a href="/machines" class="inline-flex items-center rounded-full border border-sky-300 bg-white px-4 py-2 text-sm font-semibold text-sky-900 transition hover:bg-sky-100">
+                Open Machines
+              </a>
+              <a href="/settings" class="inline-flex items-center rounded-full border border-sky-300 bg-white px-4 py-2 text-sm font-semibold text-sky-900 transition hover:bg-sky-100">
+                Open Settings
+              </a>
+            </div>
+          </div>
+        </section>
+      {% endif %}
+
       <details open class="mb-4 rounded-[1.35rem] border border-stone-900/10 bg-white/80 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur lg:hidden">
         <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
           <div>

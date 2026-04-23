@@ -3,17 +3,11 @@
 {% block title %}Sign In | Agent Operations Viewer{% endblock %}
 
 {% block content %}
-  <section class="mx-auto w-full max-w-xl rounded-[2rem] border border-stone-900/10 bg-white/80 p-6 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:p-8">
-    <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Authentication</p>
-    <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl">Sign in to Agent Operations Viewer</h1>
+  <section class="mx-auto w-full max-w-xl rounded-[1.9rem] border border-stone-900/10 bg-white/80 p-6 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:p-8">
+    <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500">Sign In</p>
+    <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl">Welcome back</h1>
     <p class="mt-3 text-[0.98rem] leading-7 text-stone-600">
-      {% if settings.auth_mode == 'proxy' %}
-        This server expects trusted reverse-proxy SSO headers. Access it through your configured SSO entrypoint.
-      {% elif settings.auth_mode == 'password_or_proxy' %}
-        You can sign in locally or use your reverse-proxy SSO flow if one is configured in front of the app.
-      {% else %}
-        This server is protected with a local username and password.
-      {% endif %}
+      Sign in to continue to Agent Operations Viewer.
     </p>
 
     {% if auth_error %}
@@ -32,6 +26,7 @@
             name="username"
             value="{{ username }}"
             autocomplete="username"
+            autofocus
             class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
           />
         </label>
@@ -53,15 +48,19 @@
       </form>
     {% endif %}
 
+    {% if password_login_enabled and proxy_auth_enabled %}
+      <div class="mt-6 flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
+        <span class="h-px flex-1 bg-stone-200"></span>
+        <span>or</span>
+        <span class="h-px flex-1 bg-stone-200"></span>
+      </div>
+    {% endif %}
+
     {% if proxy_auth_enabled %}
       <div class="mt-6 rounded-[1.2rem] border border-sky-200 bg-sky-50/90 px-4 py-4 text-sm leading-6 text-sky-900">
-        <p class="font-semibold">SSO</p>
+        <p class="font-semibold">Single sign-on</p>
         <p class="mt-1">
-          {% if settings.auth_proxy_login_url %}
-            Use your reverse proxy or identity provider to sign in.
-          {% else %}
-            This app trusts a configured user header from a reverse proxy. Direct access without that proxy will not sign you in.
-          {% endif %}
+          Continue with your organization sign-in to access the viewer.
         </p>
         {% if settings.auth_proxy_login_url %}
           <a
@@ -71,6 +70,10 @@
             Continue with SSO
           </a>
         {% endif %}
+      </div>
+    {% elif not password_login_enabled %}
+      <div class="mt-6 rounded-[1.2rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-800">
+        Sign-in is not available right now.
       </div>
     {% endif %}
   </section>

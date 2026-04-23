@@ -228,7 +228,7 @@
 
 {% block content %}
   <div class="mx-auto w-full max-w-6xl">
-    {% if onboarding.onboarding_required %}
+    {% if setup_wizard_active %}
       <section class="mb-6 rounded-[1.4rem] border border-amber-200 bg-amber-50/90 p-5 shadow-[0_18px_45px_-30px_rgba(41,37,36,0.2)]">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -239,6 +239,25 @@
           </div>
           <a href="/setup" class="inline-flex items-center rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 transition hover:bg-amber-100">
             Return to setup
+          </a>
+        </div>
+      </section>
+    {% elif setup_verification_pending %}
+      <section class="mb-6 rounded-[1.4rem] border border-sky-200 bg-sky-50/90 p-5 shadow-[0_18px_45px_-30px_rgba(37,99,235,0.2)]">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-sky-700">First Machine Pending</p>
+            <p class="mt-2 text-sm leading-6 text-sky-900">
+              Setup is complete. Use this page to watch the first heartbeat and first session upload arrive.
+            </p>
+            {% if onboarding.next_action or onboarding.overall_reason %}
+              <p class="mt-2 text-sm leading-6 text-sky-900">
+                {{ onboarding.next_action or onboarding.overall_reason }}
+              </p>
+            {% endif %}
+          </div>
+          <a href="/settings" class="inline-flex items-center rounded-full border border-sky-300 bg-white px-4 py-2 text-sm font-semibold text-sky-900 transition hover:bg-sky-100">
+            Open Settings
           </a>
         </div>
       </section>

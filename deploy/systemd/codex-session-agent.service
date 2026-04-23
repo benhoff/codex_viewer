@@ -5,11 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=wulfuser
-Group=wulfuser
-WorkingDirectory=/home/wulfuser/codex_viewer
-EnvironmentFile=-/home/wulfuser/codex_viewer/deploy/systemd/codex-session-viewer.env
-ExecStart=/home/wulfuser/codex_viewer/scripts/start-agent-daemon.sh
+User=hoff
+Group=hoff
+WorkingDirectory=/home/hoff/codex_viewer
+EnvironmentFile=-/home/hoff/codex_viewer/deploy/systemd/codex-session-viewer.env
+ExecStart=/home/hoff/codex_viewer/scripts/start-agent-daemon.sh
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20

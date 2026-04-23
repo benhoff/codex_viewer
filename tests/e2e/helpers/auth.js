@@ -7,7 +7,7 @@ async function completePasswordSetup(page, app, options = {}) {
   await page.locator('input[name="username"]').fill(username);
   await page.locator('input[name="password"]').fill(password);
   await page.locator('input[name="confirm_password"]').fill(password);
-  await page.getByRole("button", { name: "Create Local Admin" }).click();
+  await page.getByRole("button", { name: "Create Admin" }).click();
   await expect(page).toHaveURL(/\/setup$/);
 }
 

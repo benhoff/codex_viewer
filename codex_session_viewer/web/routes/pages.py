@@ -110,7 +110,110 @@ def guided_setup_required(
     if bool(getattr(request.state, "bootstrap_required", False)):
         return True
     sync_mode = str(getattr(settings, "sync_mode", "") or "").strip().lower()
-    return sync_mode == "remote" and bool(onboarding.get("onboarding_required"))
+    return sync_mode == "remote" and int(onboarding.get("token_count") or 0) <= 0
+
+
+def setup_wizard_active(
+    request: Request,
+    *,
+    settings: object,
+    onboarding: dict[str, object],
+) -> bool:
+    if bool(getattr(request.state, "bootstrap_required", False)):
+        return True
+    sync_mode = str(getattr(settings, "sync_mode", "") or "").strip().lower()
+    if sync_mode == "remote":
+        return int(onboarding.get("token_count") or 0) <= 0
+    return bool(onboarding.get("onboarding_required"))
+
+
+def setup_verification_pending(
+    *,
+    settings: object,
+    onboarding: dict[str, object],
+) -> bool:
+    sync_mode = str(getattr(settings, "sync_mode", "") or "").strip().lower()
+    return (
+        sync_mode == "remote"
+        and int(onboarding.get("token_count") or 0) > 0
+        and bool(onboarding.get("onboarding_required"))
+    )
+
+
+def authenticated_destination(
+    next_path: str,
+    *,
+    setup_required: bool,
+) -> str:
+    if setup_required:
+        return "/setup"
+    if next_path in {"/setup", "/setup/status"}:
+        return "/"
+    return next_path
+
+
+def visible_setup_steps(onboarding: dict[str, object]) -> list[dict[str, object]]:
+    raw_steps = onboarding.get("steps")
+    if not isinstance(raw_steps, list):
+        return []
+    return [
+        step
+        for step in raw_steps
+        if isinstance(step, dict) and str(step.get("key") or "") != "auth"
+    ]
+
+
+def setup_progress_state(
+    onboarding: dict[str, object],
+) -> tuple[list[dict[str, object]], int, int, int]:
+    steps = visible_setup_steps(onboarding)
+    completed_steps = sum(
+        1 for step in steps if str(step.get("status") or "") == "complete"
+    )
+    step_count = len(steps)
+    progress_percent = int((completed_steps / step_count) * 100) if step_count else 0
+    return steps, completed_steps, step_count, progress_percent
+
+
+def resolve_setup_wizard_step(
+    onboarding: dict[str, object],
+    *,
+    preferred_key: str | None = None,
+) -> tuple[str, dict[str, object]]:
+    steps = visible_setup_steps(onboarding)
+    if not steps:
+        return "admin", {}
+
+    if preferred_key:
+        for step in steps:
+            if str(step.get("key") or "") == preferred_key:
+                return preferred_key, step
+
+    for step in steps:
+        if str(step.get("status") or "") != "complete":
+            return str(step.get("key") or "admin"), step
+
+    last_step = steps[-1]
+    return str(last_step.get("key") or "admin"), last_step
+
+
+def redirect_unauthenticated_setup_request(
+    request: Request,
+    *,
+    settings: object,
+) -> RedirectResponse | None:
+    if bool(getattr(request.state, "bootstrap_required", False)):
+        return None
+    if getattr(request.state, "auth_user", None) is not None:
+        return None
+    auth_enabled = getattr(settings, "auth_enabled", None)
+    if not callable(auth_enabled) or not auth_enabled():
+        return None
+    next_path = safe_next_path(request_return_to(request))
+    return RedirectResponse(
+        url=f"/login?next={quote(next_path, safe='/?=&')}",
+        status_code=303,
+    )
 
 
 def render_settings_page(
@@ -142,6 +245,15 @@ def render_settings_page(
         and current_user.get("auth_source") == "password"
         and current_user.get("user_id")
     )
+    setup_required = setup_wizard_active(
+        request,
+        settings=context.settings,
+        onboarding=onboarding,
+    )
+    verification_pending = setup_verification_pending(
+        settings=context.settings,
+        onboarding=onboarding,
+    )
     return context.templates.TemplateResponse(
         request,
         name="settings.html",
@@ -164,6 +276,8 @@ def render_settings_page(
             "managed_users": users,
             "user_management_error": user_management_error,
             "user_management_success": user_management_success,
+            "setup_wizard_active": setup_required,
+            "setup_verification_pending": verification_pending,
         },
     )
 
@@ -351,6 +465,20 @@ def render_setup_page(
             created_token["token"],
             context.settings.sync_interval_seconds,
         )
+    setup_steps, setup_completed_steps, setup_step_count, setup_progress_percent = setup_progress_state(onboarding)
+    active_setup_step, current_setup_step = resolve_setup_wizard_step(
+        onboarding,
+        preferred_key="token" if created_token is not None else ("admin" if error else None),
+    )
+    wizard_active = setup_wizard_active(
+        request,
+        settings=context.settings,
+        onboarding=onboarding,
+    )
+    verification_pending = setup_verification_pending(
+        settings=context.settings,
+        onboarding=onboarding,
+    )
     return context.templates.TemplateResponse(
         request,
         name="setup.html",
@@ -366,6 +494,14 @@ def render_setup_page(
             "setup_server_url": server_url,
             "agent_snippet": snippet,
             "agent_windows_snippet": windows_snippet,
+            "setup_steps": setup_steps,
+            "setup_completed_steps": setup_completed_steps,
+            "setup_step_count": setup_step_count,
+            "setup_progress_percent": setup_progress_percent,
+            "setup_active_step": active_setup_step,
+            "setup_current_step": current_setup_step,
+            "setup_wizard_active": wizard_active,
+            "setup_verification_pending": verification_pending,
         },
     )
 
@@ -815,6 +951,17 @@ def render_onboarding_status_fragment(request: Request) -> HTMLResponse:
     with connect(context.settings.database_path) as connection:
         with write_transaction(connection):
             onboarding = reconcile_onboarding_state(connection, context.settings)
+    setup_steps, setup_completed_steps, setup_step_count, setup_progress_percent = setup_progress_state(onboarding)
+    active_setup_step, current_setup_step = resolve_setup_wizard_step(onboarding)
+    wizard_active = setup_wizard_active(
+        request,
+        settings=context.settings,
+        onboarding=onboarding,
+    )
+    verification_pending = setup_verification_pending(
+        settings=context.settings,
+        onboarding=onboarding,
+    )
     return context.templates.TemplateResponse(
         request,
         name="_setup_status.html",
@@ -822,6 +969,14 @@ def render_onboarding_status_fragment(request: Request) -> HTMLResponse:
             "request": request,
             "settings": context.settings,
             "onboarding": onboarding,
+            "setup_steps": setup_steps,
+            "setup_completed_steps": setup_completed_steps,
+            "setup_step_count": setup_step_count,
+            "setup_progress_percent": setup_progress_percent,
+            "setup_active_step": active_setup_step,
+            "setup_current_step": current_setup_step,
+            "setup_wizard_active": wizard_active,
+            "setup_verification_pending": verification_pending,
         },
     )
 
@@ -829,18 +984,18 @@ def render_onboarding_status_fragment(request: Request) -> HTMLResponse:
 @router.get("/setup", response_class=HTMLResponse)
 def setup_page(request: Request) -> Response:
     context = get_app_context(request)
+    redirect = redirect_unauthenticated_setup_request(request, settings=context.settings)
+    if redirect is not None:
+        return redirect
     with connect(context.settings.database_path) as connection:
         with write_transaction(connection):
             onboarding = reconcile_onboarding_state(connection, context.settings)
-    if not getattr(request.state, "bootstrap_required", False):
-        if not onboarding["onboarding_required"]:
-            if getattr(request.state, "auth_user", None):
-                return RedirectResponse(url="/", status_code=303)
-            if context.settings.auth_enabled():
-                return RedirectResponse(url="/login", status_code=303)
+    if not setup_wizard_active(request, settings=context.settings, onboarding=onboarding):
+        if getattr(request.state, "auth_user", None):
             return RedirectResponse(url="/", status_code=303)
-        if getattr(request.state, "auth_user", None) is None and context.settings.auth_enabled():
+        if context.settings.auth_enabled():
             return RedirectResponse(url="/login", status_code=303)
+        return RedirectResponse(url="/", status_code=303)
     elif (
         context.settings.auth_mode == "proxy"
         and context.settings.auth_proxy_login_url
@@ -944,7 +1099,11 @@ async def setup_claim_admin(request: Request) -> Response:
 
 
 @router.get("/setup/status", response_class=HTMLResponse)
-def setup_status(request: Request) -> HTMLResponse:
+def setup_status(request: Request) -> Response:
+    context = get_app_context(request)
+    redirect = redirect_unauthenticated_setup_request(request, settings=context.settings)
+    if redirect is not None:
+        return redirect
     return render_onboarding_status_fragment(request)
 
 
@@ -966,6 +1125,7 @@ async def setup_create_token(request: Request) -> HTMLResponse:
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request) -> Response:
     context = get_app_context(request)
+    next_path = safe_next_path(request.query_params.get("next"))
     if not context.settings.auth_enabled():
         return RedirectResponse(url="/", status_code=303)
     if getattr(request.state, "bootstrap_required", False):
@@ -974,9 +1134,17 @@ def login_page(request: Request) -> Response:
         with connect(context.settings.database_path) as connection:
             with write_transaction(connection):
                 onboarding = reconcile_onboarding_state(connection, context.settings)
-        if guided_setup_required(request, settings=context.settings, onboarding=onboarding):
-            return RedirectResponse(url="/setup", status_code=303)
-        return RedirectResponse(url=safe_next_path(request.query_params.get("next")), status_code=303)
+        return RedirectResponse(
+            url=authenticated_destination(
+                next_path,
+                setup_required=guided_setup_required(
+                    request,
+                    settings=context.settings,
+                    onboarding=onboarding,
+                ),
+            ),
+            status_code=303,
+        )
     if (
         context.settings.auth_mode == "proxy"
         and context.settings.auth_proxy_login_url
@@ -1043,7 +1211,14 @@ async def login_submit(request: Request) -> Response:
         with write_transaction(connection):
             onboarding = reconcile_onboarding_state(connection, context.settings)
     return RedirectResponse(
-        url="/setup" if guided_setup_required(request, settings=context.settings, onboarding=onboarding) else next_path,
+        url=authenticated_destination(
+            next_path,
+            setup_required=guided_setup_required(
+                request,
+                settings=context.settings,
+                onboarding=onboarding,
+            ),
+        ),
         status_code=303,
     )
 
@@ -1288,6 +1463,10 @@ def index(
     stats["active_hosts"] = active_host_count
     stats["failed_agents"] = len([remote for remote in visible_remotes if agent_has_failure(remote)])
     stats["turns_today"] = sum(int(item.get("secondary_turn_count", 0) or 0) for item in hot_turn_activity.values())
+    verification_pending = setup_verification_pending(
+        settings=context.settings,
+        onboarding=onboarding,
+    )
     return context.templates.TemplateResponse(
         request,
         name="index.html",
@@ -1310,6 +1489,8 @@ def index(
             "active_hosts_from_agents": active_hosts_from_agents,
             "failed_agents": failed_agents,
             "action_queue": action_queue,
+            "onboarding": onboarding,
+            "setup_verification_pending": verification_pending,
         },
     )
 
@@ -1383,6 +1564,15 @@ def machines_health(request: Request) -> HTMLResponse:
             context.settings,
             project_access=project_access,
         )
+    setup_required = setup_wizard_active(
+        request,
+        settings=context.settings,
+        onboarding=onboarding,
+    )
+    verification_pending = setup_verification_pending(
+        settings=context.settings,
+        onboarding=onboarding,
+    )
     return context.templates.TemplateResponse(
         request,
         name="remotes.html",
@@ -1394,6 +1584,8 @@ def machines_health(request: Request) -> HTMLResponse:
             "return_to": request_return_to(request),
             "can_manage_admin": can_manage_admin,
             "search_query": "",
+            "setup_wizard_active": setup_required,
+            "setup_verification_pending": verification_pending,
         },
     )
 
