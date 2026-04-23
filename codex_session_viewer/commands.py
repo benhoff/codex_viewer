@@ -34,6 +34,77 @@ from .service_manager import (
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _service_install_summary(result: dict[str, object]) -> list[str]:
+    target = str(result.get("target") or "service manager")
+    lines = [f"Installed the background daemon service for your user via {target}."]
+    unit_path = str(result.get("unit_path") or result.get("plist_path") or "").strip()
+    if unit_path:
+        lines.append(f"Definition file: {unit_path}")
+    if target == "systemd-user":
+        lines.append("The service is enabled for future user-session startup.")
+    elif target == "launchd":
+        lines.append("The launch agent definition is installed for your user account.")
+    elif target == "schtasks":
+        lines.append("The scheduled task is registered for your user account.")
+    lines.append("It is not started yet. Run `python3 -m codex_session_viewer service start` to start it now.")
+    lines.append("Run `python3 -m codex_session_viewer service status` to confirm install and runtime state.")
+    return lines
+
+
+def _service_start_summary(result: dict[str, object]) -> list[str]:
+    target = str(result.get("target") or "service manager")
+    return [
+        f"Started the background daemon via {target}.",
+        "Run `python3 -m codex_session_viewer service status` to confirm it is running.",
+    ]
+
+
+def _service_stop_summary(result: dict[str, object]) -> list[str]:
+    target = str(result.get("target") or "service manager")
+    return [
+        f"Stopped the background daemon via {target}.",
+        "Run `python3 -m codex_session_viewer service status` to confirm it is no longer running.",
+    ]
+
+
+def _service_status_summary(result: dict[str, object]) -> list[str]:
+    target = str(result.get("target") or "service manager")
+    installed = "yes" if bool(result.get("installed")) else "no"
+    running = "yes" if bool(result.get("running")) else "no"
+    lines = [
+        f"Background daemon status via {target}: installed={installed}, running={running}.",
+    ]
+    unit_path = str(result.get("unit_path") or result.get("plist_path") or result.get("task_name") or "").strip()
+    if unit_path:
+        if target == "schtasks":
+            lines.append(f"Task name: {unit_path}")
+        else:
+            lines.append(f"Definition: {unit_path}")
+    return lines
+
+
+def _service_uninstall_summary(result: dict[str, object]) -> list[str]:
+    target = str(result.get("target") or "service manager")
+    deleted_label = ""
+    if "deleted_unit" in result:
+        deleted_label = "unit file"
+    elif "deleted_plist" in result:
+        deleted_label = "launch agent plist"
+    lines = [f"Removed the background daemon service definition for {target}."]
+    if deleted_label:
+        deleted_state = "deleted" if bool(result.get("deleted_unit") or result.get("deleted_plist")) else "not found"
+        lines.append(f"Local {deleted_label}: {deleted_state}.")
+    lines.append("Automatic startup is no longer configured for this user.")
+    return lines
+
+
+def _print_service_feedback(summary_lines: list[str], result: dict[str, object]) -> None:
+    print("\n".join(summary_lines))
+    print()
+    print("Details:")
+    print(json.dumps(result, indent=2))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="View and export Codex sessions")
     subparsers = parser.add_subparsers(dest="command", required=False)
@@ -197,19 +268,24 @@ def cli() -> int:
 
     if args.command == "service":
         if args.service_command == "install":
-            print(json.dumps(install_service(settings), indent=2))
+            result = install_service(settings)
+            _print_service_feedback(_service_install_summary(result), result)
             return 0
         if args.service_command == "start":
-            print(json.dumps(start_service(settings), indent=2))
+            result = start_service(settings)
+            _print_service_feedback(_service_start_summary(result), result)
             return 0
         if args.service_command == "stop":
-            print(json.dumps(stop_service(), indent=2))
+            result = stop_service()
+            _print_service_feedback(_service_stop_summary(result), result)
             return 0
         if args.service_command == "status":
-            print(json.dumps(service_status(), indent=2))
+            result = service_status()
+            _print_service_feedback(_service_status_summary(result), result)
             return 0
         if args.service_command == "uninstall":
-            print(json.dumps(uninstall_service(), indent=2))
+            result = uninstall_service()
+            _print_service_feedback(_service_uninstall_summary(result), result)
             return 0
         raise SystemExit(f"Unsupported service command: {args.service_command}")
 

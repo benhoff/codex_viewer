@@ -4,7 +4,7 @@ import os
 import plistlib
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,10 @@ class ServiceCommandResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+def _command_payload(result: ServiceCommandResult) -> dict[str, object]:
+    return asdict(result)
 
 
 def default_service_target() -> str:
@@ -128,8 +132,8 @@ def install_service(settings: Settings, *, target: str | None = None) -> dict[st
         return {
             "target": effective_target,
             "unit_path": str(unit_path),
-            "daemon_reload": daemon_reload.__dict__,
-            "enable": enable.__dict__,
+            "daemon_reload": _command_payload(daemon_reload),
+            "enable": _command_payload(enable),
         }
     if effective_target == "launchd":
         plist_path = _mac_plist_path()
@@ -144,8 +148,8 @@ def install_service(settings: Settings, *, target: str | None = None) -> dict[st
         return {
             "target": effective_target,
             "plist_path": str(plist_path),
-            "bootout": bootout.__dict__,
-            "bootstrap": bootstrap.__dict__,
+            "bootout": _command_payload(bootout),
+            "bootstrap": _command_payload(bootstrap),
         }
     if effective_target == "schtasks":
         create = _run_command(
@@ -164,7 +168,7 @@ def install_service(settings: Settings, *, target: str | None = None) -> dict[st
         return {
             "target": effective_target,
             "task_name": WINDOWS_TASK_NAME,
-            "create": create.__dict__,
+            "create": _command_payload(create),
         }
     raise RuntimeError(f"Unsupported service target: {effective_target}")
 
@@ -173,7 +177,7 @@ def start_service(settings: Settings, *, target: str | None = None) -> dict[str,
     effective_target = target or default_service_target()
     if effective_target == "systemd-user":
         result = _run_command(["systemctl", "--user", "start", SYSTEMD_USER_UNIT_NAME])
-        return {"target": effective_target, "start": result.__dict__}
+        return {"target": effective_target, "start": _command_payload(result)}
     if effective_target == "launchd":
         plist_path = _mac_plist_path()
         bootstrap = _run_command(
@@ -184,12 +188,12 @@ def start_service(settings: Settings, *, target: str | None = None) -> dict[str,
         )
         return {
             "target": effective_target,
-            "bootstrap": bootstrap.__dict__,
-            "kickstart": kickstart.__dict__,
+            "bootstrap": _command_payload(bootstrap),
+            "kickstart": _command_payload(kickstart),
         }
     if effective_target == "schtasks":
         result = _run_command(["schtasks", "/run", "/tn", WINDOWS_TASK_NAME])
-        return {"target": effective_target, "start": result.__dict__}
+        return {"target": effective_target, "start": _command_payload(result)}
     raise RuntimeError(f"Unsupported service target: {effective_target}")
 
 
@@ -197,16 +201,16 @@ def stop_service(*, target: str | None = None) -> dict[str, object]:
     effective_target = target or default_service_target()
     if effective_target == "systemd-user":
         result = _run_command(["systemctl", "--user", "stop", SYSTEMD_USER_UNIT_NAME])
-        return {"target": effective_target, "stop": result.__dict__}
+        return {"target": effective_target, "stop": _command_payload(result)}
     if effective_target == "launchd":
         plist_path = _mac_plist_path()
         result = _run_command(
             ["launchctl", "bootout", f"gui/{os.getuid()}", str(plist_path)]
         )
-        return {"target": effective_target, "stop": result.__dict__}
+        return {"target": effective_target, "stop": _command_payload(result)}
     if effective_target == "schtasks":
         result = _run_command(["schtasks", "/end", "/tn", WINDOWS_TASK_NAME])
-        return {"target": effective_target, "stop": result.__dict__}
+        return {"target": effective_target, "stop": _command_payload(result)}
     raise RuntimeError(f"Unsupported service target: {effective_target}")
 
 
@@ -219,8 +223,8 @@ def service_status(*, target: str | None = None) -> dict[str, object]:
             "target": effective_target,
             "installed": enabled.ok,
             "running": active.ok and active.stdout == "active",
-            "active": active.__dict__,
-            "enabled": enabled.__dict__,
+            "active": _command_payload(active),
+            "enabled": _command_payload(enabled),
             "unit_path": str(_linux_unit_path()),
         }
     if effective_target == "launchd":
@@ -232,7 +236,7 @@ def service_status(*, target: str | None = None) -> dict[str, object]:
             "target": effective_target,
             "installed": result.ok,
             "running": "state = running" in output,
-            "detail": result.__dict__,
+            "detail": _command_payload(result),
             "plist_path": str(_mac_plist_path()),
         }
     if effective_target == "schtasks":
@@ -244,7 +248,7 @@ def service_status(*, target: str | None = None) -> dict[str, object]:
             "target": effective_target,
             "installed": result.ok,
             "running": "Status: Running" in output,
-            "detail": result.__dict__,
+            "detail": _command_payload(result),
             "task_name": WINDOWS_TASK_NAME,
         }
     raise RuntimeError(f"Unsupported service target: {effective_target}")
@@ -262,8 +266,8 @@ def uninstall_service(*, target: str | None = None) -> dict[str, object]:
         daemon_reload = _run_command(["systemctl", "--user", "daemon-reload"])
         return {
             "target": effective_target,
-            "disable": disable.__dict__,
-            "daemon_reload": daemon_reload.__dict__,
+            "disable": _command_payload(disable),
+            "daemon_reload": _command_payload(daemon_reload),
             "deleted_unit": deleted,
         }
     if effective_target == "launchd":
@@ -277,13 +281,13 @@ def uninstall_service(*, target: str | None = None) -> dict[str, object]:
             deleted = True
         return {
             "target": effective_target,
-            "bootout": bootout.__dict__,
+            "bootout": _command_payload(bootout),
             "deleted_plist": deleted,
         }
     if effective_target == "schtasks":
         delete = _run_command(["schtasks", "/delete", "/f", "/tn", WINDOWS_TASK_NAME])
         return {
             "target": effective_target,
-            "delete": delete.__dict__,
+            "delete": _command_payload(delete),
         }
     raise RuntimeError(f"Unsupported service target: {effective_target}")
