@@ -42,6 +42,10 @@ def hash_pairing_secret(secret: str) -> str:
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
 
+def generate_pairing_session_id() -> str:
+    return f"pair_{secrets.token_hex(12)}"
+
+
 def list_machine_credentials(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
@@ -211,11 +215,12 @@ def create_pairing_session(
     source_host: str | None,
     public_key: str,
     secret_hash: str,
+    session_id: str | None = None,
     expires_in_seconds: int = PAIRING_EXPIRY_SECONDS,
 ) -> dict[str, Any]:
     purge_expired_pairing_sessions(connection)
     now = datetime.now(tz=UTC).replace(microsecond=0)
-    session_id = f"pair_{secrets.token_hex(12)}"
+    effective_session_id = trimmed(session_id) or generate_pairing_session_id()
     normalized_label = trimmed(label) or trimmed(source_host) or "Paired machine"
     normalized_source_host = trimmed(source_host) or normalized_label
     expires_at = (now + timedelta(seconds=expires_in_seconds)).isoformat()
@@ -234,7 +239,7 @@ def create_pairing_session(
         ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
         """,
         (
-            session_id,
+            effective_session_id,
             normalized_label,
             normalized_source_host,
             public_key,
@@ -245,7 +250,7 @@ def create_pairing_session(
         ),
     )
     return {
-        "id": session_id,
+        "id": effective_session_id,
         "label": normalized_label,
         "source_host": normalized_source_host,
         "public_key": public_key,
@@ -280,6 +285,39 @@ def fetch_pairing_session(
         """,
         (session_id,),
     ).fetchone()
+
+
+def ensure_pairing_session(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    label: str | None,
+    source_host: str | None,
+    public_key: str,
+    secret_hash: str,
+    expires_in_seconds: int = PAIRING_EXPIRY_SECONDS,
+) -> dict[str, Any]:
+    existing = fetch_pairing_session(connection, session_id)
+    if existing is None:
+        return create_pairing_session(
+            connection,
+            session_id=session_id,
+            label=label,
+            source_host=source_host,
+            public_key=public_key,
+            secret_hash=secret_hash,
+            expires_in_seconds=expires_in_seconds,
+        )
+    normalized_label = trimmed(label) or trimmed(source_host) or "Paired machine"
+    normalized_source_host = trimmed(source_host) or normalized_label
+    if (
+        trimmed(existing["secret_hash"]) != trimmed(secret_hash)
+        or trimmed(existing["public_key"]) != trimmed(public_key)
+        or trimmed(existing["source_host"]) != normalized_source_host
+        or trimmed(existing["label"]) != normalized_label
+    ):
+        raise ValueError("This pairing session id already exists with different parameters.")
+    return _pairing_result_payload(connection, existing)
 
 
 def fetch_pairing_session_for_secret(

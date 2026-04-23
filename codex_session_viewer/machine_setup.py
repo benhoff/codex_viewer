@@ -18,7 +18,7 @@ from .local_machine import (
     store_machine_identity,
 )
 from .machine_auth import build_machine_auth_headers, generate_machine_keypair
-from .machine_credentials import hash_pairing_secret
+from .machine_credentials import generate_pairing_session_id, hash_pairing_secret
 from .service_manager import (
     install_service,
     service_status,
@@ -85,6 +85,25 @@ def _build_pairing_approval_url(base_url: str, session_id: str, secret: str) -> 
     return f"{base_url}/machine-pairing/{quote(session_id, safe='')}?secret={quote(secret, safe='')}"
 
 
+def _build_pairing_start_url(
+    *,
+    base_url: str,
+    session_id: str,
+    secret: str,
+    public_key: str,
+    source_host: str,
+    label: str,
+) -> str:
+    return (
+        f"{base_url}/machine-pairing/start?"
+        f"session_id={quote(session_id, safe='')}"
+        f"&secret={quote(secret, safe='')}"
+        f"&public_key={quote(public_key, safe='')}"
+        f"&source_host={quote(source_host, safe='')}"
+        f"&label={quote(label, safe='')}"
+    )
+
+
 def _signed_headers_for_identity(identity: LocalMachineIdentity, method: str, path: str) -> dict[str, str]:
     headers = {
         "Accept": "application/json",
@@ -122,26 +141,15 @@ def pair_machine(
 
     keypair = generate_machine_keypair()
     pairing_secret = secrets.token_urlsafe(24)
-    try:
-        pairing = _json_request(
-            base_url=server_base_url,
-            method="POST",
-            path="/api/machine-pairing/sessions",
-            payload={
-                "label": label or settings.source_host,
-                "source_host": settings.source_host,
-                "public_key": keypair.public_key,
-                "secret_hash": hash_pairing_secret(pairing_secret),
-            },
-            timeout=settings.remote_timeout_seconds,
-        )
-    except RuntimeError as exc:
-        raise SystemExit(f"Unable to create a pairing session: {exc}") from exc
-    session_id = str(pairing.get("id") or "").strip()
-    if not session_id:
-        raise SystemExit("Server did not return a pairing session id.")
-
-    approval_url = _build_pairing_approval_url(server_base_url, session_id, pairing_secret)
+    session_id = generate_pairing_session_id()
+    approval_url = _build_pairing_start_url(
+        base_url=server_base_url,
+        session_id=session_id,
+        secret=pairing_secret,
+        public_key=keypair.public_key,
+        source_host=settings.source_host,
+        label=label or settings.source_host,
+    )
     if open_browser:
         try:
             webbrowser.open(approval_url, new=2)
@@ -159,6 +167,9 @@ def pair_machine(
                 timeout=settings.remote_timeout_seconds,
             )
         except RuntimeError as exc:
+            if str(exc).startswith("404"):
+                time.sleep(max(0.5, poll_interval_seconds))
+                continue
             raise SystemExit(f"Unable to poll the pairing session: {exc}") from exc
         status = str(status_payload.get("status") or "pending")
         if status == "approved":

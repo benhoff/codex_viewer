@@ -10,8 +10,10 @@ from ...machine_credentials import (
     approve_pairing_session,
     create_pairing_session,
     decline_pairing_session,
+    ensure_pairing_session,
     fetch_pairing_session_for_secret,
     finalize_pairing_session,
+    hash_pairing_secret,
     revoke_machine_credential,
 )
 from ..auth import require_admin_user, require_sync_api_auth
@@ -76,6 +78,7 @@ def render_machine_pairing_page(
 
 @router.post("/api/machine-pairing/sessions")
 async def create_machine_pairing_session(request: Request) -> JSONResponse:
+    require_admin_user(request)
     if bool(getattr(request.state, "bootstrap_required", False)):
         raise HTTPException(status_code=403, detail="Initial setup required")
     context = get_app_context(request)
@@ -98,6 +101,44 @@ async def create_machine_pairing_session(request: Request) -> JSONResponse:
                 secret_hash=secret_hash,
             )
     return JSONResponse(pairing)
+
+
+@router.get("/machine-pairing/start")
+def machine_pairing_start(
+    request: Request,
+    *,
+    session_id: str,
+    secret: str,
+    public_key: str,
+    source_host: str = "",
+    label: str = "",
+) -> RedirectResponse:
+    require_admin_user(request)
+    context = get_app_context(request)
+    clean_session_id = session_id.strip()
+    clean_secret = secret.strip()
+    clean_public_key = public_key.strip()
+    clean_source_host = source_host.strip()
+    clean_label = label.strip() or clean_source_host or "Paired machine"
+    if not clean_session_id or not clean_secret or not clean_public_key:
+        raise HTTPException(status_code=400, detail="Missing pairing start parameters")
+    try:
+        with connect(context.settings.database_path) as connection:
+            with write_transaction(connection):
+                ensure_pairing_session(
+                    connection,
+                    session_id=clean_session_id,
+                    label=clean_label,
+                    source_host=clean_source_host,
+                    public_key=clean_public_key,
+                    secret_hash=hash_pairing_secret(clean_secret),
+                )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RedirectResponse(
+        url=f"/machine-pairing/{clean_session_id}?secret={clean_secret}",
+        status_code=303,
+    )
 
 
 @router.get("/api/machine-pairing/sessions/{session_id}")
