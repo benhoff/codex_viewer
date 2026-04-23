@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+from agent_daemon.service_manager import (
+    install_service,
+    service_status,
+    start_service,
+    stop_service,
+    uninstall_service,
+)
+
 import json
 import secrets
 import time
@@ -19,13 +27,6 @@ from .local_machine import (
 )
 from .machine_auth import build_machine_auth_headers, generate_machine_keypair
 from .machine_credentials import generate_pairing_session_id, hash_pairing_secret
-from .service_manager import (
-    install_service,
-    service_status,
-    start_service,
-    stop_service,
-    uninstall_service,
-)
 
 
 def _clean_url(raw: str | None) -> str | None:

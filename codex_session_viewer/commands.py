@@ -6,6 +6,15 @@ import json
 import logging
 from pathlib import Path
 
+from agent_daemon.runtime import run_sync_daemon
+from agent_daemon.service_manager import (
+    install_service,
+    service_status,
+    start_service,
+    stop_service,
+    uninstall_service,
+)
+
 from .alerts import DEFAULT_ALERT_WORKER_INTERVAL, run_alert_worker
 from .backup_restore import create_instance_backup, restore_instance_backup, verify_backup_archive
 from .config import Settings
@@ -19,16 +28,9 @@ from .machine_setup import (
     pair_machine,
 )
 from .projects import fetch_session_with_project
-from .runtime import export_markdown, get_events, run_sync_daemon
+from .runtime import export_markdown, get_events
 from .session_artifacts import resolve_session_raw_text
 from .session_exports import build_session_bundle, export_json_payload
-from .service_manager import (
-    install_service,
-    service_status,
-    start_service,
-    stop_service,
-    uninstall_service,
-)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -98,11 +100,8 @@ def _service_uninstall_summary(result: dict[str, object]) -> list[str]:
     return lines
 
 
-def _print_service_feedback(summary_lines: list[str], result: dict[str, object]) -> None:
+def _print_service_feedback(summary_lines: list[str]) -> None:
     print("\n".join(summary_lines))
-    print()
-    print("Details:")
-    print(json.dumps(result, indent=2))
 
 
 def parse_args() -> argparse.Namespace:
@@ -269,23 +268,23 @@ def cli() -> int:
     if args.command == "service":
         if args.service_command == "install":
             result = install_service(settings)
-            _print_service_feedback(_service_install_summary(result), result)
+            _print_service_feedback(_service_install_summary(result))
             return 0
         if args.service_command == "start":
             result = start_service(settings)
-            _print_service_feedback(_service_start_summary(result), result)
+            _print_service_feedback(_service_start_summary(result))
             return 0
         if args.service_command == "stop":
             result = stop_service()
-            _print_service_feedback(_service_stop_summary(result), result)
+            _print_service_feedback(_service_stop_summary(result))
             return 0
         if args.service_command == "status":
             result = service_status()
-            _print_service_feedback(_service_status_summary(result), result)
+            _print_service_feedback(_service_status_summary(result))
             return 0
         if args.service_command == "uninstall":
             result = uninstall_service()
-            _print_service_feedback(_service_uninstall_summary(result), result)
+            _print_service_feedback(_service_uninstall_summary(result))
             return 0
         raise SystemExit(f"Unsupported service command: {args.service_command}")
 

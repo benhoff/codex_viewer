@@ -82,6 +82,26 @@ Set these values in the agent `.env` file:
 The agent wrapper already forces `CODEX_VIEWER_SYNC_MODE=remote`.
 For native macOS and Windows launch examples, including `launchd` and Task Scheduler, see [docs/agent-daemon-windows-macos.md](docs/agent-daemon-windows-macos.md).
 
+## Agent Daemon Layout
+
+The daemon implementation now lives in [agent_daemon](agent_daemon):
+
+- [agent_daemon/runtime.py](agent_daemon/runtime.py)
+- [agent_daemon/remote_sync.py](agent_daemon/remote_sync.py)
+- [agent_daemon/file_watch.py](agent_daemon/file_watch.py)
+- [agent_daemon/service_manager.py](agent_daemon/service_manager.py)
+- [agent_daemon/start.sh](agent_daemon/start.sh)
+- [agent_daemon/start.ps1](agent_daemon/start.ps1)
+
+The existing wrapper scripts under [scripts](scripts) remain the stable entrypoints and delegate into the root-level daemon directory:
+
+- [scripts/start-agent-daemon.sh](scripts/start-agent-daemon.sh)
+- [scripts/start-agent-daemon.ps1](scripts/start-agent-daemon.ps1)
+
+Daemon-specific third-party Python dependencies are listed in [agent_daemon/requirements.txt](agent_daemon/requirements.txt).
+Today the only required external package is `cryptography` for machine-credential signing.
+`watchdog` is optional; if it is not installed, the daemon falls back to polling for `.jsonl` session changes.
+
 ## Commands
 
 Start the web app:
@@ -250,6 +270,16 @@ Wrapper scripts:
 - [scripts/bootstrap-local.sh](scripts/bootstrap-local.sh)
 - [scripts/start-agent-daemon.ps1](scripts/start-agent-daemon.ps1)
 - [scripts/bootstrap-local.ps1](scripts/bootstrap-local.ps1)
+
+Daemon source:
+
+- [agent_daemon/start.sh](agent_daemon/start.sh)
+- [agent_daemon/start.ps1](agent_daemon/start.ps1)
+- [agent_daemon/runtime.py](agent_daemon/runtime.py)
+- [agent_daemon/remote_sync.py](agent_daemon/remote_sync.py)
+- [agent_daemon/file_watch.py](agent_daemon/file_watch.py)
+- [agent_daemon/service_manager.py](agent_daemon/service_manager.py)
+- [agent_daemon/requirements.txt](agent_daemon/requirements.txt)
 
 ## Testing
 

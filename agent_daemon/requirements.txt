@@ -1,0 +1,11 @@
+# Third-party Python dependencies for the agent daemon path.
+#
+# The daemon still imports shared local modules from `codex_session_viewer`, so
+# this file is not a standalone package manifest for the whole repository. It
+# only captures the daemon's external runtime dependency footprint.
+
+cryptography==46.0.7
+
+# Optional:
+# Install `watchdog` if you want filesystem notifications instead of the
+# built-in polling fallback used by `agent_daemon/file_watch.py`.
