@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Approve Machine Pairing{% endblock %}
+
+{% block content %}
+  <section class="mx-auto w-full max-w-3xl">
+    <div class="rounded-[2rem] border border-stone-900/10 bg-white/85 p-6 shadow-[0_28px_80px_-36px_rgba(41,37,36,0.28)] backdrop-blur sm:p-8">
+      <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Machine Pairing</p>
+      <h1 class="mt-3 font-display text-3xl text-stone-900">Authorize {{ pairing.label }}</h1>
+      <p class="mt-3 text-sm leading-6 text-stone-600">
+        Approve this request to register <span class="font-semibold text-stone-900">{{ pairing.source_host }}</span> as a machine credential for remote sync.
+      </p>
+
+      {% if error %}
+        <div class="mt-5 rounded-[1.25rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          {{ error }}
+        </div>
+      {% endif %}
+
+      {% if success %}
+        <div class="mt-5 rounded-[1.25rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {{ success }}
+        </div>
+      {% endif %}
+
+      <div class="mt-6 grid gap-4 sm:grid-cols-2">
+        <div class="rounded-[1.4rem] bg-stone-50 p-4">
+          <p class="text-[0.72rem] uppercase tracking-[0.18em] text-stone-500">Host</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900">{{ pairing.source_host }}</p>
+        </div>
+        <div class="rounded-[1.4rem] bg-stone-50 p-4">
+          <p class="text-[0.72rem] uppercase tracking-[0.18em] text-stone-500">Status</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900">{{ pairing.status|replace('_', ' ')|title }}</p>
+        </div>
+        <div class="rounded-[1.4rem] bg-stone-50 p-4">
+          <p class="text-[0.72rem] uppercase tracking-[0.18em] text-stone-500">Expires</p>
+          <p class="mt-2 text-sm font-semibold text-stone-900" title="{{ pairing.expires_at|full_timestamp }}">{{ pairing.expires_at|humanize_timestamp }}</p>
+        </div>
+        <div class="rounded-[1.4rem] bg-stone-50 p-4">
+          <p class="text-[0.72rem] uppercase tracking-[0.18em] text-stone-500">Public Key</p>
+          <p class="mt-2 break-all font-mono text-xs text-stone-700">{{ pairing.public_key[:16] }}…{{ pairing.public_key[-10:] }}</p>
+        </div>
+      </div>
+
+      {% if pairing.status == "pending" %}
+        <div class="mt-6 flex flex-wrap gap-3">
+          <form action="/machine-pairing/{{ pairing.id }}/approve" method="post">
+            <input type="hidden" name="secret" value="{{ pairing_secret }}" />
+            <button
+              type="submit"
+              class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
+            >
+              Approve Machine
+            </button>
+          </form>
+          <form action="/machine-pairing/{{ pairing.id }}/decline" method="post">
+            <input type="hidden" name="secret" value="{{ pairing_secret }}" />
+            <button
+              type="submit"
+              class="rounded-2xl border border-rose-300 bg-rose-50 px-5 py-3 text-sm font-semibold text-rose-800 transition hover:border-rose-400 hover:bg-rose-100"
+            >
+              Decline
+            </button>
+          </form>
+        </div>
+      {% else %}
+        <div class="mt-6">
+          <a
+            href="/settings"
+            class="inline-flex rounded-2xl border border-stone-900/10 bg-white px-5 py-3 text-sm font-semibold text-stone-700 transition hover:bg-stone-50"
+          >
+            Back to Settings
+          </a>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

@@ -11,10 +11,24 @@ from .backup_restore import create_instance_backup, restore_instance_backup, ver
 from .config import Settings
 from .db import connect, init_db
 from .importer import sync_sessions
+from .machine_setup import (
+    machine_repair,
+    machine_setup,
+    machine_status,
+    machine_unpair,
+    pair_machine,
+)
 from .projects import fetch_session_with_project
 from .runtime import export_markdown, get_events, run_sync_daemon
 from .session_artifacts import resolve_session_raw_text
 from .session_exports import build_session_bundle, export_json_payload
+from .service_manager import (
+    install_service,
+    service_status,
+    start_service,
+    stop_service,
+    uninstall_service,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -36,6 +50,37 @@ def parse_args() -> argparse.Namespace:
     daemon = subparsers.add_parser("daemon", help="Run the background sync daemon")
     daemon.add_argument("--interval", type=int)
     daemon.add_argument("--rebuild-on-start", action="store_true")
+
+    pair = subparsers.add_parser("pair", help="Pair this machine through the browser and store a machine credential")
+    pair.add_argument("--label")
+    pair.add_argument("--no-browser", action="store_true")
+    pair.add_argument("--force", action="store_true")
+    pair.add_argument("--timeout", type=int, default=900)
+
+    machine = subparsers.add_parser("machine", help="Inspect or repair local machine pairing")
+    machine_subparsers = machine.add_subparsers(dest="machine_command", required=True)
+
+    machine_subparsers.add_parser("status", help="Show local machine pairing and service status")
+
+    machine_repair_cmd = machine_subparsers.add_parser("repair", help="Repair pairing and service state")
+    machine_repair_cmd.add_argument("--re-pair", action="store_true")
+    machine_repair_cmd.add_argument("--reinstall-service", action="store_true")
+    machine_repair_cmd.add_argument("--no-browser", action="store_true")
+
+    machine_unpair_cmd = machine_subparsers.add_parser("unpair", help="Delete the local machine credential")
+    machine_unpair_cmd.add_argument("--uninstall-service", action="store_true")
+
+    machine_setup_cmd = machine_subparsers.add_parser("setup", help="Pair this machine and install the daemon service")
+    machine_setup_cmd.add_argument("--label")
+    machine_setup_cmd.add_argument("--no-browser", action="store_true")
+
+    service = subparsers.add_parser("service", help="Manage the background daemon service")
+    service_subparsers = service.add_subparsers(dest="service_command", required=True)
+    service_subparsers.add_parser("install", help="Install the background daemon service")
+    service_subparsers.add_parser("start", help="Start the background daemon service")
+    service_subparsers.add_parser("stop", help="Stop the background daemon service")
+    service_subparsers.add_parser("status", help="Show the background daemon service status")
+    service_subparsers.add_parser("uninstall", help="Remove the background daemon service")
 
     alerts = subparsers.add_parser("alerts", help="Run the alert reconciliation and delivery worker")
     alerts.add_argument("--interval", type=int)
@@ -108,6 +153,65 @@ def cli() -> int:
             interval_seconds=interval_seconds,
             rebuild_on_start=getattr(args, "rebuild_on_start", False) or settings.daemon_rebuild_on_start,
         )
+
+    if args.command == "pair":
+        result = pair_machine(
+            settings,
+            label=getattr(args, "label", None),
+            open_browser=not bool(getattr(args, "no_browser", False)),
+            timeout_seconds=int(getattr(args, "timeout", 900) or 900),
+            force=bool(getattr(args, "force", False)),
+        )
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "machine":
+        if args.machine_command == "status":
+            print(json.dumps(machine_status(settings), indent=2))
+            return 0
+        if args.machine_command == "repair":
+            result = machine_repair(
+                settings,
+                re_pair=bool(getattr(args, "re_pair", False)),
+                reinstall_service=bool(getattr(args, "reinstall_service", False)),
+                open_browser=not bool(getattr(args, "no_browser", False)),
+            )
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.machine_command == "unpair":
+            result = machine_unpair(
+                settings,
+                uninstall=bool(getattr(args, "uninstall_service", False)),
+            )
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.machine_command == "setup":
+            result = machine_setup(
+                settings,
+                label=getattr(args, "label", None),
+                open_browser=not bool(getattr(args, "no_browser", False)),
+            )
+            print(json.dumps(result, indent=2))
+            return 0
+        raise SystemExit(f"Unsupported machine command: {args.machine_command}")
+
+    if args.command == "service":
+        if args.service_command == "install":
+            print(json.dumps(install_service(settings), indent=2))
+            return 0
+        if args.service_command == "start":
+            print(json.dumps(start_service(settings), indent=2))
+            return 0
+        if args.service_command == "stop":
+            print(json.dumps(stop_service(), indent=2))
+            return 0
+        if args.service_command == "status":
+            print(json.dumps(service_status(), indent=2))
+            return 0
+        if args.service_command == "uninstall":
+            print(json.dumps(uninstall_service(), indent=2))
+            return 0
+        raise SystemExit(f"Unsupported service command: {args.service_command}")
 
     if args.command == "alerts":
         settings.ensure_directories()

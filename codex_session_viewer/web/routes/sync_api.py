@@ -67,8 +67,8 @@ def health(request: Request) -> dict[str, str]:
 
 
 @router.get("/api/sync/manifest")
-def sync_manifest(request: Request, host: str = Query(...)) -> JSONResponse:
-    require_sync_api_auth(request)
+async def sync_manifest(request: Request, host: str = Query(...)) -> JSONResponse:
+    await require_sync_api_auth(request)
     settings = get_settings(request)
     with connect(settings.database_path) as connection:
         sessions = fetch_host_sync_manifest(connection, host)
@@ -91,7 +91,7 @@ def sync_manifest(request: Request, host: str = Query(...)) -> JSONResponse:
 
 @router.post("/api/sync/heartbeat")
 async def sync_heartbeat(request: Request) -> JSONResponse:
-    require_sync_api_auth(request)
+    await require_sync_api_auth(request)
     settings = get_settings(request)
     payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):
@@ -135,7 +135,7 @@ async def sync_heartbeat(request: Request) -> JSONResponse:
 
 @router.post("/api/sync/session")
 async def sync_session(request: Request) -> JSONResponse:
-    require_sync_api_auth(request)
+    await require_sync_api_auth(request)
     settings = get_settings(request)
     payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):
@@ -178,7 +178,7 @@ async def sync_session(request: Request) -> JSONResponse:
 
 @router.post("/api/sync/session-raw")
 async def sync_session_raw(request: Request) -> JSONResponse:
-    require_sync_api_auth(request)
+    await require_sync_api_auth(request)
     settings = get_settings(request)
     payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):
@@ -202,7 +202,7 @@ async def sync_session_raw(request: Request) -> JSONResponse:
 
 @router.post("/api/sync/sessions-raw")
 async def sync_sessions_raw_batch(request: Request) -> JSONResponse:
-    require_sync_api_auth(request)
+    await require_sync_api_auth(request)
     settings = get_settings(request)
     payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):

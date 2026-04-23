@@ -11,6 +11,20 @@ from starlette.middleware.sessions import SessionMiddleware
 from ..api_tokens import find_active_api_token, touch_api_token_usage
 from ..config import Settings
 from ..db import connect, write_transaction
+from ..machine_auth import (
+    MACHINE_BODY_SHA256_HEADER,
+    MACHINE_ID_HEADER,
+    MACHINE_NONCE_HEADER,
+    MACHINE_SIGNATURE_HEADER,
+    MACHINE_TIMESTAMP_HEADER,
+    timestamp_is_fresh,
+    verify_machine_request_signature,
+)
+from ..machine_credentials import (
+    fetch_active_machine_credential,
+    record_machine_auth_nonce,
+    touch_machine_credential_usage,
+)
 from ..local_auth import fetch_auth_status, fetch_user_by_id, touch_user_seen, upsert_proxy_user
 from ..onboarding import effective_bootstrap_required
 from .context import get_settings, request_return_to
@@ -24,6 +38,8 @@ PUBLIC_PATHS = {
 PUBLIC_PREFIXES = (
     "/static/",
     "/api/sync/",
+    "/api/machine-auth/",
+    "/api/machine-pairing/",
 )
 BOOTSTRAP_PUBLIC_PATHS = {
     "/api/health",
@@ -41,19 +57,60 @@ def request_bearer_token(request: Request) -> str | None:
     return token or None
 
 
-def require_sync_api_auth(request: Request) -> None:
+async def require_sync_api_auth(request: Request) -> dict[str, object]:
     bearer_token = request_bearer_token(request)
-    if not bearer_token:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
     settings = get_settings(request)
     source_host = request.headers.get("x-codex-viewer-host", "").strip() or None
+    raw_body = await request.body()
+    path = request.url.path
+    if request.url.query:
+        path = f"{path}?{request.url.query}"
+    machine_id = request.headers.get(MACHINE_ID_HEADER, "").strip()
+    machine_timestamp = request.headers.get(MACHINE_TIMESTAMP_HEADER, "").strip()
+    machine_nonce = request.headers.get(MACHINE_NONCE_HEADER, "").strip()
+    machine_signature = request.headers.get(MACHINE_SIGNATURE_HEADER, "").strip()
+    machine_body_sha256 = request.headers.get(MACHINE_BODY_SHA256_HEADER, "").strip()
     with connect(settings.database_path) as connection:
-        token_row = find_active_api_token(connection, bearer_token)
-        if token_row is not None:
-            with write_transaction(connection):
-                touch_api_token_usage(connection, token_row["id"], source_host)
-            return
+        if bearer_token:
+            token_row = find_active_api_token(connection, bearer_token)
+            if token_row is not None:
+                with write_transaction(connection):
+                    touch_api_token_usage(connection, token_row["id"], source_host)
+                return {
+                    "auth_type": "api_token",
+                    "token_id": str(token_row["id"]),
+                }
+        if machine_id and machine_timestamp and machine_nonce and machine_signature and machine_body_sha256:
+            machine_row = fetch_active_machine_credential(connection, machine_id)
+            if (
+                machine_row is not None
+                and timestamp_is_fresh(machine_timestamp)
+                and verify_machine_request_signature(
+                    public_key=str(machine_row["public_key"]),
+                    machine_id=machine_id,
+                    method=request.method,
+                    path=path,
+                    raw_body=raw_body,
+                    source_host=source_host,
+                    timestamp=machine_timestamp,
+                    nonce=machine_nonce,
+                    signature=machine_signature,
+                    body_sha256=machine_body_sha256,
+                )
+            ):
+                with write_transaction(connection):
+                    if not record_machine_auth_nonce(
+                        connection,
+                        machine_id=machine_id,
+                        nonce=machine_nonce,
+                        created_at=machine_timestamp,
+                    ):
+                        raise HTTPException(status_code=401, detail="Unauthorized")
+                    touch_machine_credential_usage(connection, machine_id)
+                return {
+                    "auth_type": "machine_credential",
+                    "machine_id": machine_id,
+                }
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 

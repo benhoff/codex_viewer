@@ -44,6 +44,7 @@ from ...local_auth import (
     verify_local_password_for_user,
     verify_local_password_login,
 )
+from ...machine_credentials import list_machine_credentials, revoke_machine_credential
 from ...onboarding import effective_bootstrap_required, reconcile_onboarding_state
 from ...projects import (
     build_project_access_context,
@@ -238,6 +239,7 @@ def render_settings_page(
             onboarding = reconcile_onboarding_state(connection, context.settings)
         server_settings = apply_server_settings(connection, context.settings)
         api_tokens = list_api_tokens(connection) if can_manage_admin else []
+        machine_credentials = list_machine_credentials(connection) if can_manage_admin else []
         auth_status = fetch_auth_status(connection)
         users = list_users(connection) if can_manage_admin else []
     can_change_password = bool(
@@ -261,6 +263,7 @@ def render_settings_page(
             "request": request,
             "settings": context.settings,
             "api_tokens": api_tokens,
+            "machine_credentials": machine_credentials,
             "created_token": created_token,
             "search_query": "",
             "auth_status": auth_status,
@@ -1808,6 +1811,25 @@ async def settings_api_token_action(request: Request) -> RedirectResponse:
                 revoke_api_token(connection, token_id)
             else:
                 delete_api_token(connection, token_id)
+
+    return RedirectResponse(url="/settings", status_code=303)
+
+
+@router.post("/settings/machines/actions")
+async def settings_machine_action(request: Request) -> RedirectResponse:
+    require_admin_user(request)
+    context = get_app_context(request)
+    fields = await parse_form_fields(request)
+    machine_id = fields.get("machine_id", "").strip()
+    action = fields.get("action", "").strip()
+    if not machine_id:
+        raise HTTPException(status_code=400, detail="Missing machine id")
+    if action != "revoke":
+        raise HTTPException(status_code=400, detail="Unsupported machine action")
+
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            revoke_machine_credential(connection, machine_id)
 
     return RedirectResponse(url="/settings", status_code=303)
 

@@ -28,6 +28,8 @@ from .importer import (
     prescan_session_source,
     SessionParseError,
 )
+from .local_machine import load_machine_identity
+from .machine_auth import build_machine_auth_headers
 from .session_artifacts import read_session_source_text
 
 INVALID_SESSION_CACHE: dict[tuple[str, int, int], str] = {}
@@ -98,7 +100,13 @@ def exception_summary(exc: BaseException, *, max_length: int = 500) -> str:
     return summary
 
 
-def build_headers(settings: Settings) -> dict[str, str]:
+def build_headers(
+    settings: Settings,
+    *,
+    method: str,
+    path: str,
+    raw_body: bytes | None = None,
+) -> dict[str, str]:
     headers = {
         "Accept": "application/json",
         "X-Codex-Viewer-Agent-Version": settings.app_version,
@@ -106,8 +114,30 @@ def build_headers(settings: Settings) -> dict[str, str]:
         "X-Codex-Viewer-Sync-Mode": settings.sync_mode,
         "X-Codex-Viewer-Host": settings.source_host,
     }
-    if settings.sync_api_token:
+    identity = load_machine_identity(settings)
+    if identity is not None:
+        if settings.server_base_url and identity.server_base_url.rstrip("/") != settings.server_base_url.rstrip("/"):
+            raise RemoteSyncError(
+                "Configured server URL does not match the paired machine credential. "
+                "Run `python -m codex_session_viewer machine repair --re-pair` to re-pair this machine."
+            )
+        headers.update(
+            build_machine_auth_headers(
+                private_key=identity.private_key,
+                machine_id=identity.machine_id,
+                method=method,
+                path=path,
+                raw_body=raw_body,
+                source_host=settings.source_host,
+            )
+        )
+    elif settings.sync_api_token:
         headers["Authorization"] = f"Bearer {settings.sync_api_token}"
+    else:
+        raise RemoteSyncError(
+            "Remote sync requires either CODEX_VIEWER_SYNC_API_TOKEN or a paired machine credential. "
+            "Run `python -m codex_session_viewer pair` to authorize this machine."
+        )
     return headers
 
 
@@ -125,14 +155,21 @@ def json_request(
 ) -> dict[str, Any]:
     base_url = require_server_url(settings)
     body = None
-    headers = build_headers(settings)
     if payload is not None:
         raw_body = json.dumps(payload).encode("utf-8")
         if len(raw_body) >= settings.remote_gzip_min_bytes:
             body = gzip.compress(raw_body, compresslevel=6)
-            headers["Content-Encoding"] = "gzip"
         else:
             body = raw_body
+    headers = build_headers(
+        settings,
+        method=method,
+        path=path,
+        raw_body=body,
+    )
+    if payload is not None:
+        if body is not None and body is not raw_body:
+            headers["Content-Encoding"] = "gzip"
         headers["Content-Type"] = "application/json"
     request = Request(f"{base_url}{path}", data=body, method=method.upper(), headers=headers)
     try:

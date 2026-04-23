@@ -218,6 +218,38 @@ ALERT_DELIVERY_COLUMN_DEFS = {
     "last_error": "TEXT",
 }
 
+MACHINE_CREDENTIAL_COLUMN_DEFS = {
+    "id": "TEXT PRIMARY KEY",
+    "label": "TEXT NOT NULL",
+    "source_host": "TEXT NOT NULL DEFAULT ''",
+    "public_key": "TEXT NOT NULL UNIQUE",
+    "created_by_user_id": "TEXT REFERENCES users(id) ON DELETE SET NULL",
+    "created_at": "TEXT NOT NULL",
+    "last_seen_at": "TEXT",
+    "revoked_at": "TEXT",
+}
+
+PAIRING_SESSION_COLUMN_DEFS = {
+    "id": "TEXT PRIMARY KEY",
+    "label": "TEXT NOT NULL",
+    "source_host": "TEXT NOT NULL DEFAULT ''",
+    "public_key": "TEXT NOT NULL",
+    "secret_hash": "TEXT NOT NULL",
+    "status": "TEXT NOT NULL DEFAULT 'pending'",
+    "machine_credential_id": "TEXT REFERENCES machine_credentials(id) ON DELETE SET NULL",
+    "expires_at": "TEXT NOT NULL",
+    "completed_at": "TEXT",
+    "used_at": "TEXT",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
+MACHINE_AUTH_NONCE_COLUMN_DEFS = {
+    "machine_id": "TEXT NOT NULL REFERENCES machine_credentials(id) ON DELETE CASCADE",
+    "nonce": "TEXT NOT NULL",
+    "created_at": "TEXT NOT NULL",
+}
+
 SAVED_TURN_COLUMN_DEFS = {
     "owner_scope": "TEXT NOT NULL",
     "session_id": "TEXT NOT NULL",
@@ -498,6 +530,39 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     last_used_at TEXT,
     last_used_source_host TEXT,
     revoked_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS machine_credentials (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    source_host TEXT NOT NULL DEFAULT '',
+    public_key TEXT NOT NULL UNIQUE,
+    created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT,
+    revoked_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pairing_sessions (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    source_host TEXT NOT NULL DEFAULT '',
+    public_key TEXT NOT NULL,
+    secret_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    machine_credential_id TEXT REFERENCES machine_credentials(id) ON DELETE SET NULL,
+    expires_at TEXT NOT NULL,
+    completed_at TEXT,
+    used_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS machine_auth_nonces (
+    machine_id TEXT NOT NULL REFERENCES machine_credentials(id) ON DELETE CASCADE,
+    nonce TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (machine_id, nonce)
 );
 
 CREATE TABLE IF NOT EXISTS server_settings (
@@ -810,6 +875,21 @@ ON api_tokens(created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_last_used_at
 ON api_tokens(last_used_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_machine_credentials_created_at
+ON machine_credentials(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_machine_credentials_last_seen_at
+ON machine_credentials(last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_pairing_sessions_status_expires_at
+ON pairing_sessions(status, expires_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_pairing_sessions_created_at
+ON pairing_sessions(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_machine_auth_nonces_created_at
+ON machine_auth_nonces(created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_project_overrides_override_group_key
 ON project_overrides(override_group_key);

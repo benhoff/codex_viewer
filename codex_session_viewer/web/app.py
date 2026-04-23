@@ -13,6 +13,7 @@ from ..saved_turns import migrate_global_saved_turns_to_owner
 from ..server_settings import apply_server_settings
 from .auth import install_auth
 from .context import AppContext, set_app_context
+from .routes.machine_pairing import router as machine_pairing_router
 from .routes.pages import router as pages_router
 from .routes.projects import router as projects_router
 from .routes.sessions import router as sessions_router
@@ -66,5 +67,6 @@ def create_app(
     app.include_router(pages_router)
     app.include_router(sessions_router)
     app.include_router(sync_api_router)
+    app.include_router(machine_pairing_router)
     app.include_router(projects_router)
     return app

@@ -484,6 +484,91 @@
     {% endif %}
 
     {% if can_manage_admin %}
+    <section id="settings-machine-pairing" class="rounded-[1.9rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Machine Credentials</p>
+          <h2 class="font-display text-2xl text-stone-900">Pair From The CLI</h2>
+          <p class="mt-2 text-sm leading-6 text-stone-600">Run the pairing command on the machine that should sync. The browser will open here so an admin can approve it without copying a raw token.</p>
+        </div>
+        <span class="rounded-full bg-stone-900 px-3 py-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-50">{{ machine_credentials|length }} paired</span>
+      </div>
+
+      <div class="mt-5 rounded-[1.4rem] bg-stone-50 p-4">
+        <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">CLI</p>
+        <pre class="mt-2 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m codex_session_viewer pair</pre>
+      </div>
+
+      <div class="mt-5 rounded-[1.4rem] bg-stone-50 p-4 text-sm leading-6 text-stone-600">
+        After pairing, use <span class="font-mono text-stone-900">python -m codex_session_viewer service install</span> and <span class="font-mono text-stone-900">python -m codex_session_viewer service start</span> on that machine.
+      </div>
+    </section>
+
+    <section id="settings-managed-machines" class="space-y-4">
+      {% if machine_credentials %}
+        {% for machine in machine_credentials %}
+          <article class="rounded-[1.7rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
+            <div class="flex flex-wrap items-start justify-between gap-4">
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 class="text-xl font-semibold text-stone-900">{{ machine.label }}</h2>
+                  {% if machine.revoked_at %}
+                    <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-rose-800">Revoked</span>
+                  {% else %}
+                    <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">Active</span>
+                  {% endif %}
+                </div>
+                <p class="mt-3 text-sm leading-6 text-stone-600">{{ machine.source_host }}</p>
+              </div>
+
+              <div class="flex flex-wrap gap-3">
+                {% if not machine.revoked_at %}
+                  <form action="/settings/machines/actions" method="post">
+                    <input type="hidden" name="machine_id" value="{{ machine.id }}" />
+                    <button
+                      type="submit"
+                      name="action"
+                      value="revoke"
+                      class="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 transition hover:border-amber-400 hover:bg-amber-100"
+                    >
+                      Revoke
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div class="rounded-[1.15rem] bg-stone-50 p-4">
+                <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Created</p>
+                <p class="mt-2 text-sm font-semibold text-stone-900" title="{{ machine.created_at|full_timestamp }}">{{ machine.created_at|humanize_timestamp }}</p>
+              </div>
+              <div class="rounded-[1.15rem] bg-stone-50 p-4">
+                <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Last Seen</p>
+                <p class="mt-2 text-sm font-semibold text-stone-900" {% if machine.last_seen_at %}title="{{ machine.last_seen_at|full_timestamp }}"{% endif %}>
+                  {{ machine.last_seen_at|humanize_timestamp if machine.last_seen_at else "Never" }}
+                </p>
+              </div>
+              <div class="rounded-[1.15rem] bg-stone-50 p-4">
+                <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Machine Id</p>
+                <p class="mt-2 break-all font-mono text-xs text-stone-700">{{ machine.id }}</p>
+              </div>
+              <div class="rounded-[1.15rem] bg-stone-50 p-4">
+                <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">Revoked</p>
+                <p class="mt-2 text-sm font-semibold text-stone-900" {% if machine.revoked_at %}title="{{ machine.revoked_at|full_timestamp }}"{% endif %}>
+                  {{ machine.revoked_at|humanize_timestamp if machine.revoked_at else "No" }}
+                </p>
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      {% else %}
+        <div class="rounded-[1.7rem] border border-dashed border-stone-900/15 bg-stone-50/70 p-6 text-sm leading-6 text-stone-600">
+          No paired machine credentials exist yet. New desktop installs should use <span class="font-mono text-stone-900">python -m codex_session_viewer pair</span> instead of copying a raw token.
+        </div>
+      {% endif %}
+    </section>
+
     <section id="settings-create-token" class="rounded-[1.9rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
