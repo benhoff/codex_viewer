@@ -111,7 +111,7 @@ def guided_setup_required(
     if bool(getattr(request.state, "bootstrap_required", False)):
         return True
     sync_mode = str(getattr(settings, "sync_mode", "") or "").strip().lower()
-    return sync_mode == "remote" and int(onboarding.get("token_count") or 0) <= 0
+    return sync_mode == "remote" and not bool(onboarding.get("machine_access_ready"))
 
 
 def setup_wizard_active(
@@ -124,7 +124,7 @@ def setup_wizard_active(
         return True
     sync_mode = str(getattr(settings, "sync_mode", "") or "").strip().lower()
     if sync_mode == "remote":
-        return int(onboarding.get("token_count") or 0) <= 0
+        return not bool(onboarding.get("machine_access_ready"))
     return bool(onboarding.get("onboarding_required"))
 
 
@@ -136,9 +136,13 @@ def setup_verification_pending(
     sync_mode = str(getattr(settings, "sync_mode", "") or "").strip().lower()
     return (
         sync_mode == "remote"
-        and int(onboarding.get("token_count") or 0) > 0
+        and bool(onboarding.get("machine_access_ready"))
         and bool(onboarding.get("onboarding_required"))
     )
+
+
+def next_path_allowed_during_setup(next_path: str) -> bool:
+    return next_path.startswith("/machine-pairing/start")
 
 
 def authenticated_destination(
@@ -146,7 +150,7 @@ def authenticated_destination(
     *,
     setup_required: bool,
 ) -> str:
-    if setup_required:
+    if setup_required and not next_path_allowed_during_setup(next_path):
         return "/setup"
     if next_path in {"/setup", "/setup/status"}:
         return "/"

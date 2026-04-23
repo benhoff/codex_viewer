@@ -11,7 +11,7 @@ test("password admin onboarding becomes authenticated-only after bootstrap", asy
     username: "admin",
     password: "Password123!",
   });
-  await expect(page.getByRole("heading", { name: "Create a token for the first machine" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect the first machine" })).toBeVisible();
 
   await page.context().clearCookies();
 
@@ -28,7 +28,7 @@ test("password admin onboarding becomes authenticated-only after bootstrap", asy
     password: "Password123!",
   });
   await expect(page).toHaveURL(/\/setup$/);
-  await expect(page.getByRole("heading", { name: "Create a token for the first machine" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect the first machine" })).toBeVisible();
 
   await createSetupToken(page, {
     label: "First machine token",

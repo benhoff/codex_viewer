@@ -3,7 +3,7 @@
 {% block title %}Setup | Agent Operations Viewer{% endblock %}
 
 {% block content %}
-  {% set can_manage_setup_tokens = (not request.state.auth_enabled) or (request.state.auth_user and request.state.auth_user.is_admin) %}
+  {% set can_manage_machine_access = (not request.state.auth_enabled) or (request.state.auth_user and request.state.auth_user.is_admin) %}
   <div class="mx-auto w-full max-w-3xl space-y-6">
     {% if settings.sync_mode == 'local' %}
       <section class="rounded-[1.9rem] border border-stone-900/10 bg-white/75 p-6 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur">
@@ -142,9 +142,9 @@
           </p>
         {% else %}
           <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Step 2 of 2</p>
-          <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl">Create a token for the first machine</h1>
+          <h1 class="mt-3 font-display text-3xl leading-tight text-stone-900 sm:text-4xl">Connect the first machine</h1>
           <p class="mt-3 max-w-2xl text-[0.98rem] leading-7 text-stone-600">
-            This token lets one machine send sessions to this viewer.
+            Pairing from the machine CLI is the normal path. Raw tokens are still available for older or manual installs.
           </p>
         {% endif %}
       </section>
@@ -284,27 +284,52 @@
         </section>
       {% else %}
         <section class="rounded-[1.7rem] border border-stone-900/10 bg-white/75 p-6 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur">
-          {% if can_manage_setup_tokens %}
-            <form action="/setup/token" method="post" class="grid gap-4 sm:grid-cols-[1fr,auto] sm:items-end">
-              <label class="block">
-                <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Token label</span>
-                <input
-                  type="text"
-                  name="label"
-                  value="First machine token"
-                  class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
-                />
-              </label>
-              <button
-                type="submit"
-                class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
-              >
-                Create Token
-              </button>
-            </form>
+          {% if can_manage_machine_access %}
+            <div class="rounded-[1.25rem] border border-stone-900/10 bg-stone-50 p-5">
+              <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Preferred</p>
+              <h2 class="mt-3 font-display text-2xl text-stone-900">Pair from the machine CLI</h2>
+              <p class="mt-2 text-sm leading-6 text-stone-700">
+                Run this on the machine that should sync. The browser opens here, asks you to sign in once, then lets you approve the machine without copying a raw token.
+              </p>
+              {% if '127.0.0.1' in setup_server_url or 'localhost' in setup_server_url %}
+                <div class="mt-4 rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                  Before you run this on another machine, replace <span class="font-mono text-amber-950">CODEX_VIEWER_SERVER_URL</span> with a host name or IP that machine can reach.
+                </div>
+              {% endif %}
+              <pre class="mt-4 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m codex_session_viewer pair</pre>
+              <p class="mt-3 text-sm leading-6 text-stone-600">
+                After pairing, run <span class="font-mono text-stone-900">python -m codex_session_viewer service install</span> and <span class="font-mono text-stone-900">python -m codex_session_viewer service start</span> on that machine.
+              </p>
+            </div>
+
+            <details class="mt-5 rounded-[1.2rem] border border-stone-900/10 bg-white p-5">
+              <summary class="cursor-pointer list-none text-sm font-semibold text-stone-900">
+                Need a raw token instead?
+              </summary>
+              <p class="mt-4 text-sm leading-6 text-stone-700">
+                Use a token only for older or manual installs that cannot complete browser pairing.
+              </p>
+              <form action="/setup/token" method="post" class="mt-4 grid gap-4 sm:grid-cols-[1fr,auto] sm:items-end">
+                <label class="block">
+                  <span class="mb-2 block text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Token label</span>
+                  <input
+                    type="text"
+                    name="label"
+                    value="First machine token"
+                    class="w-full rounded-2xl border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/60"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700"
+                >
+                  Create Token
+                </button>
+              </form>
+            </details>
           {% else %}
             <div class="rounded-[1.2rem] border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-700">
-              Only admins can create shared machine tokens for this viewer.
+              Only admins can pair the first machine or create shared machine tokens for this viewer.
             </div>
           {% endif %}
         </section>

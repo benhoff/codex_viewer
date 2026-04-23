@@ -8,6 +8,7 @@ from .agents import fetch_remote_agent_health
 from .api_tokens import active_api_token_count, list_api_tokens
 from .config import Settings
 from .local_auth import AuthStatus, fetch_auth_status
+from .machine_credentials import list_machine_credentials
 
 
 FAILED_UPDATE_STATES = {"update_failed"}
@@ -253,6 +254,12 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
     token_count = active_api_token_count(connection)
     token_rows = [token for token in list_api_tokens(connection) if not token.get("revoked_at")]
     latest_token = token_rows[0] if token_rows else None
+    machine_credential_rows = [
+        row for row in list_machine_credentials(connection) if not row.get("revoked_at")
+    ]
+    machine_credential_count = len(machine_credential_rows)
+    latest_machine_credential = machine_credential_rows[0] if machine_credential_rows else None
+    machine_access_ready = token_count > 0 or machine_credential_count > 0
     remotes = fetch_remote_agent_health(connection, settings)
     primary_remote = remotes[0] if remotes else None
     imported_session_count = _count_imported_sessions(connection, remote_only=not local_mode)
@@ -316,7 +323,7 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
                 reason = "No local sessions have been imported yet."
                 next_action = "Run Codex once on this machine or trigger a manual sync after pointing CODEX_SESSION_ROOTS at your session directory."
     else:
-        configured = auth_ready and not bootstrap_required and token_count > 0
+        configured = auth_ready and not bootstrap_required and machine_access_ready
         agent_seen = bool(primary_remote and not primary_remote.get("stale"))
         compatible = bool(primary_remote and not primary_remote.get("api_mismatch") and not primary_remote.get("version_mismatch"))
         update_state = str(primary_remote.get("update_state") or "").strip() if primary_remote else ""
@@ -358,18 +365,20 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
             else:
                 reason = "Sign in through the trusted proxy and claim the first admin account to continue setup."
                 next_action = "Use the Create Admin step below after your SSO session is visible here."
-        elif token_count == 0:
+        elif not machine_access_ready:
             overall_tone = "amber"
             overall_state = "in_progress"
             health_classification = "configured"
-            reason = "No active sync API token exists yet."
-            next_action = "Create a labeled token, copy the daemon snippet, and start one machine."
+            reason = "No machine access is configured yet."
+            next_action = "Pair one machine from the CLI or create a labeled sync API token."
         elif primary_remote is None:
             overall_tone = "rose"
             overall_state = "blocked"
             health_classification = "failed"
             reason = "No machine heartbeat has been received yet."
-            next_action = "Start the daemon on one machine with the token and server URL shown below."
+            next_action = (
+                "Start the daemon on one paired machine, or use the generated token and server URL on the first machine."
+            )
         elif update_state in FAILED_UPDATE_STATES:
             overall_tone = "rose"
             overall_state = "blocked"
@@ -549,12 +558,20 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
                 label="Configured",
                 state="complete" if configured else ("blocked" if bootstrap_required else "pending"),
                 detail=(
-                    f"Auth ready and {token_count} active token{'s' if token_count != 1 else ''} available."
+                    (
+                        "Auth ready with "
+                        f"{machine_credential_count} paired machine credential{'s' if machine_credential_count != 1 else ''}"
+                        + (
+                            f" and {token_count} active token{'s' if token_count != 1 else ''}."
+                            if token_count > 0
+                            else "."
+                        )
+                    )
                     if configured
                     else (
                         "A first admin still needs to be created."
                         if bootstrap_required
-                        else "Create at least one active sync API token."
+                        else "Pair one machine or create at least one active sync API token."
                     )
                 ),
             ),
@@ -669,21 +686,25 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
             },
             {
                 "key": "token",
-                "title": "Create Token",
+                "title": "Grant Machine Access",
                 "status": (
                     "complete"
-                    if token_count > 0
+                    if machine_access_ready
                     else ("in_progress" if not bootstrap_required else "blocked")
                 ),
                 "status_label": _status_label(
                     "complete"
-                    if token_count > 0
+                    if machine_access_ready
                     else ("in_progress" if not bootstrap_required else "blocked")
                 ),
                 "detail": (
-                    f"{latest_token['label']} is available for the first machine."
-                    if latest_token
-                    else "Create a labeled sync API token."
+                    f"{latest_machine_credential['label']} is paired for the first machine."
+                    if latest_machine_credential
+                    else (
+                        f"{latest_token['label']} is available for the first machine."
+                        if latest_token
+                        else "Pair the first machine from the CLI or create a labeled sync API token."
+                    )
                 ),
             },
             {
@@ -692,12 +713,20 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
                 "status": (
                     "complete"
                     if agent_seen
-                    else ("blocked" if token_count > 0 and primary_remote and primary_remote.get("stale") else ("in_progress" if token_count > 0 else "not_started"))
+                    else (
+                        "blocked"
+                        if machine_access_ready and primary_remote and primary_remote.get("stale")
+                        else ("in_progress" if machine_access_ready else "not_started")
+                    )
                 ),
                 "status_label": _status_label(
                     "complete"
                     if agent_seen
-                    else ("blocked" if token_count > 0 and primary_remote and primary_remote.get("stale") else ("in_progress" if token_count > 0 else "not_started"))
+                    else (
+                        "blocked"
+                        if machine_access_ready and primary_remote and primary_remote.get("stale")
+                        else ("in_progress" if machine_access_ready else "not_started")
+                    )
                 ),
                 "detail": (
                     f"Heartbeat received from {primary_remote['source_host']}."
@@ -705,7 +734,7 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
                     else (
                         "A machine checked in before, but it is now stale."
                         if primary_remote and primary_remote.get("stale")
-                        else "Start one machine with the generated token and server URL."
+                        else "Start one machine with the paired credential or the generated token and server URL."
                     )
                 ),
             },
@@ -717,7 +746,7 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
                     if configured and agent_seen and compatible and sync_healthy and data_verified
                     else (
                         "blocked"
-                        if token_count > 0 and primary_remote and (not compatible or not sync_healthy)
+                        if machine_access_ready and primary_remote and (not compatible or not sync_healthy)
                         else (
                             "in_progress"
                             if connected_but_empty
@@ -730,7 +759,7 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
                     if configured and agent_seen and compatible and sync_healthy and data_verified
                     else (
                         "blocked"
-                        if token_count > 0 and primary_remote and (not compatible or not sync_healthy)
+                        if machine_access_ready and primary_remote and (not compatible or not sync_healthy)
                         else (
                             "in_progress"
                             if connected_but_empty
@@ -755,6 +784,9 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
         "bootstrap_required": bootstrap_required,
         "token_count": token_count,
         "latest_token": latest_token,
+        "machine_credential_count": machine_credential_count,
+        "latest_machine_credential": latest_machine_credential,
+        "machine_access_ready": machine_access_ready,
         "primary_remote": primary_remote,
         "remotes": remotes,
         "configured": configured,

@@ -12,7 +12,7 @@ test("first-run setup opens the dashboard after token creation while verificatio
     username: "admin",
     password: "Password123!",
   });
-  await expect(page.getByRole("heading", { name: "Create a token for the first machine" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect the first machine" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Create the first admin" })).toBeHidden();
 
   await createSetupToken(page, {

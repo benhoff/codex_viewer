@@ -13,6 +13,10 @@ async function completePasswordSetup(page, app, options = {}) {
 
 async function createSetupToken(page, options = {}) {
   const label = options.label || "First machine token";
+  const tokenFallback = page.getByText("Need a raw token instead?");
+  if (await tokenFallback.count()) {
+    await tokenFallback.click();
+  }
   await page.locator('input[name="label"]').fill(label);
   await page.getByRole("button", { name: "Create Token" }).click();
   await expect(page.locator("#created-token-value")).toContainText("csvr_");
