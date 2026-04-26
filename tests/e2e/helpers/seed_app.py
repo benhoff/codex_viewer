@@ -15,31 +15,31 @@ if DEPENDENCY_ROOT.exists():
     sys.path.insert(0, str(DEPENDENCY_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from codex_session_viewer.agents import upsert_remote_agent_status  # noqa: E402
-from codex_session_viewer.api_tokens import create_api_token  # noqa: E402
-from codex_session_viewer.config import Settings  # noqa: E402
-from codex_session_viewer.db import connect, init_db, write_transaction  # noqa: E402
-from codex_session_viewer.importer import (  # noqa: E402
+from agent_operations_viewer.agents import upsert_remote_agent_status  # noqa: E402
+from agent_operations_viewer.api_tokens import create_api_token  # noqa: E402
+from agent_operations_viewer.config import Settings  # noqa: E402
+from agent_operations_viewer.db import connect, init_db, write_transaction  # noqa: E402
+from agent_operations_viewer.importer import (  # noqa: E402
     NormalizedEvent,
     ParsedSession,
     parse_session_text,
     parsed_session_to_payload,
     upsert_parsed_session,
 )
-from codex_session_viewer.local_auth import create_initial_admin, create_local_user, fetch_user_by_username  # noqa: E402
-from codex_session_viewer.onboarding import (  # noqa: E402
+from agent_operations_viewer.local_auth import create_initial_admin, create_local_user, fetch_user_by_username  # noqa: E402
+from agent_operations_viewer.onboarding import (  # noqa: E402
     record_first_heartbeat,
     record_first_session_ingested,
     reconcile_onboarding_state,
     utc_now_iso,
 )
-from codex_session_viewer.projects import (  # noqa: E402
+from agent_operations_viewer.projects import (  # noqa: E402
     fetch_group_detail,
     sync_project_registry,
     update_project_visibility,
     upsert_project_acl_member,
 )
-from codex_session_viewer.session_rollups import compute_session_rollups  # noqa: E402
+from agent_operations_viewer.session_rollups import compute_session_rollups  # noqa: E402
 
 
 def iso_at(value: datetime) -> str:

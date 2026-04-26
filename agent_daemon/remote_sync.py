@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from codex_session_viewer.agent_state import (
+from agent_operations_viewer.agent_state import (
     connect_agent_state,
     fetch_agent_file_states,
     mark_agent_file_deleted,
@@ -21,16 +21,16 @@ from codex_session_viewer.agent_state import (
     mark_missing_agent_files_deleted,
     upsert_agent_file_state,
 )
-from codex_session_viewer.config import Settings
-from codex_session_viewer.importer import (
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.importer import (
     iter_session_files,
     parse_session_text,
     prescan_session_source,
     SessionParseError,
 )
-from codex_session_viewer.local_machine import load_machine_identity
-from codex_session_viewer.machine_auth import build_machine_auth_headers
-from codex_session_viewer.session_artifacts import read_session_source_text
+from agent_operations_viewer.local_machine import load_machine_identity
+from agent_operations_viewer.machine_auth import build_machine_auth_headers
+from agent_operations_viewer.session_artifacts import read_session_source_text
 
 INVALID_SESSION_CACHE: dict[tuple[str, int, int], str] = {}
 
@@ -119,7 +119,7 @@ def build_headers(
         if settings.server_base_url and identity.server_base_url.rstrip("/") != settings.server_base_url.rstrip("/"):
             raise RemoteSyncError(
                 "Configured server URL does not match the paired machine credential. "
-                "Run `python -m codex_session_viewer machine repair --re-pair` to re-pair this machine."
+                "Run `python -m agent_operations_viewer machine repair --re-pair` to re-pair this machine."
             )
         headers.update(
             build_machine_auth_headers(
@@ -136,7 +136,7 @@ def build_headers(
     else:
         raise RemoteSyncError(
             "Remote sync requires either CODEX_VIEWER_SYNC_API_TOKEN or a paired machine credential. "
-            "Run `python -m codex_session_viewer pair` to authorize this machine."
+            "Run `python -m agent_operations_viewer pair` to authorize this machine."
         )
     return headers
 
@@ -545,7 +545,7 @@ def sync_sessions_remote(
     *,
     candidate_paths: list[Path] | None = None,
 ) -> dict[str, int]:
-    logger = logging.getLogger("codex_session_viewer.remote_sync")
+    logger = logging.getLogger("agent_operations_viewer.remote_sync")
     manifest, ignored_keys, server_meta, actions = ({}, set(), {}, {}) if force else fetch_remote_manifest(settings)
     uploaded = 0
     skipped = 0

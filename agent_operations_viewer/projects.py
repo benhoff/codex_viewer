@@ -229,6 +229,7 @@ def build_session_signal_badges(
     max_badges: int = 4,
 ) -> list[dict[str, str]]:
     badges: list[dict[str, str]] = []
+    warning_text = trimmed(viewer_warning)
     usage = usage_pressure_snapshot(source)
     if bool(usage["has_pressure"]):
         badges.extend(list(usage["badges"])[:3])
@@ -241,8 +242,8 @@ def build_session_signal_badges(
                 "label": count_label(aborted_turns, "aborted turn"),
             }
         )
-    if trimmed(viewer_warning):
-        badges.append({"tone": "amber", "label": "Import warning"})
+    if warning_text:
+        badges.append({"tone": "amber", "label": warning_text})
     return badges[:max_badges]
 
 
@@ -255,12 +256,13 @@ def summarize_attention_status(
     viewer_warning: str | None = None,
 ) -> dict[str, str | int | bool]:
     usage_snapshot = usage or {}
+    warning_text = trimmed(viewer_warning)
     has_usage_pressure = bool(usage_snapshot.get("has_pressure"))
-    has_errors = command_failure_count > 0 or bool(trimmed(viewer_warning))
+    has_errors = command_failure_count > 0 or bool(warning_text)
     has_aborts = aborted_turn_count > 0
 
     if has_usage_pressure or has_errors or has_aborts:
-        attention_count = int(has_usage_pressure) + int(command_failure_count > 0) + int(has_aborts) + int(bool(trimmed(viewer_warning)))
+        attention_count = int(has_usage_pressure) + int(command_failure_count > 0) + int(has_aborts) + int(bool(warning_text))
         if has_usage_pressure and not has_errors and not has_aborts:
             return {
                 "status_tone": str(usage_snapshot.get("status_tone") or "amber"),
@@ -272,8 +274,8 @@ def summarize_attention_status(
             }
 
         detail_parts: list[str] = []
-        if trimmed(viewer_warning):
-            detail_parts.append("Import warning")
+        if warning_text:
+            detail_parts.append(warning_text)
         if command_failure_count > 0:
             detail_parts.append(count_label(command_failure_count, "command exit"))
         if aborted_turn_count > 0:
@@ -1403,9 +1405,10 @@ def fetch_recent_session_turn_activity_windows(
         if secondary_date
         else "0 AS secondary_turn_count"
     )
-    params: list[Any] = [*ids]
+    params: list[Any] = []
     if secondary_date:
         params.append(secondary_date)
+    params.extend(ids)
     params.append(since_date)
     rows = connection.execute(
         f"""
@@ -1435,6 +1438,32 @@ def fetch_recent_session_turn_activity_windows(
                 item["secondary_turn_count"] = int(row["secondary_turn_count"] or 0)
             metadata[str(row["session_id"])] = item
     return metadata
+
+
+def count_session_turn_prompts_since(
+    connection: sqlite3.Connection,
+    session_ids: list[str],
+    since_timestamp: str,
+) -> int:
+    ids = sorted({session_id for session_id in session_ids if trimmed(session_id)})
+    if not ids:
+        return 0
+    normalized_since = trimmed(since_timestamp)
+    if not normalized_since:
+        return 0
+
+    placeholders = ", ".join("?" for _ in ids)
+    row = connection.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM session_turns
+        WHERE session_id IN ({placeholders})
+          AND NULLIF(TRIM(prompt_timestamp), '') IS NOT NULL
+          AND CAST(strftime('%s', prompt_timestamp) AS INTEGER) >= CAST(strftime('%s', ?) AS INTEGER)
+        """,
+        [*ids, normalized_since],
+    ).fetchone()
+    return int(row["count"] or 0) if row is not None else 0
 
 
 def fetch_session_issue_counts(

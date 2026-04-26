@@ -18,12 +18,12 @@ If this file and an ad hoc shell state disagree, trust the repo scripts in `scri
 Verified in this workspace on `2026-04-21`:
 
 - System interpreter: `/usr/bin/python3`
-- App dependency target dir: `/home/wulfuser/codex_viewer/.deps`
-- Local virtualenv interpreter: `/home/wulfuser/codex_viewer/.venv/bin/python`
+- App dependency target dir: `/home/wulfuser/agent_operations_viewer/.deps`
+- Local virtualenv interpreter: `/home/wulfuser/agent_operations_viewer/.venv/bin/python`
 - Local virtualenv site-packages:
-  - `/home/wulfuser/codex_viewer/.venv/lib/python3.12/site-packages`
-  - `/home/wulfuser/codex_viewer/.venv/lib/python3.12/dist-packages`
-  - `/home/wulfuser/codex_viewer/.venv/local/lib/python3.12/dist-packages`
+  - `/home/wulfuser/agent_operations_viewer/.venv/lib/python3.12/site-packages`
+  - `/home/wulfuser/agent_operations_viewer/.venv/lib/python3.12/dist-packages`
+  - `/home/wulfuser/agent_operations_viewer/.venv/local/lib/python3.12/dist-packages`
 - User site-packages exists at `/home/wulfuser/.local/lib/python3.12/site-packages`, but repo workflows should not depend on it.
 
 ### Dependency split that matters
@@ -35,7 +35,7 @@ The repo uses two different Python layouts:
 - `scripts/bootstrap-local.sh` installs requirements into `.deps` with:
   - `python3 -m pip install --target "$PROJECT_ROOT/.deps" -r requirements.txt`
 - `scripts/start-server.sh` runs:
-  - `/usr/bin/python3 -m codex_session_viewer serve`
+  - `/usr/bin/python3 -m agent_operations_viewer serve`
   - with `PYTHONPATH="$PROJECT_ROOT/.deps"`
 - `scripts/start-agent-daemon.sh` also uses `/usr/bin/python3` plus `PYTHONPATH=.deps`
 
@@ -49,10 +49,10 @@ The repo uses two different Python layouts:
 
 Using `PYTHONPATH=.deps python3`:
 
-- `fastapi` resolves from `/home/wulfuser/codex_viewer/.deps/fastapi/__init__.py`
-- `jinja2` resolves from `/home/wulfuser/codex_viewer/.deps/jinja2/__init__.py`
-- `itsdangerous` resolves from `/home/wulfuser/codex_viewer/.deps/itsdangerous/__init__.py`
-- `uvicorn` resolves from `/home/wulfuser/codex_viewer/.deps/uvicorn/__init__.py`
+- `fastapi` resolves from `/home/wulfuser/agent_operations_viewer/.deps/fastapi/__init__.py`
+- `jinja2` resolves from `/home/wulfuser/agent_operations_viewer/.deps/jinja2/__init__.py`
+- `itsdangerous` resolves from `/home/wulfuser/agent_operations_viewer/.deps/itsdangerous/__init__.py`
+- `uvicorn` resolves from `/home/wulfuser/agent_operations_viewer/.deps/uvicorn/__init__.py`
 - `httpx` is not installed there right now
 
 Using `./.venv/bin/python`:
@@ -75,8 +75,8 @@ Run the app the same way the repo expects:
 Run CLI commands against the app dependency set:
 
 ```bash
-PYTHONPATH=.deps python3 -m codex_session_viewer sync
-PYTHONPATH=.deps python3 -m codex_session_viewer export SESSION_ID --format markdown
+PYTHONPATH=.deps python3 -m agent_operations_viewer sync
+PYTHONPATH=.deps python3 -m agent_operations_viewer export SESSION_ID --format markdown
 ```
 
 Run the remote daemon the same way the scripts do:
@@ -91,7 +91,7 @@ Run focused local Python checks against the repo-local dependency path:
 PYTHONPATH=.deps python3 -m unittest tests.test_action_queue tests.test_action_queue_state tests.test_environment_audit
 ```
 
-If a command imports `codex_session_viewer.web.*`, `fastapi`, or template code, stay on the `.deps` path.
+If a command imports `agent_operations_viewer.web.*`, `fastapi`, or template code, stay on the `.deps` path.
 
 ### Known footguns
 
@@ -107,13 +107,13 @@ This document describes the current access model for the Agent Operations Viewer
 
 It reflects the behavior implemented in:
 
-- `codex_session_viewer/web/auth.py`
-- `codex_session_viewer/local_auth.py`
-- `codex_session_viewer/projects.py`
-- `codex_session_viewer/saved_turns.py`
-- `codex_session_viewer/web/routes/pages.py`
-- `codex_session_viewer/web/routes/projects.py`
-- `codex_session_viewer/web/routes/sessions.py`
+- `agent_operations_viewer/web/auth.py`
+- `agent_operations_viewer/local_auth.py`
+- `agent_operations_viewer/projects.py`
+- `agent_operations_viewer/saved_turns.py`
+- `agent_operations_viewer/web/routes/pages.py`
+- `agent_operations_viewer/web/routes/projects.py`
+- `agent_operations_viewer/web/routes/sessions.py`
 
 ## Policy Goals
 

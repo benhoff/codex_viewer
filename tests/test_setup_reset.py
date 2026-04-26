@@ -5,15 +5,15 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.agents import upsert_remote_agent_status
-from codex_session_viewer.api_tokens import create_api_token
-from codex_session_viewer.config import Settings
-from codex_session_viewer.db import connect, init_db, write_transaction
-from codex_session_viewer.local_auth import create_initial_admin, fetch_auth_status
-from codex_session_viewer.onboarding import reconcile_onboarding_state
-from codex_session_viewer.session_artifacts import store_session_artifact
-from codex_session_viewer.setup_reset import (
+from agent_operations_viewer import SYNC_API_VERSION, __version__
+from agent_operations_viewer.agents import upsert_remote_agent_status
+from agent_operations_viewer.api_tokens import create_api_token
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.db import connect, init_db, write_transaction
+from agent_operations_viewer.local_auth import create_initial_admin, fetch_auth_status
+from agent_operations_viewer.onboarding import reconcile_onboarding_state
+from agent_operations_viewer.session_artifacts import store_session_artifact
+from agent_operations_viewer.setup_reset import (
     prune_empty_artifact_dirs,
     remove_artifact_files,
     reset_setup_state,

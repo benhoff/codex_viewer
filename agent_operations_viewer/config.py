@@ -38,6 +38,14 @@ def _session_secret_path(data_dir: Path) -> Path:
     return data_dir / SESSION_SECRET_FILENAME
 
 
+def _default_database_path(data_dir: Path) -> Path:
+    renamed_path = data_dir / "agent_operations_viewer_sessions.sqlite3"
+    legacy_path = data_dir / "codex_sessions.sqlite3"
+    if renamed_path.exists() or not legacy_path.exists():
+        return renamed_path
+    return legacy_path
+
+
 def _read_session_secret(path: Path) -> str | None:
     try:
         return _clean_text(path.read_text(encoding="utf-8"))
@@ -186,9 +194,11 @@ class Settings:
         load_project_env(root)
         environment_name = (os.getenv("CODEX_VIEWER_ENV") or "").strip() or "default"
         data_dir = Path(os.getenv("CODEX_VIEWER_DATA_DIR", root / "data")).expanduser()
-        database_path = Path(
-            os.getenv("CODEX_VIEWER_DB", data_dir / "codex_sessions.sqlite3")
-        ).expanduser()
+        database_path_env = os.getenv("CODEX_VIEWER_DB")
+        if database_path_env:
+            database_path = Path(database_path_env).expanduser()
+        else:
+            database_path = _default_database_path(data_dir)
         sync_mode = os.getenv("CODEX_VIEWER_SYNC_MODE", "local").strip().lower() or "local"
         app_version = __version__
         sync_api_version = SYNC_API_VERSION

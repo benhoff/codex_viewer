@@ -1,6 +1,8 @@
 # Agent Operations Viewer
 
-FastAPI viewer for Codex rollout sessions.
+FastAPI viewer and sync tooling for Codex sessions and related agent operations.
+
+The repo and Python package are now named `agent_operations_viewer`, but several runtime identifiers still keep the legacy `CODEX_VIEWER_*` / `.codex` naming for compatibility. That is intentional.
 
 It is optimized for the shortest path to useful output:
 
@@ -44,7 +46,7 @@ If the dashboard is empty:
 3. Run a manual import:
 
 ```bash
-PYTHONPATH=.deps python3 -m codex_session_viewer sync
+PYTHONPATH=.deps python3 -m agent_operations_viewer sync
 ```
 
 Do not start by copying `.env.server.example` unless you are intentionally setting up a central server for other machines.
@@ -68,10 +70,13 @@ Then open the viewer, finish `/setup`, create a sync token, and connect an agent
 
 Agent host setup:
 
+Token-based daemon host:
+
 ```bash
 cp .env.agent.example .env
 ./scripts/bootstrap-local.sh --skip-css
-./scripts/start-agent-daemon.sh
+PYTHONPATH=.deps python3 -m agent_operations_viewer service install
+PYTHONPATH=.deps python3 -m agent_operations_viewer service start
 ```
 
 Set these values in the agent `.env` file:
@@ -79,7 +84,17 @@ Set these values in the agent `.env` file:
 - `CODEX_VIEWER_SERVER_URL`
 - `CODEX_VIEWER_SYNC_API_TOKEN`
 
-The agent wrapper already forces `CODEX_VIEWER_SYNC_MODE=remote`.
+Browser-paired machine flow:
+
+```bash
+./scripts/bootstrap-local.sh --skip-css
+PYTHONPATH=.deps python3 -m agent_operations_viewer machine setup
+```
+
+That flow pairs the machine through the browser, installs the per-user daemon service, and starts it.
+
+For foreground/manual daemon runs, `./scripts/start-agent-daemon.sh` still starts the sync loop directly.
+The daemon wrapper forces `CODEX_VIEWER_SYNC_MODE=remote`.
 For native macOS and Windows launch examples, including `launchd` and Task Scheduler, see [docs/agent-daemon-windows-macos.md](docs/agent-daemon-windows-macos.md).
 
 ## Agent Daemon Layout
@@ -119,19 +134,33 @@ Override the bind target without editing `.env`:
 Run a one-shot local import:
 
 ```bash
-PYTHONPATH=.deps python3 -m codex_session_viewer sync
+PYTHONPATH=.deps python3 -m agent_operations_viewer sync
 ```
 
 Force a full rebuild:
 
 ```bash
-PYTHONPATH=.deps python3 -m codex_session_viewer sync --rebuild
+PYTHONPATH=.deps python3 -m agent_operations_viewer sync --rebuild
 ```
 
-Run the remote sync daemon:
+Run the remote sync daemon in the foreground:
 
 ```bash
 ./scripts/start-agent-daemon.sh
+```
+
+Install the background daemon service for the current user:
+
+```bash
+PYTHONPATH=.deps python3 -m agent_operations_viewer service install
+PYTHONPATH=.deps python3 -m agent_operations_viewer service start
+PYTHONPATH=.deps python3 -m agent_operations_viewer service status
+```
+
+Pair this machine through the browser, install the service, and start it:
+
+```bash
+PYTHONPATH=.deps python3 -m agent_operations_viewer machine setup
 ```
 
 Run the remote sync daemon from Windows PowerShell:
@@ -144,25 +173,25 @@ Run the remote sync daemon from Windows PowerShell:
 Export one session:
 
 ```bash
-PYTHONPATH=.deps python3 -m codex_session_viewer export SESSION_ID --format markdown
+PYTHONPATH=.deps python3 -m agent_operations_viewer export SESSION_ID --format markdown
 ```
 
 Create a whole-instance backup archive:
 
 ```bash
-PYTHONPATH=.deps python3 -m codex_session_viewer backup create --output ./codex-viewer-backup.zip
+PYTHONPATH=.deps python3 -m agent_operations_viewer backup create --output ./agent-operations-viewer-backup.zip
 ```
 
 Verify a backup archive:
 
 ```bash
-PYTHONPATH=.deps python3 -m codex_session_viewer backup verify ./codex-viewer-backup.zip
+PYTHONPATH=.deps python3 -m agent_operations_viewer backup verify ./agent-operations-viewer-backup.zip
 ```
 
 Restore a backup archive into a fresh data directory:
 
 ```bash
-PYTHONPATH=.deps python3 -m codex_session_viewer backup restore ./codex-viewer-backup.zip --data-dir ./restore-data
+PYTHONPATH=.deps python3 -m agent_operations_viewer backup restore ./agent-operations-viewer-backup.zip --data-dir ./restore-data
 ```
 
 ## Configuration

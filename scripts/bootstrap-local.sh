@@ -30,13 +30,13 @@ if ((skip_css)); then
   exit 0
 fi
 
-if [[ -f "$PROJECT_ROOT/codex_session_viewer/static/app.css" ]]; then
+if [[ -f "$PROJECT_ROOT/agent_operations_viewer/static/app.css" ]]; then
   bootstrap_log "found prebuilt CSS; skipping Tailwind build"
   exit 0
 fi
 
 if ! command -v npm >/dev/null 2>&1; then
-  bootstrap_log "codex_session_viewer/static/app.css is missing and npm is not installed"
+  bootstrap_log "agent_operations_viewer/static/app.css is missing and npm is not installed"
   bootstrap_log "install Node.js and rerun this script, or use Docker instead"
   exit 1
 fi

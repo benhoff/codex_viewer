@@ -73,7 +73,7 @@ the web UI.
 
 ## macOS Auto-Start With launchd
 
-Example `~/Library/LaunchAgents/dev.codex-viewer.agent.plist`:
+Example `~/Library/LaunchAgents/dev.agent-operations-viewer.agent.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -81,15 +81,15 @@ Example `~/Library/LaunchAgents/dev.codex-viewer.agent.plist`:
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>dev.codex-viewer.agent</string>
+    <string>dev.agent-operations-viewer.agent</string>
 
     <key>WorkingDirectory</key>
-    <string>/Users/YOU/src/codex_viewer</string>
+    <string>/Users/YOU/src/agent_operations_viewer</string>
 
     <key>ProgramArguments</key>
     <array>
       <string>/bin/bash</string>
-      <string>/Users/YOU/src/codex_viewer/scripts/start-agent-daemon.sh</string>
+      <string>/Users/YOU/src/agent_operations_viewer/scripts/start-agent-daemon.sh</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -99,10 +99,10 @@ Example `~/Library/LaunchAgents/dev.codex-viewer.agent.plist`:
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/YOU/Library/Logs/codex-viewer-agent.log</string>
+    <string>/Users/YOU/Library/Logs/agent-operations-viewer-agent.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/YOU/Library/Logs/codex-viewer-agent.log</string>
+    <string>/Users/YOU/Library/Logs/agent-operations-viewer-agent.log</string>
   </dict>
 </plist>
 ```
@@ -110,14 +110,14 @@ Example `~/Library/LaunchAgents/dev.codex-viewer.agent.plist`:
 Load it:
 
 ```bash
-launchctl load ~/Library/LaunchAgents/dev.codex-viewer.agent.plist
-launchctl start dev.codex-viewer.agent
+launchctl load ~/Library/LaunchAgents/dev.agent-operations-viewer.agent.plist
+launchctl start dev.agent-operations-viewer.agent
 ```
 
 Unload it:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/dev.codex-viewer.agent.plist
+launchctl unload ~/Library/LaunchAgents/dev.agent-operations-viewer.agent.plist
 ```
 
 ## Windows PowerShell Quick Start
@@ -154,7 +154,7 @@ Create a per-user logon task:
 schtasks /Create `
   /SC ONLOGON `
   /TN "Codex Viewer Agent" `
-  /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%USERPROFILE%\\src\\codex_viewer\\scripts\\start-agent-daemon.ps1`"" `
+  /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%USERPROFILE%\\src\\agent_operations_viewer\\scripts\\start-agent-daemon.ps1`"" `
   /F
 ```
 

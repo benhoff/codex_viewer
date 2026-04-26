@@ -46,7 +46,7 @@ def _write_bytes_atomic(destination: Path, payload: bytes, *, mode: int | None =
 def _copy_database_snapshot(database_path: Path) -> Path:
     if not database_path.exists():
         raise RuntimeError(f"Database file does not exist: {database_path}")
-    with tempfile.NamedTemporaryFile(prefix="codex-viewer-backup-", suffix=".sqlite3", delete=False) as handle:
+    with tempfile.NamedTemporaryFile(prefix="agent-operations-viewer-backup-", suffix=".sqlite3", delete=False) as handle:
         snapshot_path = Path(handle.name)
     try:
         with sqlite3.connect(database_path, timeout=30.0) as source:
@@ -192,7 +192,7 @@ def create_instance_backup(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             dir=output_path.parent,
-            prefix=".codex-viewer-backup-",
+            prefix=".agent-operations-viewer-backup-",
             suffix=".zip",
             delete=False,
         ) as handle:
@@ -290,7 +290,7 @@ def verify_backup_archive(archive_path: Path) -> dict[str, Any]:
                 f"Backup archive had {len(artifact_entries)} artifact files but manifest expected {expected_artifact_count}"
             )
 
-        with tempfile.NamedTemporaryFile(prefix="codex-viewer-backup-verify-", suffix=".sqlite3", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(prefix="agent-operations-viewer-backup-verify-", suffix=".sqlite3", delete=False) as handle:
             temp_database_path = Path(handle.name)
         try:
             temp_database_path.write_bytes(_extract_member_bytes(archive, database_archive_path))
@@ -343,7 +343,7 @@ def restore_instance_backup(
         database_relative_path = _normalize_member_path(database_archive_path).relative_to(BACKUP_DATA_PREFIX)
         resolved_database_path = target_data_dir / database_relative_path
     else:
-        resolved_database_path = target_database_path or (target_data_dir / str(database_meta.get("filename") or "codex_sessions.sqlite3"))
+        resolved_database_path = target_database_path or (target_data_dir / str(database_meta.get("filename") or "agent_operations_viewer_sessions.sqlite3"))
         if resolved_database_path.exists():
             raise RuntimeError(f"Restore database path already exists: {resolved_database_path}")
 

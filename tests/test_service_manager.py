@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.config import Settings
-from codex_session_viewer.service_manager import (
+from agent_operations_viewer import SYNC_API_VERSION, __version__
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.service_manager import (
     SYSTEMD_USER_UNIT_NAME,
     ServiceCommandResult,
     install_service,
@@ -79,8 +79,8 @@ class ServiceManagerTests(unittest.TestCase):
                 stderr="",
             )
 
-        with patch("codex_session_viewer.service_manager._linux_unit_path", return_value=unit_path):
-            with patch("codex_session_viewer.service_manager._run_command", side_effect=fake_run_command):
+        with patch("agent_operations_viewer.service_manager._linux_unit_path", return_value=unit_path):
+            with patch("agent_operations_viewer.service_manager._run_command", side_effect=fake_run_command):
                 result = install_service(self.settings, target="systemd-user")
 
         self.assertEqual(result["target"], "systemd-user")
@@ -122,8 +122,8 @@ class ServiceManagerTests(unittest.TestCase):
                 )
             raise AssertionError(f"unexpected command: {command}")
 
-        with patch("codex_session_viewer.service_manager._linux_unit_path", return_value=unit_path):
-            with patch("codex_session_viewer.service_manager._run_command", side_effect=fake_run_command):
+        with patch("agent_operations_viewer.service_manager._linux_unit_path", return_value=unit_path):
+            with patch("agent_operations_viewer.service_manager._run_command", side_effect=fake_run_command):
                 result = service_status(target="systemd-user")
 
         self.assertEqual(result["target"], "systemd-user")

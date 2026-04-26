@@ -66,7 +66,7 @@ try {
         exit 0
     }
 
-    $cssPath = Join-Path $ProjectRoot "codex_session_viewer/static/app.css"
+    $cssPath = Join-Path $ProjectRoot "agent_operations_viewer/static/app.css"
     if (Test-Path $cssPath) {
         Write-BootstrapLog "found prebuilt CSS; skipping Tailwind build"
         exit 0
@@ -74,7 +74,7 @@ try {
 
     $npm = Get-Command npm -ErrorAction SilentlyContinue
     if ($null -eq $npm) {
-        Write-BootstrapLog "codex_session_viewer/static/app.css is missing and npm is not installed"
+        Write-BootstrapLog "agent_operations_viewer/static/app.css is missing and npm is not installed"
         Write-BootstrapLog "install Node.js and rerun this script, or use Docker instead"
         exit 1
     }

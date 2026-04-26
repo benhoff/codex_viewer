@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_REPO="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
-TARGET_ROOT="/opt/codex_viewer_buddy"
-SERVICE_NAME="codex-session-viewer-buddy"
+TARGET_ROOT="/opt/agent_operations_viewer_buddy"
+SERVICE_NAME="agent-operations-viewer-buddy"
 RUN_USER="hoff"
 RUN_GROUP="hoff"
 PORT="8002"
@@ -18,7 +18,7 @@ usage() {
 usage: sudo ./scripts/install-buddy-instance.sh [options]
 
 Options:
-  --target-root PATH   Install path for the isolated copy. Default: /opt/codex_viewer_buddy
+  --target-root PATH   Install path for the isolated copy. Default: /opt/agent_operations_viewer_buddy
   --user USER          systemd service user. Default: hoff
   --group GROUP        systemd service group. Default: hoff
   --port PORT          Listen port for the isolated viewer. Default: 8002
@@ -111,8 +111,8 @@ if [[ ! -d "${SOURCE_REPO}/.deps" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${SOURCE_REPO}/codex_session_viewer/static/app.css" ]]; then
-  printf 'missing built CSS at %s/codex_session_viewer/static/app.css\n' "${SOURCE_REPO}" >&2
+if [[ ! -f "${SOURCE_REPO}/agent_operations_viewer/static/app.css" ]]; then
+  printf 'missing built CSS at %s/agent_operations_viewer/static/app.css\n' "${SOURCE_REPO}" >&2
   exit 1
 fi
 
@@ -159,7 +159,7 @@ sed -i \
   -e "s|^CODEX_VIEWER_SERVER_URL=.*$|CODEX_VIEWER_SERVER_URL=${SERVER_URL}|" \
   -e "s|^CODEX_VIEWER_SOURCE_HOST=.*$|CODEX_VIEWER_SOURCE_HOST=${SOURCE_HOST}|" \
   -e "s|^CODEX_SESSION_ROOTS=.*$|CODEX_SESSION_ROOTS=${TARGET_ROOT}/session_roots|" \
-  -e "s|^CODEX_VIEWER_DB=.*$|CODEX_VIEWER_DB=${TARGET_ROOT}/data/codex_sessions.sqlite3|" \
+  -e "s|^CODEX_VIEWER_DB=.*$|CODEX_VIEWER_DB=${TARGET_ROOT}/data/agent_operations_viewer_sessions.sqlite3|" \
   -e "s|^CODEX_VIEWER_DATA_DIR=.*$|CODEX_VIEWER_DATA_DIR=${TARGET_ROOT}/data|" \
   "${TARGET_ENV}"
 

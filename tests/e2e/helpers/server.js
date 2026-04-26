@@ -75,7 +75,7 @@ async function startServer({ rootDir, outputDir, authMode = "password", syncMode
   };
   const child = spawn(
     "python3",
-    ["-m", "codex_session_viewer", "serve", "--host", "127.0.0.1", "--port", String(port), "--no-sync"],
+    ["-m", "agent_operations_viewer", "serve", "--host", "127.0.0.1", "--port", String(port), "--no-sync"],
     {
       cwd: rootDir,
       env,

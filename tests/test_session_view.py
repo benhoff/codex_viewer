@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from codex_session_viewer.session_view import build_turn_review_focus
+from agent_operations_viewer.session_view import build_turn_review_focus
 
 
 class SessionViewTests(unittest.TestCase):

@@ -12,11 +12,11 @@ import threading
 import unittest
 from unittest import mock
 
-from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.git_utils import infer_project_identity
-from codex_session_viewer.config import Settings
-from codex_session_viewer.db import connect, init_db, write_transaction
-from codex_session_viewer.importer import (
+from agent_operations_viewer import SYNC_API_VERSION, __version__
+from agent_operations_viewer.git_utils import infer_project_identity
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.db import connect, init_db, write_transaction
+from agent_operations_viewer.importer import (
     normalize_event,
     normalized_event_to_dict,
     parse_session_text,
@@ -26,18 +26,18 @@ from codex_session_viewer.importer import (
     sync_sessions,
     upsert_parsed_session,
 )
-from codex_session_viewer.file_watch import SessionFileWatcher
-from codex_session_viewer.remote_sync import RemoteSyncError, json_request, sync_sessions_remote
-from codex_session_viewer.projects import (
+from agent_operations_viewer.file_watch import SessionFileWatcher
+from agent_operations_viewer.remote_sync import RemoteSyncError, json_request, sync_sessions_remote
+from agent_operations_viewer.projects import (
     build_project_access_context,
     effective_project_fields,
     fetch_turn_stream,
     fetch_group_detail,
 )
-from codex_session_viewer.session_status import is_task_complete, terminal_turn_summary
-from codex_session_viewer.session_artifacts import store_session_artifact
-from codex_session_viewer.session_view import build_turns
-from codex_session_viewer.web.routes.sync_api import _read_json_request_payload, store_raw_sync_sessions_batch
+from agent_operations_viewer.session_status import is_task_complete, terminal_turn_summary
+from agent_operations_viewer.session_artifacts import store_session_artifact
+from agent_operations_viewer.session_view import build_turns
+from agent_operations_viewer.web.routes.sync_api import _read_json_request_payload, store_raw_sync_sessions_batch
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 CLAUDE_FIXTURES_DIR = FIXTURES_DIR / "claude"
@@ -1092,8 +1092,8 @@ class RolloutParsingTests(unittest.TestCase):
                     "status": "completed",
                     "action": {
                         "type": "exec",
-                        "command": ["rg", "phase", "codex_session_viewer"],
-                        "working_directory": "/home/wulfuser/codex_viewer",
+                        "command": ["rg", "phase", "agent_operations_viewer"],
+                        "working_directory": "/home/wulfuser/agent_operations_viewer",
                     },
                 },
             },
@@ -1104,7 +1104,7 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(shell_event.kind, "tool_call")
         self.assertEqual(shell_event.tool_name, "exec_command")
         self.assertEqual(shell_event.call_id, "call_123")
-        self.assertIn("rg phase codex_session_viewer", shell_event.command_text or "")
+        self.assertIn("rg phase agent_operations_viewer", shell_event.command_text or "")
 
         completion_event = normalize_event(
             {
@@ -1147,7 +1147,7 @@ class RolloutParsingTests(unittest.TestCase):
                 "timestamp": "2026-04-20T07:20:26.744Z",
                 "type": "turn_context",
                 "payload": {
-                    "cwd": "/home/wulfuser/codex_viewer",
+                    "cwd": "/home/wulfuser/agent_operations_viewer",
                     "approval_policy": "on-request",
                     "sandbox_policy": {"type": "workspace-write", "network_access": False},
                     "model": "gpt-5.4",
@@ -1234,7 +1234,7 @@ class RolloutParsingTests(unittest.TestCase):
             completion_event,
         ]
 
-        turns = build_turns(events, cwd="/home/wulfuser/codex_viewer")
+        turns = build_turns(events, cwd="/home/wulfuser/agent_operations_viewer")
 
         self.assertEqual(len(turns), 1)
         turn = turns[0]
@@ -1560,7 +1560,7 @@ class RolloutParsingTests(unittest.TestCase):
             session_root = project_root / "sessions"
             session_root.mkdir()
             data_dir = project_root / "data"
-            db_path = data_dir / "codex_sessions.sqlite3"
+            db_path = data_dir / "agent_operations_viewer_sessions.sqlite3"
             raw_jsonl = "\n".join(
                 [
                     json.dumps(
@@ -1703,7 +1703,7 @@ class RolloutParsingTests(unittest.TestCase):
                     return {"status": "ok"}
                 raise AssertionError(f"Unexpected request path: {path}")
 
-            with mock.patch("codex_session_viewer.remote_sync.json_request", side_effect=fake_json_request):
+            with mock.patch("agent_operations_viewer.remote_sync.json_request", side_effect=fake_json_request):
                 stats = sync_sessions_remote(settings, force=True)
 
         batch_calls = [call for call in calls if call[1] == "/api/sync/sessions-raw"]
@@ -1751,7 +1751,7 @@ class RolloutParsingTests(unittest.TestCase):
                     return {"status": "ok"}
                 raise AssertionError(f"Unexpected request path: {path}")
 
-            with mock.patch("codex_session_viewer.remote_sync.json_request", side_effect=fake_json_request):
+            with mock.patch("agent_operations_viewer.remote_sync.json_request", side_effect=fake_json_request):
                 stats = sync_sessions_remote(settings, force=True)
 
         batch_calls = [call for call in calls if call[1] == "/api/sync/sessions-raw"]
@@ -1786,7 +1786,7 @@ class RolloutParsingTests(unittest.TestCase):
             captured["headers"] = dict(request.header_items())
             return _FakeResponse()
 
-        with mock.patch("codex_session_viewer.remote_sync.urlopen", side_effect=fake_urlopen):
+        with mock.patch("agent_operations_viewer.remote_sync.urlopen", side_effect=fake_urlopen):
             response = json_request(
                 settings,
                 "POST",
@@ -1881,14 +1881,14 @@ class RolloutParsingTests(unittest.TestCase):
                     return {"status": "ok"}
                 raise AssertionError(f"Unexpected request path: {method} {path}")
 
-            with mock.patch("codex_session_viewer.remote_sync.json_request", side_effect=fake_json_request):
+            with mock.patch("agent_operations_viewer.remote_sync.json_request", side_effect=fake_json_request):
                 first_stats = sync_sessions_remote(settings)
 
             with (
-                mock.patch("codex_session_viewer.remote_sync.json_request", side_effect=fake_json_request),
-                mock.patch("codex_session_viewer.remote_sync.prescan_session_source", side_effect=AssertionError("prescan should not rerun")),
-                mock.patch("codex_session_viewer.remote_sync.parse_session_text", side_effect=AssertionError("parse should not rerun")),
-                mock.patch("codex_session_viewer.remote_sync.read_session_source_text", side_effect=AssertionError("read should not rerun")),
+                mock.patch("agent_operations_viewer.remote_sync.json_request", side_effect=fake_json_request),
+                mock.patch("agent_operations_viewer.remote_sync.prescan_session_source", side_effect=AssertionError("prescan should not rerun")),
+                mock.patch("agent_operations_viewer.remote_sync.parse_session_text", side_effect=AssertionError("parse should not rerun")),
+                mock.patch("agent_operations_viewer.remote_sync.read_session_source_text", side_effect=AssertionError("read should not rerun")),
             ):
                 second_stats = sync_sessions_remote(settings)
 
@@ -1924,8 +1924,8 @@ class RolloutParsingTests(unittest.TestCase):
                 raise AssertionError(f"Unexpected request path: {path}")
 
             with (
-                mock.patch("codex_session_viewer.remote_sync.json_request", side_effect=fake_json_request),
-                mock.patch("codex_session_viewer.remote_sync.iter_session_files", side_effect=AssertionError("full scan should not run")),
+                mock.patch("agent_operations_viewer.remote_sync.json_request", side_effect=fake_json_request),
+                mock.patch("agent_operations_viewer.remote_sync.iter_session_files", side_effect=AssertionError("full scan should not run")),
             ):
                 stats = sync_sessions_remote(
                     settings,

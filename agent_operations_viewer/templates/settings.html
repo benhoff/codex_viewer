@@ -496,13 +496,13 @@
 
       <div class="mt-5 rounded-[1.4rem] bg-stone-50 p-4">
         <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">CLI</p>
-        <pre class="mt-2 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m codex_session_viewer pair</pre>
+        <pre class="mt-2 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m agent_operations_viewer pair</pre>
       </div>
 
       <div class="mt-5 rounded-[1.4rem] bg-stone-50 p-4 text-sm leading-6 text-stone-600">
         <p>After pairing, run these as two separate commands on that machine:</p>
-        <pre class="mt-3 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m codex_session_viewer service install
-python -m codex_session_viewer service start</pre>
+        <pre class="mt-3 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m agent_operations_viewer service install
+python -m agent_operations_viewer service start</pre>
       </div>
     </section>
 
@@ -566,7 +566,7 @@ python -m codex_session_viewer service start</pre>
         {% endfor %}
       {% else %}
         <div class="rounded-[1.7rem] border border-dashed border-stone-900/15 bg-stone-50/70 p-6 text-sm leading-6 text-stone-600">
-          No paired machine credentials exist yet. New desktop installs should use <span class="font-mono text-stone-900">python -m codex_session_viewer pair</span> instead of copying a raw token.
+          No paired machine credentials exist yet. New desktop installs should use <span class="font-mono text-stone-900">python -m agent_operations_viewer pair</span> instead of copying a raw token.
         </div>
       {% endif %}
     </section>

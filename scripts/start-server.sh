@@ -12,7 +12,7 @@ export PYTHONPATH="${PROJECT_ROOT}/.deps${PYTHONPATH:+:${PYTHONPATH}}"
 cmd=(
   /usr/bin/python3
   -m
-  codex_session_viewer
+  agent_operations_viewer
   serve
   --no-sync
   "$@"
@@ -27,9 +27,9 @@ if [[ "${server_dev_reload}" == "1" ]]; then
   run_with_dev_reload \
     "${PROJECT_ROOT}" \
     "${server_dev_reload_interval}" \
-    "${PROJECT_ROOT}/codex_session_viewer" \
-    "${PROJECT_ROOT}/codex_session_viewer/templates" \
-    "${PROJECT_ROOT}/codex_session_viewer/static/app.css" \
+    "${PROJECT_ROOT}/agent_operations_viewer" \
+    "${PROJECT_ROOT}/agent_operations_viewer/templates" \
+    "${PROJECT_ROOT}/agent_operations_viewer/static/app.css" \
     "${PROJECT_ROOT}/src" \
     "${PROJECT_ROOT}/.env" \
     "${PROJECT_ROOT}/.env.local" \

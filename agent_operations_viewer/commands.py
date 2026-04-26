@@ -48,8 +48,8 @@ def _service_install_summary(result: dict[str, object]) -> list[str]:
         lines.append("The launch agent definition is installed for your user account.")
     elif target == "schtasks":
         lines.append("The scheduled task is registered for your user account.")
-    lines.append("It is not started yet. Run `python3 -m codex_session_viewer service start` to start it now.")
-    lines.append("Run `python3 -m codex_session_viewer service status` to confirm install and runtime state.")
+    lines.append("It is not started yet. Run `python3 -m agent_operations_viewer service start` to start it now.")
+    lines.append("Run `python3 -m agent_operations_viewer service status` to confirm install and runtime state.")
     return lines
 
 
@@ -57,7 +57,7 @@ def _service_start_summary(result: dict[str, object]) -> list[str]:
     target = str(result.get("target") or "service manager")
     return [
         f"Started the background daemon via {target}.",
-        "Run `python3 -m codex_session_viewer service status` to confirm it is running.",
+        "Run `python3 -m agent_operations_viewer service status` to confirm it is running.",
     ]
 
 
@@ -65,7 +65,7 @@ def _service_stop_summary(result: dict[str, object]) -> list[str]:
     target = str(result.get("target") or "service manager")
     return [
         f"Stopped the background daemon via {target}.",
-        "Run `python3 -m codex_session_viewer service status` to confirm it is no longer running.",
+        "Run `python3 -m agent_operations_viewer service status` to confirm it is no longer running.",
     ]
 
 
@@ -347,7 +347,7 @@ def cli() -> int:
     if args.command == "backup":
         if args.backup_command == "create":
             timestamp = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
-            default_output = settings.project_root / f"codex-viewer-backup-{timestamp}.zip"
+            default_output = settings.project_root / f"agent-operations-viewer-backup-{timestamp}.zip"
             output_path = Path(args.output).expanduser() if args.output else default_output
             result = create_instance_backup(settings, output_path=output_path)
             print(json.dumps(result, indent=2))

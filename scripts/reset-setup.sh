@@ -36,7 +36,7 @@ Options:
 Examples:
   ./scripts/reset-setup.sh
   ./scripts/reset-setup.sh --full-bootstrap
-  ./scripts/reset-setup.sh --db /opt/codex_viewer_buddy/data/codex_sessions.sqlite3 --yes
+  ./scripts/reset-setup.sh --db /opt/agent_operations_viewer_buddy/data/agent_operations_viewer_sessions.sqlite3 --yes
 EOF
 }
 
@@ -166,9 +166,9 @@ import json
 import os
 from pathlib import Path
 
-from codex_session_viewer.config import Settings
-from codex_session_viewer.db import connect, write_transaction
-from codex_session_viewer.setup_reset import (
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.db import connect, write_transaction
+from agent_operations_viewer.setup_reset import (
     prune_empty_artifact_dirs,
     remove_artifact_files,
     reset_setup_state,

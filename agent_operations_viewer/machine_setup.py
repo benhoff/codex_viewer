@@ -136,8 +136,8 @@ def pair_machine(
     existing_identity = load_machine_identity(settings)
     if existing_identity is not None and not force:
         raise SystemExit(
-            "This machine is already paired. Run `python -m codex_session_viewer machine unpair` "
-            "or `python -m codex_session_viewer machine repair --re-pair` first."
+            "This machine is already paired. Run `python -m agent_operations_viewer machine unpair` "
+            "or `python -m agent_operations_viewer machine repair --re-pair` first."
         )
 
     keypair = generate_machine_keypair()
@@ -311,7 +311,7 @@ def machine_repair(
         identity = load_machine_identity(settings)
         actions.append("paired_machine")
     elif identity is None:
-        raise SystemExit("No machine credential is configured. Run `python -m codex_session_viewer pair`.")
+        raise SystemExit("No machine credential is configured. Run `python -m agent_operations_viewer pair`.")
 
     if reinstall_service:
         uninstall_service()

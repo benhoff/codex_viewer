@@ -8,12 +8,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from codex_session_viewer.config import Settings
+from agent_operations_viewer.config import Settings
 
 
-SYSTEMD_USER_UNIT_NAME = "codex-session-viewer-agent.service"
-LAUNCHD_LABEL = "com.codexsessionviewer.agent"
-WINDOWS_TASK_NAME = "CodexSessionViewerAgent"
+SYSTEMD_USER_UNIT_NAME = "agent-operations-viewer-agent.service"
+LAUNCHD_LABEL = "com.agentoperationsviewer.agent"
+WINDOWS_TASK_NAME = "AgentOperationsViewerAgent"
 
 
 @dataclass(slots=True)
@@ -75,7 +75,7 @@ def _linux_unit_contents(settings: Settings) -> str:
     return "\n".join(
         [
             "[Unit]",
-            "Description=Codex Session Viewer agent daemon",
+            "Description=Agent Operations Viewer agent daemon",
             "After=network-online.target",
             "Wants=network-online.target",
             "",

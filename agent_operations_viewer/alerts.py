@@ -98,7 +98,7 @@ def _build_delivery_payload(
     status = str(incident["status"])
     text = f"[{severity}] {source_host} {title}: {detail}".strip()
     return {
-        "source": "codex_session_viewer",
+        "source": "agent_operations_viewer",
         "notification_kind": notification_kind,
         "status": status,
         "alert_key": str(incident["alert_key"]),
@@ -705,7 +705,7 @@ def run_alert_worker(
     interval_seconds: int = DEFAULT_ALERT_WORKER_INTERVAL,
     once: bool = False,
 ) -> int:
-    logger = logging.getLogger("codex_session_viewer.alerts")
+    logger = logging.getLogger("agent_operations_viewer.alerts")
     stop_event = threading.Event()
     interval_seconds = max(5, interval_seconds)
 

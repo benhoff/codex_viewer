@@ -1,8 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
-    "./codex_session_viewer/templates/**/*.html",
-    "./codex_session_viewer/**/*.py"
+    "./agent_operations_viewer/templates/**/*.html",
+    "./agent_operations_viewer/**/*.py"
   ],
   theme: {
     extend: {}

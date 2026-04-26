@@ -9,21 +9,21 @@ from urllib.parse import urlsplit
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.config import Settings
-from codex_session_viewer.db import connect, write_transaction
-from codex_session_viewer.local_machine import LocalMachineIdentity, store_machine_identity
-from codex_session_viewer.machine_auth import build_machine_auth_headers, generate_machine_keypair
-from codex_session_viewer.machine_credentials import (
+from agent_operations_viewer import SYNC_API_VERSION, __version__
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.db import connect, write_transaction
+from agent_operations_viewer.local_machine import LocalMachineIdentity, store_machine_identity
+from agent_operations_viewer.machine_auth import build_machine_auth_headers, generate_machine_keypair
+from agent_operations_viewer.machine_credentials import (
     approve_pairing_session,
     create_machine_credential,
     create_pairing_session,
     finalize_pairing_session,
     hash_pairing_secret,
 )
-from codex_session_viewer.remote_sync import build_headers
-from codex_session_viewer.web.app import create_app
-from codex_session_viewer.web.auth import require_sync_api_auth
+from agent_operations_viewer.remote_sync import build_headers
+from agent_operations_viewer.web.app import create_app
+from agent_operations_viewer.web.auth import require_sync_api_auth
 
 
 def make_test_settings(*, data_dir: Path) -> Settings:

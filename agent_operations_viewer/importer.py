@@ -26,7 +26,7 @@ from .session_artifacts import load_session_artifact_text, read_session_source_t
 from .turn_index import replace_session_turn_search, replace_session_turns
 from .text_utils import shorten, strip_codex_wrappers
 
-logger = logging.getLogger("codex_session_viewer.importer")
+logger = logging.getLogger("agent_operations_viewer.importer")
 
 
 def utc_now_iso() -> str:

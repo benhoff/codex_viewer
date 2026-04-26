@@ -6,14 +6,14 @@ import unittest
 
 from starlette.requests import Request
 
-from codex_session_viewer.api_tokens import create_api_token
-from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.config import Settings
-from codex_session_viewer.db import connect, write_transaction
-from codex_session_viewer.local_auth import create_initial_admin
-from codex_session_viewer.machine_credentials import create_machine_credential
-from codex_session_viewer.web.app import create_app
-from codex_session_viewer.web.routes.pages import (
+from agent_operations_viewer.api_tokens import create_api_token
+from agent_operations_viewer import SYNC_API_VERSION, __version__
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.db import connect, write_transaction
+from agent_operations_viewer.local_auth import create_initial_admin
+from agent_operations_viewer.machine_credentials import create_machine_credential
+from agent_operations_viewer.web.app import create_app
+from agent_operations_viewer.web.routes.pages import (
     authenticated_destination,
     index,
     setup_page,

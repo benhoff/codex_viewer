@@ -5,18 +5,18 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.action_queue import (
+from agent_operations_viewer import SYNC_API_VERSION, __version__
+from agent_operations_viewer.action_queue import (
     build_homepage_action_queue,
     build_project_action_groups,
     build_repo_action_signal_map,
 )
-from codex_session_viewer.action_queue_state import set_action_queue_state
-from codex_session_viewer.config import Settings
-from codex_session_viewer.db import connect, init_db, write_transaction
-from codex_session_viewer.importer import parse_session_text, upsert_parsed_session
-from codex_session_viewer.projects import build_grouped_projects, fetch_group_detail, query_group_rows
-from codex_session_viewer.session_view import build_turns
+from agent_operations_viewer.action_queue_state import set_action_queue_state
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.db import connect, init_db, write_transaction
+from agent_operations_viewer.importer import parse_session_text, upsert_parsed_session
+from agent_operations_viewer.projects import build_grouped_projects, fetch_group_detail, query_group_rows
+from agent_operations_viewer.session_view import build_turns
 
 
 def make_test_settings(*, data_dir: Path, session_roots: list[Path]) -> Settings:

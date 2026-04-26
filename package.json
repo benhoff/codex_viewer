@@ -1,9 +1,9 @@
 {
-  "name": "codex-session-viewer",
+  "name": "agent-operations-viewer",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build:css": "tailwindcss -i ./src/tailwind.css -o ./codex_session_viewer/static/app.css --minify",
+    "build:css": "tailwindcss -i ./src/tailwind.css -o ./agent_operations_viewer/static/app.css --minify",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:debug": "playwright test --debug",

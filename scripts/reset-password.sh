@@ -26,7 +26,7 @@ Options:
 Examples:
   ./scripts/reset-password.sh admin
   ./scripts/reset-password.sh admin 'NewPassword123!'
-  ./scripts/reset-password.sh --db /opt/codex_viewer_buddy/data/codex_sessions.sqlite3 admin
+  ./scripts/reset-password.sh --db /opt/agent_operations_viewer_buddy/data/agent_operations_viewer_sessions.sqlite3 admin
 EOF
 }
 
@@ -120,9 +120,9 @@ python3 - <<'PY'
 import os
 from pathlib import Path
 
-from codex_session_viewer.config import Settings
-from codex_session_viewer.db import connect, write_transaction
-from codex_session_viewer.local_auth import fetch_user_by_username, update_user_password
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.db import connect, write_transaction
+from agent_operations_viewer.local_auth import fetch_user_by_username, update_user_password
 
 project_root = Path(os.environ["CODEX_VIEWER_PROJECT_ROOT"]).resolve()
 username = os.environ["CODEX_VIEWER_RESET_USERNAME"]

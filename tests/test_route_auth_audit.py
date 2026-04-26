@@ -13,12 +13,12 @@ from urllib.parse import urlencode, urlsplit
 import requests
 import uvicorn
 
-from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.config import Settings
-from codex_session_viewer.db import connect, write_transaction
-from codex_session_viewer.local_auth import create_initial_admin
-from codex_session_viewer.machine_credentials import hash_pairing_secret
-from codex_session_viewer.web.app import create_app
+from agent_operations_viewer import SYNC_API_VERSION, __version__
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.db import connect, write_transaction
+from agent_operations_viewer.local_auth import create_initial_admin
+from agent_operations_viewer.machine_credentials import hash_pairing_secret
+from agent_operations_viewer.web.app import create_app
 
 
 PLACEHOLDER_PATTERN = re.compile(r"\{([a-zA-Z0-9_]+)(?::[^}]+)?\}")

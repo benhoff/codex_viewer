@@ -50,6 +50,7 @@ from ...projects import (
     build_project_access_context,
     build_session_signal_badges,
     build_grouped_projects,
+    count_session_turn_prompts_since,
     dashboard_stats,
     effective_project_fields,
     fetch_group_detail,
@@ -1415,13 +1416,17 @@ def index(
             connection,
             [row["id"] for row in rows],
             hot_window_start,
-            secondary_since_timestamp=today_start,
         )
         repo_groups = build_grouped_projects(
             rows,
             route_rows=all_rows if rows is not all_rows else rows,
         )
         stats = dashboard_stats(rows)
+        stats["turns_today"] = count_session_turn_prompts_since(
+            connection,
+            [row["id"] for row in rows],
+            today_start,
+        )
         remotes = fetch_remote_agent_health(connection, context.settings)
         action_queue = build_homepage_action_queue(
             connection,
@@ -1469,7 +1474,6 @@ def index(
     failed_agents = [remote for remote in visible_remotes if agent_has_failure(remote)][:5]
     stats["active_hosts"] = active_host_count
     stats["failed_agents"] = len([remote for remote in visible_remotes if agent_has_failure(remote)])
-    stats["turns_today"] = sum(int(item.get("secondary_turn_count", 0) or 0) for item in hot_turn_activity.values())
     verification_pending = setup_verification_pending(
         settings=context.settings,
         onboarding=onboarding,

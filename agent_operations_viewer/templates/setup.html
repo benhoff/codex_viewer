@@ -112,7 +112,7 @@
           {% endif %}
 
           <div class="mt-5 rounded-[1.2rem] border border-stone-900/10 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-700">
-            <p><span class="font-semibold">Manual sync:</span> `PYTHONPATH=.deps python3 -m codex_session_viewer sync`</p>
+            <p><span class="font-semibold">Manual sync:</span> `PYTHONPATH=.deps python3 -m agent_operations_viewer sync`</p>
             <p class="mt-2"><span class="font-semibold">Common fix:</span> set `CODEX_SESSION_ROOTS` to the directory that actually contains your Codex `*.jsonl` sessions, then restart the server.</p>
           </div>
 
@@ -296,11 +296,11 @@
                   Before you run this on another machine, replace <span class="font-mono text-amber-950">CODEX_VIEWER_SERVER_URL</span> with a host name or IP that machine can reach.
                 </div>
               {% endif %}
-              <pre class="mt-4 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m codex_session_viewer pair</pre>
+              <pre class="mt-4 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m agent_operations_viewer pair</pre>
               <div class="mt-3 text-sm leading-6 text-stone-600">
                 <p>After pairing, run these as two separate commands on that machine:</p>
-                <pre class="mt-3 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m codex_session_viewer service install
-python -m codex_session_viewer service start</pre>
+                <pre class="mt-3 overflow-x-auto rounded-[1rem] bg-white px-4 py-3 text-sm leading-6 text-stone-900">python -m agent_operations_viewer service install
+python -m agent_operations_viewer service start</pre>
               </div>
             </div>
 

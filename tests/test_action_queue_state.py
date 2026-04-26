@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import unittest
 
-from codex_session_viewer.action_queue_state import filter_action_queue_items
+from agent_operations_viewer.action_queue_state import filter_action_queue_items
 
 
 class ActionQueueStateTests(unittest.TestCase):

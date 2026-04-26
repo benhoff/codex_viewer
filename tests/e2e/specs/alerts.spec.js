@@ -83,7 +83,7 @@ test("sync failure alerts deliver open and resolved webhook notifications", asyn
     expect(openAlert.method).toBe("POST");
     expect(openAlert.path).toBe("/webhook");
     expect(openAlert.body).toMatchObject({
-      source: "codex_session_viewer",
+      source: "agent_operations_viewer",
       notification_kind: "open",
       status: "open",
       source_host: sourceHost,
@@ -119,7 +119,7 @@ test("sync failure alerts deliver open and resolved webhook notifications", asyn
     );
     expect(resolvedAlert).toBeTruthy();
     expect(resolvedAlert.body).toMatchObject({
-      source: "codex_session_viewer",
+      source: "agent_operations_viewer",
       notification_kind: "resolved",
       status: "resolved",
       source_host: sourceHost,

@@ -5,16 +5,16 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.config import Settings
-from codex_session_viewer.db import connect, init_db, write_transaction
-from codex_session_viewer.environment_audit import (
+from agent_operations_viewer import SYNC_API_VERSION, __version__
+from agent_operations_viewer.config import Settings
+from agent_operations_viewer.db import connect, init_db, write_transaction
+from agent_operations_viewer.environment_audit import (
     ENVIRONMENT_ROLLUP_VERSION,
     fetch_host_environment_audit,
     fetch_project_environment_audit,
 )
-from codex_session_viewer.importer import parse_session_text, upsert_parsed_session
-from codex_session_viewer.projects import build_grouped_projects, query_group_rows
+from agent_operations_viewer.importer import parse_session_text, upsert_parsed_session
+from agent_operations_viewer.projects import build_grouped_projects, query_group_rows
 
 
 def make_test_settings(*, data_dir: Path, session_roots: list[Path]) -> Settings:

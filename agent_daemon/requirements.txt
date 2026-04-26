@@ -1,6 +1,6 @@
 # Third-party Python dependencies for the agent daemon path.
 #
-# The daemon still imports shared local modules from `codex_session_viewer`, so
+# The daemon still imports shared local modules from `agent_operations_viewer`, so
 # this file is not a standalone package manifest for the whole repository. It
 # only captures the daemon's external runtime dependency footprint.
 

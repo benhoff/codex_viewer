@@ -8,14 +8,14 @@ import signal
 import threading
 import time
 
-from codex_session_viewer.config import Settings
+from agent_operations_viewer.config import Settings
 
 from .file_watch import SessionFileWatcher
 from .remote_sync import RemoteSyncError, RestartRequired, sync_sessions_remote
 
 
 def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start: bool = False) -> int:
-    logger = logging.getLogger("codex_session_viewer.daemon")
+    logger = logging.getLogger("agent_operations_viewer.daemon")
     stop_event = threading.Event()
     interval_seconds = max(1, interval_seconds)
     daemon_settings = replace(settings, sync_mode="remote")

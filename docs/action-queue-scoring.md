@@ -11,7 +11,7 @@ The current homepage session-attention logic is anomaly-oriented:
 - any aborted turns count
 - any import warning counts
 
-That older rule is implemented through [build_error_sessions_panel](../codex_session_viewer/web/routes/pages.py), [summarize_attention_status](../codex_session_viewer/projects.py), and [usage_pressure_snapshot](../codex_session_viewer/session_insights.py).
+That older rule is implemented through [build_error_sessions_panel](../agent_operations_viewer/web/routes/pages.py), [summarize_attention_status](../agent_operations_viewer/projects.py), and [usage_pressure_snapshot](../agent_operations_viewer/session_insights.py).
 
 It is useful for surfacing odd sessions, but too noisy for a primary triage queue.
 
@@ -156,9 +156,9 @@ An item belongs in the queue only if all of these are true:
 
 The viewer already computes stronger audit signals than the current homepage queue uses:
 
-- [verification_verdict](../codex_session_viewer/session_view.py)
-- [build_trust_signals](../codex_session_viewer/session_view.py)
-- [build_session_audit_summary](../codex_session_viewer/session_view.py)
+- [verification_verdict](../agent_operations_viewer/session_view.py)
+- [build_trust_signals](../agent_operations_viewer/session_view.py)
+- [build_session_audit_summary](../agent_operations_viewer/session_view.py)
 
 Those signals should become the backbone of the action queue.
 

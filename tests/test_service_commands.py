@@ -8,9 +8,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from codex_session_viewer import SYNC_API_VERSION, __version__
-from codex_session_viewer.commands import cli
-from codex_session_viewer.config import Settings
+from agent_operations_viewer import SYNC_API_VERSION, __version__
+from agent_operations_viewer.commands import cli
+from agent_operations_viewer.config import Settings
 
 
 def make_test_settings(*, project_root: Path, data_dir: Path) -> Settings:
@@ -67,23 +67,23 @@ class ServiceCommandFeedbackTests(unittest.TestCase):
     def test_service_install_cli_prints_summary_without_raw_json(self) -> None:
         install_result = {
             "target": "systemd-user",
-            "unit_path": "/tmp/codex-session-viewer-agent.service",
+            "unit_path": "/tmp/agent-operations-viewer-agent.service",
             "daemon_reload": {"ok": True},
             "enable": {"ok": True},
         }
         stdout = io.StringIO()
         args = argparse.Namespace(command="service", service_command="install")
 
-        with patch("codex_session_viewer.commands.parse_args", return_value=args):
-            with patch("codex_session_viewer.commands.Settings.from_env", return_value=self.settings):
-                with patch("codex_session_viewer.commands.install_service", return_value=install_result):
+        with patch("agent_operations_viewer.commands.parse_args", return_value=args):
+            with patch("agent_operations_viewer.commands.Settings.from_env", return_value=self.settings):
+                with patch("agent_operations_viewer.commands.install_service", return_value=install_result):
                     with redirect_stdout(stdout):
                         exit_code = cli()
 
         output = stdout.getvalue()
         self.assertEqual(exit_code, 0)
         self.assertIn("Installed the background daemon service for your user via systemd-user.", output)
-        self.assertIn("Definition file: /tmp/codex-session-viewer-agent.service", output)
+        self.assertIn("Definition file: /tmp/agent-operations-viewer-agent.service", output)
         self.assertIn("It is not started yet.", output)
         self.assertNotIn("Details:", output)
         self.assertNotIn('"target": "systemd-user"', output)
@@ -93,23 +93,23 @@ class ServiceCommandFeedbackTests(unittest.TestCase):
             "target": "systemd-user",
             "installed": True,
             "running": False,
-            "unit_path": "/tmp/codex-session-viewer-agent.service",
+            "unit_path": "/tmp/agent-operations-viewer-agent.service",
             "active": {"ok": False},
             "enabled": {"ok": True},
         }
         stdout = io.StringIO()
         args = argparse.Namespace(command="service", service_command="status")
 
-        with patch("codex_session_viewer.commands.parse_args", return_value=args):
-            with patch("codex_session_viewer.commands.Settings.from_env", return_value=self.settings):
-                with patch("codex_session_viewer.commands.service_status", return_value=status_result):
+        with patch("agent_operations_viewer.commands.parse_args", return_value=args):
+            with patch("agent_operations_viewer.commands.Settings.from_env", return_value=self.settings):
+                with patch("agent_operations_viewer.commands.service_status", return_value=status_result):
                     with redirect_stdout(stdout):
                         exit_code = cli()
 
         output = stdout.getvalue()
         self.assertEqual(exit_code, 0)
         self.assertIn("Background daemon status via systemd-user: installed=yes, running=no.", output)
-        self.assertIn("Definition: /tmp/codex-session-viewer-agent.service", output)
+        self.assertIn("Definition: /tmp/agent-operations-viewer-agent.service", output)
         self.assertNotIn("Details:", output)
         self.assertNotIn('"running": false', output)
 

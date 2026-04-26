@@ -33,7 +33,7 @@ function runAppCommand(app, args) {
   return new Promise((resolve, reject) => {
     execFile(
       "python3",
-      ["-m", "codex_session_viewer", ...args],
+      ["-m", "agent_operations_viewer", ...args],
       {
         cwd: app.rootDir,
         env: {
