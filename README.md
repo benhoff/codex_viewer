@@ -75,8 +75,8 @@ Token-based daemon host:
 ```bash
 cp .env.agent.example .env
 ./scripts/bootstrap-local.sh --skip-css
-PYTHONPATH=.deps python3 -m agent_operations_viewer service install
-PYTHONPATH=.deps python3 -m agent_operations_viewer service start
+PYTHONPATH=.deps python3 -m agent_daemon service install
+PYTHONPATH=.deps python3 -m agent_daemon service start
 ```
 
 Set these values in the agent `.env` file:
@@ -152,9 +152,9 @@ Run the remote sync daemon in the foreground:
 Install the background daemon service for the current user:
 
 ```bash
-PYTHONPATH=.deps python3 -m agent_operations_viewer service install
-PYTHONPATH=.deps python3 -m agent_operations_viewer service start
-PYTHONPATH=.deps python3 -m agent_operations_viewer service status
+PYTHONPATH=.deps python3 -m agent_daemon service install
+PYTHONPATH=.deps python3 -m agent_daemon service start
+PYTHONPATH=.deps python3 -m agent_daemon service status
 ```
 
 Pair this machine through the browser, install the service, and start it:

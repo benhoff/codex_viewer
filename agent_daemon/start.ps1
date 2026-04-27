@@ -141,7 +141,7 @@ if ([string]::IsNullOrWhiteSpace($env:PYTHONPATH)) {
 $env:CODEX_VIEWER_SYNC_MODE = "remote"
 
 $python = Get-CodexPythonInvocation
-$daemonArgs = @() + $python.PrefixArgs + @("-m", "agent_operations_viewer", "daemon")
+$daemonArgs = @() + $python.PrefixArgs + @("-m", "agent_daemon", "daemon")
 if ($PSBoundParameters.ContainsKey("Interval")) {
     $daemonArgs += @("--interval", [string]$Interval)
 }

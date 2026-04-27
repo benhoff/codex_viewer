@@ -12,7 +12,7 @@ export CODEX_VIEWER_SYNC_MODE="remote"
 
 cmd=(
   /usr/bin/python3
-  -m agent_operations_viewer
+  -m agent_daemon
   daemon
 )
 
@@ -26,19 +26,21 @@ if [[ "${agent_dev_reload}" == "1" ]]; then
     "${PROJECT_ROOT}" \
     "${agent_dev_reload_interval}" \
     "${PROJECT_ROOT}/agent_daemon/__init__.py" \
+    "${PROJECT_ROOT}/agent_daemon/__main__.py" \
+    "${PROJECT_ROOT}/agent_daemon/commands.py" \
     "${PROJECT_ROOT}/agent_daemon/file_watch.py" \
+    "${PROJECT_ROOT}/agent_daemon/local_machine.py" \
     "${PROJECT_ROOT}/agent_daemon/remote_sync.py" \
     "${PROJECT_ROOT}/agent_daemon/requirements.txt" \
     "${PROJECT_ROOT}/agent_daemon/runtime.py" \
+    "${PROJECT_ROOT}/agent_daemon/session_source.py" \
     "${PROJECT_ROOT}/agent_daemon/start.sh" \
+    "${PROJECT_ROOT}/agent_daemon/agent_state.py" \
     "${PROJECT_ROOT}/agent_operations_viewer/__init__.py" \
-    "${PROJECT_ROOT}/agent_operations_viewer/__main__.py" \
-    "${PROJECT_ROOT}/agent_operations_viewer/commands.py" \
     "${PROJECT_ROOT}/agent_operations_viewer/config.py" \
     "${PROJECT_ROOT}/agent_operations_viewer/db.py" \
     "${PROJECT_ROOT}/agent_operations_viewer/git_utils.py" \
-    "${PROJECT_ROOT}/agent_operations_viewer/importer.py" \
-    "${PROJECT_ROOT}/agent_operations_viewer/runtime.py" \
+    "${PROJECT_ROOT}/agent_operations_viewer/session_parsing.py" \
     "${PROJECT_ROOT}/scripts/lib-dev-reload.sh" \
     "${PROJECT_ROOT}/scripts/lib-env.sh" \
     "${PROJECT_ROOT}/scripts/start-agent-daemon.sh" \

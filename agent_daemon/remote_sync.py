@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from agent_operations_viewer.agent_state import (
+from .agent_state import (
     connect_agent_state,
     fetch_agent_file_states,
     mark_agent_file_deleted,
@@ -21,16 +21,16 @@ from agent_operations_viewer.agent_state import (
     mark_missing_agent_files_deleted,
     upsert_agent_file_state,
 )
+from .local_machine import load_machine_identity
+from .session_source import read_session_source_text
 from agent_operations_viewer.config import Settings
-from agent_operations_viewer.importer import (
+from agent_operations_viewer.session_parsing import (
     iter_session_files,
     parse_session_text,
     prescan_session_source,
     SessionParseError,
 )
-from agent_operations_viewer.local_machine import load_machine_identity
 from agent_operations_viewer.machine_auth import build_machine_auth_headers
-from agent_operations_viewer.session_artifacts import read_session_source_text
 
 INVALID_SESSION_CACHE: dict[tuple[str, int, int], str] = {}
 

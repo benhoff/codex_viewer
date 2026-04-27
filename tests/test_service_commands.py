@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import argparse
 from contextlib import redirect_stdout
+from contextlib import redirect_stderr
 import io
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from agent_operations_viewer import SYNC_API_VERSION, __version__
-from agent_operations_viewer.commands import cli
+from agent_daemon.commands import cli
 from agent_operations_viewer.config import Settings
+from agent_operations_viewer.commands import parse_args as viewer_parse_args
 
 
 def make_test_settings(*, project_root: Path, data_dir: Path) -> Settings:
@@ -74,9 +77,9 @@ class ServiceCommandFeedbackTests(unittest.TestCase):
         stdout = io.StringIO()
         args = argparse.Namespace(command="service", service_command="install")
 
-        with patch("agent_operations_viewer.commands.parse_args", return_value=args):
-            with patch("agent_operations_viewer.commands.Settings.from_env", return_value=self.settings):
-                with patch("agent_operations_viewer.commands.install_service", return_value=install_result):
+        with patch("agent_daemon.commands.parse_args", return_value=args):
+            with patch("agent_daemon.commands.Settings.from_env", return_value=self.settings):
+                with patch("agent_daemon.commands.install_service", return_value=install_result):
                     with redirect_stdout(stdout):
                         exit_code = cli()
 
@@ -100,9 +103,9 @@ class ServiceCommandFeedbackTests(unittest.TestCase):
         stdout = io.StringIO()
         args = argparse.Namespace(command="service", service_command="status")
 
-        with patch("agent_operations_viewer.commands.parse_args", return_value=args):
-            with patch("agent_operations_viewer.commands.Settings.from_env", return_value=self.settings):
-                with patch("agent_operations_viewer.commands.service_status", return_value=status_result):
+        with patch("agent_daemon.commands.parse_args", return_value=args):
+            with patch("agent_daemon.commands.Settings.from_env", return_value=self.settings):
+                with patch("agent_daemon.commands.service_status", return_value=status_result):
                     with redirect_stdout(stdout):
                         exit_code = cli()
 
@@ -112,6 +115,26 @@ class ServiceCommandFeedbackTests(unittest.TestCase):
         self.assertIn("Definition: /tmp/agent-operations-viewer-agent.service", output)
         self.assertNotIn("Details:", output)
         self.assertNotIn('"running": false', output)
+
+    def test_main_cli_rejects_service_commands(self) -> None:
+        stderr = io.StringIO()
+        with patch.object(sys, "argv", ["agent_operations_viewer", "service", "status"]):
+            with redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as exc_info:
+                    viewer_parse_args()
+
+        self.assertNotEqual(exc_info.exception.code, 0)
+        self.assertIn("invalid choice", stderr.getvalue())
+
+    def test_main_cli_rejects_daemon_command(self) -> None:
+        stderr = io.StringIO()
+        with patch.object(sys, "argv", ["agent_operations_viewer", "daemon"]):
+            with redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as exc_info:
+                    viewer_parse_args()
+
+        self.assertNotEqual(exc_info.exception.code, 0)
+        self.assertIn("invalid choice", stderr.getvalue())
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import re
 
-from .importer import (
+from .session_parsing import (
     friendly_tool_title,
     parse_jsonish,
     summarize_tool_call_input,

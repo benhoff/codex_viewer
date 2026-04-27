@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from agent_daemon.runtime import run_sync_daemon
-
-from .config import Settings
 from .session_exports import build_execution_context_export
 
 

@@ -6,15 +6,6 @@ import json
 import logging
 from pathlib import Path
 
-from agent_daemon.runtime import run_sync_daemon
-from agent_daemon.service_manager import (
-    install_service,
-    service_status,
-    start_service,
-    stop_service,
-    uninstall_service,
-)
-
 from .alerts import DEFAULT_ALERT_WORKER_INTERVAL, run_alert_worker
 from .backup_restore import create_instance_backup, restore_instance_backup, verify_backup_archive
 from .config import Settings
@@ -36,74 +27,6 @@ from .session_exports import build_session_bundle, export_json_payload
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _service_install_summary(result: dict[str, object]) -> list[str]:
-    target = str(result.get("target") or "service manager")
-    lines = [f"Installed the background daemon service for your user via {target}."]
-    unit_path = str(result.get("unit_path") or result.get("plist_path") or "").strip()
-    if unit_path:
-        lines.append(f"Definition file: {unit_path}")
-    if target == "systemd-user":
-        lines.append("The service is enabled for future user-session startup.")
-    elif target == "launchd":
-        lines.append("The launch agent definition is installed for your user account.")
-    elif target == "schtasks":
-        lines.append("The scheduled task is registered for your user account.")
-    lines.append("It is not started yet. Run `python3 -m agent_operations_viewer service start` to start it now.")
-    lines.append("Run `python3 -m agent_operations_viewer service status` to confirm install and runtime state.")
-    return lines
-
-
-def _service_start_summary(result: dict[str, object]) -> list[str]:
-    target = str(result.get("target") or "service manager")
-    return [
-        f"Started the background daemon via {target}.",
-        "Run `python3 -m agent_operations_viewer service status` to confirm it is running.",
-    ]
-
-
-def _service_stop_summary(result: dict[str, object]) -> list[str]:
-    target = str(result.get("target") or "service manager")
-    return [
-        f"Stopped the background daemon via {target}.",
-        "Run `python3 -m agent_operations_viewer service status` to confirm it is no longer running.",
-    ]
-
-
-def _service_status_summary(result: dict[str, object]) -> list[str]:
-    target = str(result.get("target") or "service manager")
-    installed = "yes" if bool(result.get("installed")) else "no"
-    running = "yes" if bool(result.get("running")) else "no"
-    lines = [
-        f"Background daemon status via {target}: installed={installed}, running={running}.",
-    ]
-    unit_path = str(result.get("unit_path") or result.get("plist_path") or result.get("task_name") or "").strip()
-    if unit_path:
-        if target == "schtasks":
-            lines.append(f"Task name: {unit_path}")
-        else:
-            lines.append(f"Definition: {unit_path}")
-    return lines
-
-
-def _service_uninstall_summary(result: dict[str, object]) -> list[str]:
-    target = str(result.get("target") or "service manager")
-    deleted_label = ""
-    if "deleted_unit" in result:
-        deleted_label = "unit file"
-    elif "deleted_plist" in result:
-        deleted_label = "launch agent plist"
-    lines = [f"Removed the background daemon service definition for {target}."]
-    if deleted_label:
-        deleted_state = "deleted" if bool(result.get("deleted_unit") or result.get("deleted_plist")) else "not found"
-        lines.append(f"Local {deleted_label}: {deleted_state}.")
-    lines.append("Automatic startup is no longer configured for this user.")
-    return lines
-
-
-def _print_service_feedback(summary_lines: list[str]) -> None:
-    print("\n".join(summary_lines))
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="View and export Codex sessions")
     subparsers = parser.add_subparsers(dest="command", required=False)
@@ -116,10 +39,6 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("sync", help="Import rollout files into SQLite")
     sync = subparsers.choices["sync"]
     sync.add_argument("--rebuild", action="store_true")
-
-    daemon = subparsers.add_parser("daemon", help="Run the background sync daemon")
-    daemon.add_argument("--interval", type=int)
-    daemon.add_argument("--rebuild-on-start", action="store_true")
 
     pair = subparsers.add_parser("pair", help="Pair this machine through the browser and store a machine credential")
     pair.add_argument("--label")
@@ -143,14 +62,6 @@ def parse_args() -> argparse.Namespace:
     machine_setup_cmd = machine_subparsers.add_parser("setup", help="Pair this machine and install the daemon service")
     machine_setup_cmd.add_argument("--label")
     machine_setup_cmd.add_argument("--no-browser", action="store_true")
-
-    service = subparsers.add_parser("service", help="Manage the background daemon service")
-    service_subparsers = service.add_subparsers(dest="service_command", required=True)
-    service_subparsers.add_parser("install", help="Install the background daemon service")
-    service_subparsers.add_parser("start", help="Start the background daemon service")
-    service_subparsers.add_parser("stop", help="Stop the background daemon service")
-    service_subparsers.add_parser("status", help="Show the background daemon service status")
-    service_subparsers.add_parser("uninstall", help="Remove the background daemon service")
 
     alerts = subparsers.add_parser("alerts", help="Run the alert reconciliation and delivery worker")
     alerts.add_argument("--interval", type=int)
@@ -216,14 +127,6 @@ def cli() -> int:
         print(json.dumps(stats, indent=2))
         return 0
 
-    if args.command == "daemon":
-        interval_seconds = getattr(args, "interval", None) or settings.sync_interval_seconds
-        return run_sync_daemon(
-            settings,
-            interval_seconds=interval_seconds,
-            rebuild_on_start=getattr(args, "rebuild_on_start", False) or settings.daemon_rebuild_on_start,
-        )
-
     if args.command == "pair":
         result = pair_machine(
             settings,
@@ -264,29 +167,6 @@ def cli() -> int:
             print(json.dumps(result, indent=2))
             return 0
         raise SystemExit(f"Unsupported machine command: {args.machine_command}")
-
-    if args.command == "service":
-        if args.service_command == "install":
-            result = install_service(settings)
-            _print_service_feedback(_service_install_summary(result))
-            return 0
-        if args.service_command == "start":
-            result = start_service(settings)
-            _print_service_feedback(_service_start_summary(result))
-            return 0
-        if args.service_command == "stop":
-            result = stop_service()
-            _print_service_feedback(_service_stop_summary(result))
-            return 0
-        if args.service_command == "status":
-            result = service_status()
-            _print_service_feedback(_service_status_summary(result))
-            return 0
-        if args.service_command == "uninstall":
-            result = uninstall_service()
-            _print_service_feedback(_service_uninstall_summary(result))
-            return 0
-        raise SystemExit(f"Unsupported service command: {args.service_command}")
 
     if args.command == "alerts":
         settings.ensure_directories()

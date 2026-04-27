@@ -13,12 +13,8 @@ from ...agents import (
 )
 from ...alerts import reconcile_remote_alerts_for_host
 from ...db import connect, write_transaction
-from ...importer import (
-    fetch_host_sync_manifest,
-    parse_session_text,
-    parsed_session_from_payload,
-    upsert_parsed_session,
-)
+from ...importer import fetch_host_sync_manifest, upsert_parsed_session
+from ...session_parsing import parse_session_text, parsed_session_from_payload
 from ...onboarding import (
     reconcile_onboarding_state,
     record_first_heartbeat,
