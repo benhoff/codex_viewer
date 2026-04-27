@@ -24,6 +24,7 @@ from agent_operations_viewer.machine_credentials import (
 from agent_operations_viewer.remote_sync import build_headers
 from agent_operations_viewer.web.app import create_app
 from agent_operations_viewer.web.auth import require_sync_api_auth
+from agent_daemon.machine_setup import identity_status_payload
 
 
 def make_test_settings(*, data_dir: Path) -> Settings:
@@ -222,6 +223,25 @@ class MachineCredentialTests(unittest.TestCase):
         self.assertNotIn("Authorization", headers)
         self.assertEqual(headers["X-Codex-Viewer-Machine-Id"], "mcred_test")
         self.assertEqual(headers["X-Codex-Viewer-Host"], self.settings.source_host)
+
+    def test_machine_status_payload_redacts_private_key(self) -> None:
+        keypair = generate_machine_keypair()
+        identity = LocalMachineIdentity(
+            machine_id="mcred_test",
+            label="Builder laptop",
+            source_host=self.settings.source_host,
+            server_base_url=str(self.settings.server_base_url),
+            public_key=keypair.public_key,
+            private_key=keypair.private_key,
+            paired_at="2026-04-23T00:00:00+00:00",
+            created_by_user_id=None,
+        )
+
+        payload = identity_status_payload(self.settings, identity)
+
+        self.assertIsNotNone(payload)
+        self.assertNotIn("private_key", payload or {})
+        self.assertEqual(payload["machine_id"], "mcred_test")
 
 
 if __name__ == "__main__":

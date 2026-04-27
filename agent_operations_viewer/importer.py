@@ -260,6 +260,8 @@ def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -
             s.content_sha256,
             MAX(CASE WHEN s.raw_artifact_sha256 IS NOT NULL AND sa.sha256 IS NOT NULL THEN 1 ELSE 0 END) AS has_raw_artifact,
             s.event_count,
+            s.inferred_project_key,
+            s.inferred_project_label,
             COUNT(e.id) AS stored_event_count,
             s.updated_at
         FROM sessions AS s
@@ -277,6 +279,8 @@ def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -
             s.file_mtime_ns,
             s.content_sha256,
             s.event_count,
+            s.inferred_project_key,
+            s.inferred_project_label,
             s.updated_at
         ORDER BY s.source_path ASC
         """,

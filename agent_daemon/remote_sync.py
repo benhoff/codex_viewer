@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import logging
 import subprocess
@@ -22,7 +23,7 @@ from .agent_state import (
     upsert_agent_file_state,
 )
 from .local_machine import load_machine_identity
-from .session_source import read_session_source_text
+from .session_source import read_session_source_tail, read_session_source_text
 from agent_operations_viewer.config import Settings
 from agent_operations_viewer.session_parsing import (
     iter_session_files,
@@ -50,6 +51,10 @@ class SessionFileCandidate:
     file_size: int
     file_mtime_ns: int
     reason: str
+    upload_mode: str = "raw"
+    base_file_size: int | None = None
+    base_content_sha256: str | None = None
+    remote_session_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -61,9 +66,11 @@ class PreparedUpload:
     file_size: int
     file_mtime_ns: int
     reason: str
+    upload_mode: str
     session_format: str | None
     inferred_project_key: str | None
     inferred_project_label: str | None
+    last_line_hash: str | None
 
 
 @dataclass(slots=True)
@@ -86,6 +93,8 @@ class UploadOutcome:
     reason: str
     status: str
     error: str | None = None
+    content_sha256: str | None = None
+    event_count: int | None = None
 
 
 def utc_now_iso() -> str:
@@ -98,6 +107,14 @@ def exception_summary(exc: BaseException, *, max_length: int = 500) -> str:
     if len(summary) > max_length:
         return summary[: max_length - 1].rstrip() + "…"
     return summary
+
+
+def last_line_hash(raw_jsonl: str) -> str | None:
+    stripped = raw_jsonl.rstrip("\r\n")
+    if not stripped:
+        return None
+    line = stripped.splitlines()[-1]
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()
 
 
 def build_headers(
@@ -119,7 +136,7 @@ def build_headers(
         if settings.server_base_url and identity.server_base_url.rstrip("/") != settings.server_base_url.rstrip("/"):
             raise RemoteSyncError(
                 "Configured server URL does not match the paired machine credential. "
-                "Run `python -m agent_operations_viewer machine repair --re-pair` to re-pair this machine."
+                "Run `python -m agent_daemon repair --re-pair` to re-pair this machine."
             )
         headers.update(
             build_machine_auth_headers(
@@ -136,7 +153,7 @@ def build_headers(
     else:
         raise RemoteSyncError(
             "Remote sync requires either CODEX_VIEWER_SYNC_API_TOKEN or a paired machine credential. "
-            "Run `python -m agent_operations_viewer pair` to authorize this machine."
+            "Run `python -m agent_daemon pair` to authorize this machine."
         )
     return headers
 
@@ -144,6 +161,9 @@ def build_headers(
 def require_server_url(settings: Settings) -> str:
     if settings.server_base_url:
         return settings.server_base_url
+    identity = load_machine_identity(settings)
+    if identity is not None and identity.server_base_url:
+        return identity.server_base_url.rstrip("/")
     raise RemoteSyncError("CODEX_VIEWER_SERVER_URL must be configured for remote sync mode")
 
 
@@ -185,11 +205,17 @@ def json_request(
 def fetch_remote_manifest(
     settings: Settings,
 ) -> tuple[dict[str, dict[str, object]], set[str], dict[str, Any], dict[str, Any]]:
-    payload = json_request(
-        settings,
-        "GET",
-        f"/api/sync/manifest?host={quote(settings.source_host, safe='')}",
-    )
+    manifest_path = f"/api/sync/manifest-v2?host={quote(settings.source_host, safe='')}"
+    try:
+        payload = json_request(settings, "GET", manifest_path)
+    except RemoteSyncError as exc:
+        if "404" not in str(exc):
+            raise
+        payload = json_request(
+            settings,
+            "GET",
+            f"/api/sync/manifest?host={quote(settings.source_host, safe='')}",
+        )
     sessions = payload.get("sessions")
     if not isinstance(sessions, list):
         raise RemoteSyncError("Remote manifest response was missing a sessions list")
@@ -250,6 +276,10 @@ def remote_entry_needs_upload(
 
 def upload_raw_session(settings: Settings, payload: dict[str, object]) -> dict[str, Any]:
     return json_request(settings, "POST", "/api/sync/session-raw", payload)
+
+
+def upload_raw_session_tail(settings: Settings, payload: dict[str, object]) -> dict[str, Any]:
+    return json_request(settings, "POST", "/api/sync/session-tail", payload)
 
 
 def upload_raw_sessions_batch(settings: Settings, payloads: list[dict[str, object]]) -> dict[str, Any]:
@@ -357,10 +387,72 @@ def build_raw_upload_payload(
     }
 
 
+def build_raw_tail_upload_payload(
+    settings: Settings,
+    *,
+    source_root: Path,
+    path: Path,
+    tail_jsonl: str,
+    base_file_size: int,
+    base_content_sha256: str,
+    file_size: int,
+    file_mtime_ns: int,
+) -> dict[str, object]:
+    return {
+        "source_host": settings.source_host,
+        "source_root": str(source_root),
+        "source_path": str(path),
+        "base_file_size": base_file_size,
+        "base_content_sha256": base_content_sha256,
+        "file_size": file_size,
+        "file_mtime_ns": file_mtime_ns,
+        "tail_jsonl": tail_jsonl,
+    }
+
+
 def _same_cached_file_version(cached_state: dict[str, object] | None, *, file_size: int, file_mtime_ns: int) -> bool:
     if cached_state is None:
         return False
     return cached_state["file_size"] == file_size and cached_state["file_mtime_ns"] == file_mtime_ns
+
+
+def _int_value(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value)
+    return None
+
+
+def _can_upload_tail(
+    cached_state: dict[str, object] | None,
+    remote_entry: dict[str, object] | None,
+    *,
+    local_file_size: int,
+) -> tuple[bool, int | None, str | None]:
+    if cached_state is None or remote_entry is None:
+        return False, None, None
+    if not bool(remote_entry.get("has_raw_artifact")):
+        return False, None, None
+
+    remote_file_size = _int_value(remote_entry.get("file_size"))
+    if remote_file_size is None or local_file_size <= remote_file_size:
+        return False, None, None
+
+    remote_content_sha256 = str(remote_entry.get("content_sha256") or "").strip()
+    if not remote_content_sha256:
+        return False, None, None
+
+    cached_synced_size = _int_value(cached_state["last_synced_size"] if "last_synced_size" in cached_state.keys() else None)
+    cached_synced_hash = (
+        str(cached_state["last_synced_content_sha256"] or "").strip()
+        if "last_synced_content_sha256" in cached_state.keys()
+        else ""
+    )
+    if cached_synced_size != remote_file_size or cached_synced_hash != remote_content_sha256:
+        return False, None, None
+
+    return True, remote_file_size, remote_content_sha256
 
 
 def _match_source_root(path: Path, roots: list[Path]) -> Path | None:
@@ -406,6 +498,36 @@ def _prepare_upload_candidate(
     candidate: SessionFileCandidate,
     ignored_keys: set[str],
 ) -> PreparedUpload | PreparedSkip:
+    if candidate.upload_mode == "tail":
+        if candidate.base_file_size is None or not candidate.base_content_sha256:
+            raise RemoteSyncError("Tail upload candidate is missing base metadata")
+        tail_jsonl = read_session_source_tail(candidate.path, candidate.base_file_size)
+        if not tail_jsonl:
+            raise RemoteSyncError("Tail upload candidate had no appended bytes")
+        return PreparedUpload(
+            payload=build_raw_tail_upload_payload(
+                settings,
+                source_root=candidate.source_root,
+                path=candidate.path,
+                tail_jsonl=tail_jsonl,
+                base_file_size=candidate.base_file_size,
+                base_content_sha256=candidate.base_content_sha256,
+                file_size=candidate.file_size,
+                file_mtime_ns=candidate.file_mtime_ns,
+            ),
+            session_id=candidate.remote_session_id or candidate.path.stem,
+            path=candidate.path,
+            source_root=candidate.source_root,
+            file_size=candidate.file_size,
+            file_mtime_ns=candidate.file_mtime_ns,
+            reason=candidate.reason,
+            upload_mode="tail",
+            session_format=None,
+            inferred_project_key=None,
+            inferred_project_label=None,
+            last_line_hash=last_line_hash(tail_jsonl),
+        )
+
     prescanned = prescan_session_source(
         candidate.path,
         candidate.source_root,
@@ -425,6 +547,7 @@ def _prepare_upload_candidate(
         )
 
     raw_jsonl = read_session_source_text(candidate.path)
+    raw_last_line_hash = last_line_hash(raw_jsonl)
     parsed = parse_session_text(
         raw_jsonl,
         candidate.path,
@@ -461,17 +584,74 @@ def _prepare_upload_candidate(
         file_size=candidate.file_size,
         file_mtime_ns=candidate.file_mtime_ns,
         reason=candidate.reason,
+        upload_mode="raw",
         session_format=prescanned.session_format if prescanned is not None else None,
         inferred_project_key=parsed.inferred_project_key,
         inferred_project_label=parsed.inferred_project_label,
+        last_line_hash=raw_last_line_hash,
     )
 
 
 def _validate_upload_status(response: dict[str, Any]) -> str:
     status = str(response.get("status") or "").strip().lower() or "ok"
-    if status not in {"ok", "ignored"}:
+    if status not in {"ok", "ignored", "base_mismatch"}:
         raise RemoteSyncError(f"Remote sync response had unexpected status {status!r}")
     return status
+
+
+def _upload_one_prepared(settings: Settings, item: PreparedUpload) -> UploadOutcome:
+    if item.upload_mode == "tail":
+        response = upload_raw_session_tail(settings, item.payload)
+        status = _validate_upload_status(response)
+        if status != "base_mismatch":
+            return UploadOutcome(
+                session_id=item.session_id,
+                path=item.path,
+                reason=item.reason,
+                status=status,
+                content_sha256=str(response.get("content_sha256") or "") or None,
+                event_count=_int_value(response.get("event_count")),
+            )
+
+        full_item = _prepare_upload_candidate(
+            settings,
+            SessionFileCandidate(
+                source_root=item.source_root,
+                path=item.path,
+                file_size=item.file_size,
+                file_mtime_ns=item.file_mtime_ns,
+                reason="tail-base-mismatch",
+            ),
+            ignored_keys=set(),
+        )
+        if not isinstance(full_item, PreparedUpload):
+            return UploadOutcome(
+                session_id=item.session_id,
+                path=item.path,
+                reason=item.reason,
+                status="ignored",
+            )
+        response = upload_raw_session(settings, full_item.payload)
+        status = _validate_upload_status(response)
+        return UploadOutcome(
+            session_id=full_item.session_id,
+            path=full_item.path,
+            reason=full_item.reason,
+            status=status,
+            content_sha256=str(response.get("content_sha256") or "") or None,
+            event_count=_int_value(response.get("event_count")),
+        )
+
+    response = upload_raw_session(settings, item.payload)
+    status = _validate_upload_status(response)
+    return UploadOutcome(
+        session_id=item.session_id,
+        path=item.path,
+        reason=item.reason,
+        status=status,
+        content_sha256=str(response.get("content_sha256") or "") or None,
+        event_count=_int_value(response.get("event_count")),
+    )
 
 
 def _upload_prepared_chunk(
@@ -480,7 +660,7 @@ def _upload_prepared_chunk(
     *,
     batch_uploads_enabled: bool,
 ) -> list[UploadOutcome]:
-    if batch_uploads_enabled and len(chunk) > 1:
+    if batch_uploads_enabled and len(chunk) > 1 and all(item.upload_mode == "raw" for item in chunk):
         try:
             response = upload_raw_sessions_batch(settings, [item.payload for item in chunk])
             results = response.get("results")
@@ -496,6 +676,8 @@ def _upload_prepared_chunk(
                         path=item.path,
                         reason=item.reason,
                         status=_validate_upload_status(result),
+                        content_sha256=str(result.get("content_sha256") or "") or None,
+                        event_count=_int_value(result.get("event_count")),
                     )
                 )
             return outcomes
@@ -505,15 +687,7 @@ def _upload_prepared_chunk(
     outcomes: list[UploadOutcome] = []
     for item in chunk:
         try:
-            response = upload_raw_session(settings, item.payload)
-            outcomes.append(
-                UploadOutcome(
-                    session_id=item.session_id,
-                    path=item.path,
-                    reason=item.reason,
-                    status=_validate_upload_status(response),
-                )
-            )
+            outcomes.append(_upload_one_prepared(settings, item))
         except Exception as exc:
             outcomes.append(
                 UploadOutcome(
@@ -661,8 +835,56 @@ def sync_sessions_remote(
                 )
                 continue
 
+            remote_entry = manifest.get(str(path))
+            remote_project_key = (
+                str(remote_entry.get("inferred_project_key") or "").strip()
+                if isinstance(remote_entry, dict)
+                else ""
+            )
+            if remote_project_key and remote_project_key in ignored_keys:
+                skipped += 1
+                upsert_agent_file_state(
+                    state_connection,
+                    source_root=source_root,
+                    source_path=path,
+                    file_size=stat.st_size,
+                    file_mtime_ns=stat.st_mtime_ns,
+                    last_seen_at=utc_now_iso(),
+                    state="ignored",
+                    inferred_project_key=remote_project_key,
+                    inferred_project_label=(
+                        str(remote_entry.get("inferred_project_label") or "").strip() or None
+                        if isinstance(remote_entry, dict)
+                        else None
+                    ),
+                )
+                continue
+
+            can_tail, base_file_size, base_content_sha256 = _can_upload_tail(
+                cached_state,
+                remote_entry,
+                local_file_size=stat.st_size,
+            )
+            if can_tail and base_file_size is not None and base_content_sha256 is not None:
+                candidates.append(
+                    SessionFileCandidate(
+                        source_root=source_root,
+                        path=path,
+                        file_size=stat.st_size,
+                        file_mtime_ns=stat.st_mtime_ns,
+                        reason="append",
+                        upload_mode="tail",
+                        base_file_size=base_file_size,
+                        base_content_sha256=base_content_sha256,
+                        remote_session_id=str(remote_entry.get("id") or "").strip()
+                        if isinstance(remote_entry, dict)
+                        else None,
+                    )
+                )
+                continue
+
             needs_upload, reason = remote_entry_needs_upload(
-                manifest.get(str(path)),
+                remote_entry,
                 source_path=path,
                 file_size=stat.st_size,
                 file_mtime_ns=stat.st_mtime_ns,
@@ -863,6 +1085,10 @@ def sync_sessions_remote(
                                 state_connection,
                                 source_path=outcome.path,
                                 uploaded_at=utc_now_iso(),
+                                file_size=prepared_item.file_size if prepared_item is not None else None,
+                                content_sha256=outcome.content_sha256,
+                                last_line_hash=prepared_item.last_line_hash if prepared_item is not None else None,
+                                event_count=outcome.event_count,
                             )
                             continue
 

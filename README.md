@@ -75,8 +75,8 @@ Token-based daemon host:
 ```bash
 cp .env.agent.example .env
 ./scripts/bootstrap-local.sh --skip-css
-PYTHONPATH=.deps python3 -m agent_daemon service install
-PYTHONPATH=.deps python3 -m agent_daemon service start
+PYTHONPATH=.deps python3 -m agent_daemon install
+PYTHONPATH=.deps python3 -m agent_daemon start
 ```
 
 Set these values in the agent `.env` file:
@@ -88,7 +88,7 @@ Browser-paired machine flow:
 
 ```bash
 ./scripts/bootstrap-local.sh --skip-css
-PYTHONPATH=.deps python3 -m agent_operations_viewer machine setup
+PYTHONPATH=.deps python3 -m agent_daemon setup --server http://viewer.example.com:8000
 ```
 
 That flow pairs the machine through the browser, installs the per-user daemon service, and starts it.
@@ -152,15 +152,23 @@ Run the remote sync daemon in the foreground:
 Install the background daemon service for the current user:
 
 ```bash
-PYTHONPATH=.deps python3 -m agent_daemon service install
-PYTHONPATH=.deps python3 -m agent_daemon service start
-PYTHONPATH=.deps python3 -m agent_daemon service status
+PYTHONPATH=.deps python3 -m agent_daemon install
+PYTHONPATH=.deps python3 -m agent_daemon start
+PYTHONPATH=.deps python3 -m agent_daemon status
 ```
 
 Pair this machine through the browser, install the service, and start it:
 
 ```bash
-PYTHONPATH=.deps python3 -m agent_operations_viewer machine setup
+PYTHONPATH=.deps python3 -m agent_daemon setup --server http://viewer.example.com:8000
+```
+
+Diagnose agent-host issues:
+
+```bash
+PYTHONPATH=.deps python3 -m agent_daemon doctor
+PYTHONPATH=.deps python3 -m agent_daemon logs --lines 200
+PYTHONPATH=.deps python3 -m agent_daemon sync --once
 ```
 
 Run the remote sync daemon from Windows PowerShell:

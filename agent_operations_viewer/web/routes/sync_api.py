@@ -21,7 +21,7 @@ from ...onboarding import (
     record_first_session_ingested,
 )
 from ...projects import ignored_project_keys, sync_project_registry
-from ...session_artifacts import store_session_artifact
+from ...session_artifacts import load_session_artifact_text, store_session_artifact
 from ..auth import require_sync_api_auth
 from ..context import get_settings
 
@@ -73,6 +73,34 @@ async def sync_manifest(request: Request, host: str = Query(...)) -> JSONRespons
     return JSONResponse(
         {
             "host": host,
+            "sessions": sessions,
+            "ignored_project_keys": ignored_keys,
+            "actions": actions,
+            "server": {
+                "app_version": settings.app_version,
+                "sync_api_version": settings.sync_api_version,
+                "expected_agent_version": settings.expected_agent_version,
+            },
+        }
+    )
+
+
+@router.get("/api/sync/manifest-v2")
+async def sync_manifest_v2(request: Request, host: str = Query(...)) -> JSONResponse:
+    await require_sync_api_auth(request)
+    settings = get_settings(request)
+    with connect(settings.database_path) as connection:
+        sessions = fetch_host_sync_manifest(connection, host)
+        ignored_keys = sorted(ignored_project_keys(connection))
+        actions = fetch_pending_remote_actions(connection, host)
+    for session in sessions:
+        session["accepted_size"] = int(session.get("file_size") or 0)
+        session["accepted_event_count"] = int(session.get("event_count") or 0)
+        session["append_supported"] = bool(session.get("has_raw_artifact"))
+    return JSONResponse(
+        {
+            "host": host,
+            "protocol": "manifest-v2",
             "sessions": sessions,
             "ignored_project_keys": ignored_keys,
             "actions": actions,
@@ -230,6 +258,23 @@ async def sync_sessions_raw_batch(request: Request) -> JSONResponse:
     )
 
 
+@router.post("/api/sync/session-tail")
+async def sync_session_tail(request: Request) -> JSONResponse:
+    await require_sync_api_auth(request)
+    settings = get_settings(request)
+    payload = await _read_json_request_payload(request)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Tail sync payload must be an object")
+
+    header_host = request.headers.get("x-codex-viewer-host", "").strip()
+
+    with connect(settings.database_path) as connection:
+        with write_transaction(connection):
+            result = store_raw_sync_session_tail(connection, settings, payload, header_host=header_host)
+    result["mode"] = "raw_tail"
+    return JSONResponse(result)
+
+
 def _parse_raw_sync_payload(
     payload: object,
     *,
@@ -264,6 +309,69 @@ def _parse_raw_sync_payload(
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return parsed, raw_jsonl
+
+
+def store_raw_sync_session_tail(
+    connection,
+    settings,
+    payload: dict[str, object],
+    *,
+    header_host: str = "",
+) -> dict[str, object]:
+    source_host = str(payload.get("source_host") or "").strip()
+    source_root = str(payload.get("source_root") or "").strip()
+    source_path = str(payload.get("source_path") or "").strip()
+    base_file_size = payload.get("base_file_size")
+    base_content_sha256 = str(payload.get("base_content_sha256") or "").strip()
+    tail_jsonl = payload.get("tail_jsonl")
+    file_size = payload.get("file_size")
+    file_mtime_ns = payload.get("file_mtime_ns")
+
+    if not source_host or not source_root or not source_path or not isinstance(tail_jsonl, str):
+        raise HTTPException(status_code=400, detail="Tail sync payload is missing required fields")
+    if header_host and header_host != source_host:
+        raise HTTPException(status_code=400, detail="Source host header did not match tail sync payload")
+    if not isinstance(base_file_size, int) or not base_content_sha256:
+        raise HTTPException(status_code=400, detail="Tail sync payload is missing base metadata")
+    if not isinstance(file_size, int) or not isinstance(file_mtime_ns, int):
+        raise HTTPException(status_code=400, detail="Tail sync payload is missing file metadata")
+
+    existing = connection.execute(
+        """
+        SELECT id, file_size, content_sha256, raw_artifact_sha256
+        FROM sessions
+        WHERE source_host = ?
+          AND source_path = ?
+        """,
+        (source_host, source_path),
+    ).fetchone()
+    if existing is None:
+        return {"status": "base_mismatch", "reason": "missing-session"}
+    if int(existing["file_size"] or 0) != base_file_size:
+        return {"status": "base_mismatch", "reason": "size-mismatch"}
+    if str(existing["content_sha256"] or "") != base_content_sha256:
+        return {"status": "base_mismatch", "reason": "content-hash-mismatch"}
+
+    artifact_sha256 = str(existing["raw_artifact_sha256"] or "").strip()
+    if not artifact_sha256:
+        return {"status": "base_mismatch", "reason": "missing-raw-artifact"}
+    base_raw_jsonl = load_session_artifact_text(connection, settings, artifact_sha256)
+    if base_raw_jsonl is None:
+        return {"status": "base_mismatch", "reason": "missing-raw-artifact"}
+    if len(base_raw_jsonl.encode("utf-8")) != base_file_size:
+        return {"status": "base_mismatch", "reason": "artifact-size-mismatch"}
+
+    combined_raw_jsonl = base_raw_jsonl + tail_jsonl
+    parsed = parse_session_text(
+        combined_raw_jsonl,
+        Path(source_path),
+        Path(source_root),
+        source_host,
+        file_size=file_size,
+        file_mtime_ns=file_mtime_ns,
+    )
+    results = store_raw_sync_sessions_batch(connection, settings, [(parsed, combined_raw_jsonl)])
+    return results[0]
 
 
 def store_raw_sync_sessions_batch(

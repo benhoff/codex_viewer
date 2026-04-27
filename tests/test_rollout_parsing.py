@@ -37,7 +37,11 @@ from agent_operations_viewer.projects import (
 from agent_operations_viewer.session_status import is_task_complete, terminal_turn_summary
 from agent_operations_viewer.session_artifacts import store_session_artifact
 from agent_operations_viewer.session_view import build_turns
-from agent_operations_viewer.web.routes.sync_api import _read_json_request_payload, store_raw_sync_sessions_batch
+from agent_operations_viewer.web.routes.sync_api import (
+    _read_json_request_payload,
+    store_raw_sync_session_tail,
+    store_raw_sync_sessions_batch,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 CLAUDE_FIXTURES_DIR = FIXTURES_DIR / "claude"
@@ -1669,6 +1673,91 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(session_count, 2)
         self.assertEqual(artifact_count, 2)
 
+    def test_store_raw_sync_session_tail_appends_existing_raw_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            settings = make_test_settings(data_dir=data_dir, session_roots=[Path(tmpdir) / "sessions"])
+            init_db(settings.database_path)
+
+            source_path = Path("/tmp/tail-session.jsonl")
+            source_root = Path("/tmp")
+            base_raw_jsonl = make_raw_session_jsonl("tail-session")
+            parsed = parse_session_text(
+                base_raw_jsonl,
+                source_path,
+                source_root,
+                "remote-host",
+                file_size=len(base_raw_jsonl.encode("utf-8")),
+                file_mtime_ns=1,
+            )
+            tail_jsonl = "\n" + json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-04-20T03:19:17Z",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": "Tail update",
+                    },
+                }
+            )
+
+            with connect(settings.database_path) as connection:
+                with write_transaction(connection):
+                    store_raw_sync_sessions_batch(connection, settings, [(parsed, base_raw_jsonl)])
+                    result = store_raw_sync_session_tail(
+                        connection,
+                        settings,
+                        {
+                            "source_host": "remote-host",
+                            "source_root": str(source_root),
+                            "source_path": str(source_path),
+                            "base_file_size": len(base_raw_jsonl.encode("utf-8")),
+                            "base_content_sha256": parsed.content_sha256,
+                            "file_size": len((base_raw_jsonl + tail_jsonl).encode("utf-8")),
+                            "file_mtime_ns": 2,
+                            "tail_jsonl": tail_jsonl,
+                        },
+                    )
+                row = connection.execute(
+                    "SELECT event_count, file_size FROM sessions WHERE id = ?",
+                    ("tail-session",),
+                ).fetchone()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["event_count"], 3)
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row["event_count"], 3)
+        self.assertEqual(row["file_size"], len((base_raw_jsonl + tail_jsonl).encode("utf-8")))
+
+    def test_store_raw_sync_session_tail_reports_base_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            settings = make_test_settings(data_dir=data_dir, session_roots=[Path(tmpdir) / "sessions"])
+            init_db(settings.database_path)
+
+            with connect(settings.database_path) as connection:
+                with write_transaction(connection):
+                    result = store_raw_sync_session_tail(
+                        connection,
+                        settings,
+                        {
+                            "source_host": "remote-host",
+                            "source_root": "/tmp",
+                            "source_path": "/tmp/missing.jsonl",
+                            "base_file_size": 123,
+                            "base_content_sha256": "missing",
+                            "file_size": 456,
+                            "file_mtime_ns": 2,
+                            "tail_jsonl": "\n{}",
+                        },
+                    )
+
+        self.assertEqual(result["status"], "base_mismatch")
+        self.assertEqual(result["reason"], "missing-session")
+
     def test_sync_sessions_remote_batches_raw_uploads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             session_root = Path(tmpdir) / "sessions"
@@ -1937,6 +2026,104 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(stats, {"uploaded": 1, "skipped": 0, "failed": 0})
         self.assertEqual(len(upload_calls), 1)
         self.assertEqual(upload_calls[0][2]["source_path"], str(first_path))
+
+    def test_sync_sessions_remote_uploads_append_tail_when_base_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_root = Path(tmpdir) / "sessions"
+            session_root.mkdir(parents=True, exist_ok=True)
+            session_path = session_root / "tail-remote.jsonl"
+            base_raw_jsonl = make_raw_session_jsonl("tail-remote")
+            session_path.write_text(base_raw_jsonl, encoding="utf-8")
+            settings = make_test_settings(
+                data_dir=Path(tmpdir) / "data",
+                session_roots=[session_root],
+                remote_batch_size=1,
+            )
+            base_parsed = parse_session_text(
+                base_raw_jsonl,
+                session_path,
+                session_root,
+                settings.source_host,
+                file_size=len(base_raw_jsonl.encode("utf-8")),
+                file_mtime_ns=session_path.stat().st_mtime_ns,
+            )
+            appended_tail = "\n" + json.dumps(
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-04-20T03:19:17Z",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": "Tail update",
+                    },
+                }
+            )
+            appended_raw_jsonl = base_raw_jsonl + appended_tail
+            appended_content_sha256 = parse_session_text(
+                appended_raw_jsonl,
+                session_path,
+                session_root,
+                settings.source_host,
+                file_size=len(appended_raw_jsonl.encode("utf-8")),
+                file_mtime_ns=2,
+            ).content_sha256
+            calls: list[tuple[str, str, object | None]] = []
+
+            def fake_json_request(
+                _settings: Settings,
+                method: str,
+                path: str,
+                payload: dict[str, object] | None = None,
+            ) -> dict[str, object]:
+                calls.append((method, path, payload))
+                if path == "/api/sync/session-raw":
+                    return {
+                        "status": "ok",
+                        "content_sha256": base_parsed.content_sha256,
+                        "event_count": base_parsed.event_count,
+                    }
+                if path.startswith("/api/sync/manifest"):
+                    return {
+                        "sessions": [
+                            {
+                                "id": "tail-remote",
+                                "source_path": str(session_path),
+                                "file_size": len(base_raw_jsonl.encode("utf-8")),
+                                "file_mtime_ns": 1,
+                                "content_sha256": base_parsed.content_sha256,
+                                "has_raw_artifact": True,
+                                "event_count": base_parsed.event_count,
+                                "stored_event_count": base_parsed.event_count,
+                            }
+                        ],
+                        "ignored_project_keys": [],
+                        "actions": {},
+                        "server": {
+                            "app_version": settings.app_version,
+                            "sync_api_version": settings.sync_api_version,
+                            "expected_agent_version": settings.expected_agent_version,
+                        },
+                    }
+                if path == "/api/sync/session-tail":
+                    return {
+                        "status": "ok",
+                        "content_sha256": appended_content_sha256,
+                        "event_count": 3,
+                    }
+                if path == "/api/sync/heartbeat":
+                    return {"status": "ok"}
+                raise AssertionError(f"Unexpected request path: {path}")
+
+            with mock.patch("agent_operations_viewer.remote_sync.json_request", side_effect=fake_json_request):
+                first_stats = sync_sessions_remote(settings, force=True)
+                session_path.write_text(appended_raw_jsonl, encoding="utf-8")
+                second_stats = sync_sessions_remote(settings)
+
+        tail_calls = [call for call in calls if call[1] == "/api/sync/session-tail"]
+        self.assertEqual(first_stats, {"uploaded": 1, "skipped": 0, "failed": 0})
+        self.assertEqual(second_stats, {"uploaded": 1, "skipped": 0, "failed": 0})
+        self.assertEqual(len(tail_calls), 1)
+        self.assertEqual(tail_calls[0][2]["base_file_size"], len(base_raw_jsonl.encode("utf-8")))
+        self.assertEqual(tail_calls[0][2]["tail_jsonl"], appended_tail)
 
     def test_session_file_watcher_poll_detects_changes_with_debounce(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

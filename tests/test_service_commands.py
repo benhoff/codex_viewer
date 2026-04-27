@@ -116,6 +116,68 @@ class ServiceCommandFeedbackTests(unittest.TestCase):
         self.assertNotIn("Details:", output)
         self.assertNotIn('"running": false', output)
 
+    def test_flat_status_cli_prints_agent_status(self) -> None:
+        stdout = io.StringIO()
+        args = argparse.Namespace(command="status", json=False)
+        status_result = {"paired": False, "service": {"installed": False, "running": False}}
+
+        with patch("agent_daemon.commands.parse_args", return_value=args):
+            with patch("agent_daemon.commands.Settings.from_env", return_value=self.settings):
+                with patch("agent_daemon.commands.collect_agent_status", return_value=status_result):
+                    with patch("agent_daemon.commands.format_agent_status", return_value="agent status text"):
+                        with redirect_stdout(stdout):
+                            exit_code = cli()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stdout.getvalue().strip(), "agent status text")
+
+    def test_flat_doctor_cli_returns_nonzero_when_checks_fail(self) -> None:
+        stdout = io.StringIO()
+        args = argparse.Namespace(command="doctor", json=False)
+        doctor_result = {"ok": False, "checks": [], "next_actions": ["Run setup."]}
+
+        with patch("agent_daemon.commands.parse_args", return_value=args):
+            with patch("agent_daemon.commands.Settings.from_env", return_value=self.settings):
+                with patch("agent_daemon.commands.doctor_agent", return_value=doctor_result):
+                    with patch("agent_daemon.commands.format_agent_doctor", return_value="doctor text"):
+                        with redirect_stdout(stdout):
+                            exit_code = cli()
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout.getvalue().strip(), "doctor text")
+
+    def test_flat_setup_cli_delegates_to_daemon_machine_setup(self) -> None:
+        stdout = io.StringIO()
+        args = argparse.Namespace(
+            command="setup",
+            server="https://viewer.example.com",
+            label="build-box",
+            no_browser=True,
+            timeout=60,
+            force=True,
+            reinstall_service=True,
+            json=True,
+        )
+        setup_result = {"actions": ["paired_machine"], "status": {"paired": True}}
+
+        with patch("agent_daemon.commands.parse_args", return_value=args):
+            with patch("agent_daemon.commands.Settings.from_env", return_value=self.settings):
+                with patch("agent_daemon.commands.machine_setup", return_value=setup_result) as setup_mock:
+                    with redirect_stdout(stdout):
+                        exit_code = cli()
+
+        self.assertEqual(exit_code, 0)
+        setup_mock.assert_called_once_with(
+            self.settings,
+            label="build-box",
+            open_browser=False,
+            timeout_seconds=60,
+            force=True,
+            reinstall_service=True,
+        )
+        self.assertEqual(self.settings.server_base_url, "https://viewer.example.com")
+        self.assertIn('"paired_machine"', stdout.getvalue())
+
     def test_main_cli_rejects_service_commands(self) -> None:
         stderr = io.StringIO()
         with patch.object(sys, "argv", ["agent_operations_viewer", "service", "status"]):

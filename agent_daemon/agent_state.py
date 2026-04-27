@@ -5,6 +5,25 @@ from collections.abc import Iterable
 from pathlib import Path
 
 
+AGENT_SESSION_FILE_COLUMNS = {
+    "last_synced_size": "INTEGER NOT NULL DEFAULT 0",
+    "last_synced_content_sha256": "TEXT",
+    "last_synced_line_hash": "TEXT",
+    "last_synced_event_count": "INTEGER NOT NULL DEFAULT 0",
+    "last_synced_at": "TEXT",
+}
+
+
+def _ensure_agent_state_columns(connection: sqlite3.Connection) -> None:
+    existing_columns = {
+        str(row["name"])
+        for row in connection.execute("PRAGMA table_info(agent_session_files)").fetchall()
+    }
+    for column_name, column_def in AGENT_SESSION_FILE_COLUMNS.items():
+        if column_name not in existing_columns:
+            connection.execute(f"ALTER TABLE agent_session_files ADD COLUMN {column_name} {column_def}")
+
+
 def connect_agent_state(database_path: Path) -> sqlite3.Connection:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(database_path)
@@ -26,10 +45,16 @@ def connect_agent_state(database_path: Path) -> sqlite3.Connection:
             invalid_reason TEXT,
             last_seen_at TEXT NOT NULL,
             last_uploaded_at TEXT,
+            last_synced_size INTEGER NOT NULL DEFAULT 0,
+            last_synced_content_sha256 TEXT,
+            last_synced_line_hash TEXT,
+            last_synced_event_count INTEGER NOT NULL DEFAULT 0,
+            last_synced_at TEXT,
             deleted_at TEXT
         )
         """
     )
+    _ensure_agent_state_columns(connection)
     connection.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_agent_session_files_root_deleted
@@ -133,6 +158,10 @@ def mark_agent_file_uploaded(
     *,
     source_path: Path,
     uploaded_at: str,
+    file_size: int | None = None,
+    content_sha256: str | None = None,
+    last_line_hash: str | None = None,
+    event_count: int | None = None,
 ) -> None:
     connection.execute(
         """
@@ -143,10 +172,23 @@ def mark_agent_file_uploaded(
                 ELSE 'uploaded'
             END,
             last_uploaded_at = ?,
+            last_synced_size = COALESCE(?, last_synced_size),
+            last_synced_content_sha256 = COALESCE(?, last_synced_content_sha256),
+            last_synced_line_hash = COALESCE(?, last_synced_line_hash),
+            last_synced_event_count = COALESCE(?, last_synced_event_count),
+            last_synced_at = ?,
             deleted_at = NULL
         WHERE source_path = ?
         """,
-        (uploaded_at, str(source_path)),
+        (
+            uploaded_at,
+            file_size,
+            content_sha256,
+            last_line_hash,
+            event_count,
+            uploaded_at,
+            str(source_path),
+        ),
     )
 
 
