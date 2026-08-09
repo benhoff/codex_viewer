@@ -16,6 +16,7 @@ _CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)|(?<!_)_([^_\n]+)_(?!_)")
+_TABLE_DELIMITER_RE = re.compile(r"^:?-{3,}:?$")
 
 
 def render_markdown(value: str | None) -> Markup:
@@ -73,6 +74,12 @@ def render_markdown(value: str | None) -> Markup:
             blocks.append(f"<blockquote>{inner}</blockquote>")
             continue
 
+        table = _collect_table(lines, index)
+        if table is not None:
+            headers, alignments, rows, index = table
+            blocks.append(_render_table(headers, alignments, rows))
+            continue
+
         if _UNORDERED_RE.match(line):
             items, _, index = _collect_list(lines, index, ordered=False)
             blocks.append(
@@ -99,6 +106,7 @@ def render_markdown(value: str | None) -> Markup:
                 _FENCE_RE.match(current)
                 or _HEADING_RE.match(current)
                 or _BLOCKQUOTE_RE.match(current)
+                or _collect_table(lines, index) is not None
                 or _UNORDERED_RE.match(current)
                 or _ORDERED_RE.match(current)
             ):
@@ -160,6 +168,125 @@ def _collect_list(lines: list[str], index: int, ordered: bool) -> tuple[list[str
     if current_item:
         items.append("\n".join(current_item).strip())
     return items, start_number, index
+
+
+def _collect_table(
+    lines: list[str], index: int
+) -> tuple[list[str], list[str | None], list[list[str]], int] | None:
+    if index + 1 >= len(lines):
+        return None
+
+    headers = _split_table_row(lines[index])
+    if len(headers) < 2:
+        return None
+
+    delimiter_cells = _split_table_row(lines[index + 1])
+    if len(delimiter_cells) != len(headers):
+        return None
+
+    alignments = _parse_table_alignments(delimiter_cells)
+    if alignments is None:
+        return None
+
+    rows: list[list[str]] = []
+    next_index = index + 2
+    while next_index < len(lines):
+        line = lines[next_index]
+        if not line.strip():
+            break
+        cells = _split_table_row(line)
+        if len(cells) < 2:
+            break
+        rows.append(_normalize_table_row(cells, len(headers)))
+        next_index += 1
+
+    return headers, alignments, rows, next_index
+
+
+def _split_table_row(line: str) -> list[str]:
+    row = line.strip()
+    if row.startswith("|"):
+        row = row[1:]
+    if row.endswith("|") and not _is_escaped(row, len(row) - 1):
+        row = row[:-1]
+
+    cells: list[str] = []
+    current: list[str] = []
+    in_code_span = False
+    for position, character in enumerate(row):
+        if character == "`" and not _is_escaped(row, position):
+            in_code_span = not in_code_span
+        if character == "|" and not in_code_span and not _is_escaped(row, position):
+            cells.append(_clean_table_cell("".join(current)))
+            current = []
+            continue
+        current.append(character)
+    cells.append(_clean_table_cell("".join(current)))
+    return cells
+
+
+def _is_escaped(value: str, position: int) -> bool:
+    backslash_count = 0
+    cursor = position - 1
+    while cursor >= 0 and value[cursor] == "\\":
+        backslash_count += 1
+        cursor -= 1
+    return backslash_count % 2 == 1
+
+
+def _clean_table_cell(value: str) -> str:
+    return value.strip().replace(r"\|", "|")
+
+
+def _parse_table_alignments(cells: list[str]) -> list[str | None] | None:
+    alignments: list[str | None] = []
+    for cell in cells:
+        marker = cell.replace(" ", "")
+        if not _TABLE_DELIMITER_RE.match(marker):
+            return None
+        align_left = marker.startswith(":")
+        align_right = marker.endswith(":")
+        if align_left and align_right:
+            alignments.append("center")
+        elif align_right:
+            alignments.append("right")
+        elif align_left:
+            alignments.append("left")
+        else:
+            alignments.append(None)
+    return alignments
+
+
+def _normalize_table_row(cells: list[str], width: int) -> list[str]:
+    if len(cells) < width:
+        return cells + [""] * (width - len(cells))
+    return cells[:width]
+
+
+def _render_table(headers: list[str], alignments: list[str | None], rows: list[list[str]]) -> str:
+    header_cells = "".join(
+        f"<th{_table_alignment_attr(alignments[index])}>{_render_inline(header)}</th>"
+        for index, header in enumerate(headers)
+    )
+    body_rows = "".join(
+        "<tr>"
+        + "".join(
+            f"<td{_table_alignment_attr(alignments[index])}>{_render_inline(cell)}</td>"
+            for index, cell in enumerate(row)
+        )
+        + "</tr>"
+        for row in rows
+    )
+    body = f"<tbody>{body_rows}</tbody>" if body_rows else ""
+    return (
+        '<div class="markdown-table-wrapper"><table>'
+        f"<thead><tr>{header_cells}</tr></thead>"
+        f"{body}</table></div>"
+    )
+
+
+def _table_alignment_attr(alignment: str | None) -> str:
+    return f' data-align="{alignment}"' if alignment else ""
 
 
 def _render_inline(value: str) -> str:
