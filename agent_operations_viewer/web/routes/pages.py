@@ -44,6 +44,11 @@ from ...local_auth import (
     verify_local_password_for_user,
     verify_local_password_login,
 )
+from ...machine_aliases import (
+    list_machine_display_aliases,
+    machine_display_name,
+    set_machine_display_alias,
+)
 from ...machine_credentials import list_machine_credentials, revoke_machine_credential
 from ...onboarding import effective_bootstrap_required, reconcile_onboarding_state
 from ...projects import (
@@ -578,13 +583,17 @@ def build_active_hosts_panel(
     rows: list[sqlite3.Row],
     remotes: list[dict[str, object]],
     *,
+    machine_aliases: dict[str, str] | None = None,
     limit: int = 5,
 ) -> tuple[int, list[dict[str, object]], bool]:
+    machine_aliases = machine_aliases or {}
     active_remotes = [remote for remote in remotes if not remote.get("stale")]
     if active_remotes:
         items = [
             {
                 "source_host": str(remote["source_host"]),
+                "display_name": str(remote.get("display_name") or remote["source_host"]),
+                "display_alias": str(remote.get("display_alias") or ""),
                 "timestamp": str(remote.get("last_seen_at") or ""),
                 "detail": (
                     f"{int(remote.get('last_upload_count') or 0)} up / "
@@ -596,6 +605,11 @@ def build_active_hosts_panel(
             }
             for remote in active_remotes[:limit]
         ]
+        for item in items:
+            source_host = str(item["source_host"])
+            display_alias = machine_aliases.get(source_host) or str(item.get("display_alias") or "")
+            item["display_alias"] = display_alias
+            item["display_name"] = machine_display_name(source_host, display_alias)
         return len(active_remotes), items, True
 
     host_activity: dict[str, dict[str, object]] = {}
@@ -629,6 +643,8 @@ def build_active_hosts_panel(
     items = [
         {
             "source_host": str(item["source_host"]),
+            "display_name": str(item.get("display_name") or item["source_host"]),
+            "display_alias": str(item.get("display_alias") or ""),
             "timestamp": str(item["timestamp"] or ""),
             "detail": f"{int(item['sessions'])} sessions / {int(item['turns'])} turns",
             "status": "recent activity",
@@ -636,6 +652,11 @@ def build_active_hosts_panel(
         }
         for item in ordered[:limit]
     ]
+    for item in items:
+        source_host = str(item["source_host"])
+        display_alias = machine_aliases.get(source_host) or str(item.get("display_alias") or "")
+        item["display_alias"] = display_alias
+        item["display_name"] = machine_display_name(source_host, display_alias)
     return len(ordered), items, False
 
 
@@ -1428,6 +1449,7 @@ def index(
             today_start,
         )
         remotes = fetch_remote_agent_health(connection, context.settings)
+        machine_aliases = list_machine_display_aliases(connection)
         action_queue = build_homepage_action_queue(
             connection,
             rows,
@@ -1470,6 +1492,7 @@ def index(
     active_host_count, active_hosts, active_hosts_from_agents = build_active_hosts_panel(
         rows,
         visible_remotes,
+        machine_aliases=machine_aliases,
     )
     failed_agents = [remote for remote in visible_remotes if agent_has_failure(remote)][:5]
     stats["active_hosts"] = active_host_count
@@ -1852,16 +1875,32 @@ async def remote_action(request: Request) -> RedirectResponse:
     action = fields.get("action", "").strip()
     if not source_host:
         raise HTTPException(status_code=400, detail="Missing remote host")
-    if action != "request_raw_resend":
+    if action not in {"request_raw_resend", "update_alias", "clear_alias"}:
         raise HTTPException(status_code=400, detail="Unsupported remote action")
 
-    with connect(context.settings.database_path) as connection:
-        with write_transaction(connection):
-            request_remote_raw_resend(
-                connection,
-                source_host,
-                note="Requested from machines view",
-            )
+    try:
+        with connect(context.settings.database_path) as connection:
+            with write_transaction(connection):
+                if action == "request_raw_resend":
+                    request_remote_raw_resend(
+                        connection,
+                        source_host,
+                        note="Requested from machines view",
+                    )
+                elif action == "update_alias":
+                    set_machine_display_alias(
+                        connection,
+                        source_host=source_host,
+                        display_alias=fields.get("display_alias", ""),
+                    )
+                else:
+                    set_machine_display_alias(
+                        connection,
+                        source_host=source_host,
+                        display_alias="",
+                    )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return RedirectResponse(url=fields.get("return_to") or "/machines", status_code=303)
 

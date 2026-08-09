@@ -11,7 +11,10 @@
         class="min-w-0 flex-1 text-left"
       >
         <div class="flex flex-wrap items-center gap-2">
-          <span class="text-lg font-semibold text-stone-900 sm:text-xl">{{ agent.source_host }}</span>
+          <span class="text-lg font-semibold text-stone-900 sm:text-xl">{{ agent.display_name }}</span>
+          {% if agent.display_alias %}
+            <span class="rounded-full bg-stone-100 px-2.5 py-1 font-mono text-[0.68rem] font-semibold text-stone-600">{{ agent.source_host }}</span>
+          {% endif %}
           {% for badge in agent.issue_badges %}
             <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
               {{ badge.label }}
@@ -72,6 +75,46 @@
     </div>
 
     <div id="{{ agent.toggle_id }}" class="mt-4 hidden border-t border-stone-200/80 pt-4">
+      {% if can_manage_admin %}
+        <div class="mb-4 rounded-[1.1rem] border border-stone-200 bg-stone-50/80 p-4">
+          <form action="/machines/actions" method="post" class="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <input type="hidden" name="source_host" value="{{ agent.source_host }}" />
+            <input type="hidden" name="return_to" value="{{ return_to }}" />
+            <div class="min-w-0 flex-1">
+              <label for="alias-{{ agent.toggle_id }}" class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Display alias</label>
+              <input
+                id="alias-{{ agent.toggle_id }}"
+                name="display_alias"
+                value="{{ agent.display_alias }}"
+                maxlength="80"
+                placeholder="{{ agent.source_host }}"
+                class="mt-2 w-full rounded-[0.95rem] border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-900 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200/70"
+              />
+              <p class="mt-2 break-all text-xs text-stone-500">Sync key: <span class="font-mono">{{ agent.source_host }}</span></p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                name="action"
+                value="update_alias"
+                class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100"
+              >
+                Save alias
+              </button>
+              {% if agent.display_alias %}
+                <button
+                  type="submit"
+                  name="action"
+                  value="clear_alias"
+                  class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50"
+                >
+                  Clear
+                </button>
+              {% endif %}
+            </div>
+          </form>
+        </div>
+      {% endif %}
       <div class="grid gap-4 xl:grid-cols-[1.1fr,0.9fr]">
         <div class="space-y-4">
           <div class="rounded-[1.1rem] border border-stone-200 bg-stone-50/80 p-4">

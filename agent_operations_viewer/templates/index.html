@@ -104,7 +104,7 @@
                 {% for remote in failed_agents %}
                   <a href="/machines" class="block min-w-0 px-4 py-3 transition hover:bg-[#F9FAFB]">
                     <div class="flex min-w-0 items-center justify-between gap-3">
-                      <p class="min-w-0 truncate text-sm font-semibold text-[#1F2937]">{{ remote.source_host }}</p>
+                      <p class="min-w-0 truncate text-sm font-semibold text-[#1F2937]">{{ remote.display_name or remote.source_host }}</p>
                       <span class="shrink-0 rounded-full bg-[#FEE2E2] px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-[#DC2626]">
                         {{ remote.update_state|replace('_', ' ') }}
                       </span>
@@ -342,7 +342,7 @@
               {% for item in active_hosts %}
                 <div class="px-4 py-3">
                   <div class="flex items-center justify-between gap-3">
-                    <p class="min-w-0 truncate text-sm font-semibold text-stone-900">{{ item.source_host }}</p>
+                    <p class="min-w-0 truncate text-sm font-semibold text-stone-900">{{ item.display_name or item.source_host }}</p>
                     <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if item.status_tone == 'sky' %}bg-[#DBEAFE] text-[#2563EB]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}">
                       {{ item.status }}
                     </span>

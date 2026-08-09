@@ -121,6 +121,13 @@ REMOTE_AGENT_COLUMN_DEFS = {
     "last_raw_resend_at": "TEXT",
 }
 
+MACHINE_ALIAS_COLUMN_DEFS = {
+    "source_host": "TEXT PRIMARY KEY",
+    "display_alias": "TEXT NOT NULL",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
 USER_COLUMN_DEFS = {
     "id": "TEXT PRIMARY KEY",
     "username": "TEXT NOT NULL UNIQUE",
@@ -519,6 +526,13 @@ CREATE TABLE IF NOT EXISTS remote_agents (
     requested_raw_resend_note TEXT,
     acknowledged_raw_resend_token TEXT,
     last_raw_resend_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS machine_aliases (
+    source_host TEXT PRIMARY KEY,
+    display_alias TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS api_tokens (
@@ -1224,6 +1238,17 @@ def ensure_remote_agent_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_machine_alias_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "machine_aliases"):
+        return
+    machine_alias_columns = table_columns(connection, "machine_aliases")
+    for column_name, column_def in MACHINE_ALIAS_COLUMN_DEFS.items():
+        if column_name not in machine_alias_columns and column_name != "source_host":
+            connection.execute(
+                f"ALTER TABLE machine_aliases ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def ensure_user_columns(connection: sqlite3.Connection) -> None:
     if not table_exists(connection, "users"):
         return
@@ -1453,6 +1478,7 @@ def init_db(database_path: Path) -> None:
             ensure_session_columns(connection)
             ensure_session_artifact_columns(connection)
             ensure_remote_agent_columns(connection)
+            ensure_machine_alias_columns(connection)
             ensure_user_columns(connection)
             backfill_user_access_columns(connection)
             ensure_project_columns(connection)

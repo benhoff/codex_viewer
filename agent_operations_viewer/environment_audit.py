@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .agents import fetch_remote_agent_health
+from .machine_aliases import fetch_machine_display_alias, machine_display_name
 from .projects import (
     ProjectAccessContext,
     build_grouped_projects,
@@ -1485,6 +1486,7 @@ def fetch_host_environment_audit(
         (item for item in fetch_remote_agent_health(connection, settings) if str(item["source_host"]) == source_host),
         None,
     )
+    display_alias = fetch_machine_display_alias(connection, source_host)
     failure_groups = _group_failures(failure_rows)
     project_links: dict[str, str] = {}
     for row in session_rows:
@@ -1494,6 +1496,8 @@ def fetch_host_environment_audit(
             project_links[fields["display_label"]] = detail_href
     return {
         "source_host": source_host,
+        "display_alias": display_alias,
+        "display_name": machine_display_name(source_host, display_alias),
         "remote": remote_snapshot,
         "summary": _host_summary(session_rows, project_labels_by_key),
         "tool_surface": _tool_surface_summary(tool_rows),

@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .config import Settings
+from .machine_aliases import list_machine_display_aliases, machine_display_name
 from .projects import (
     ProjectAccessContext,
     build_grouped_projects,
@@ -243,6 +244,8 @@ def fetch_pending_remote_actions(
 def build_remote_agent_health(rows: list[sqlite3.Row], settings: Settings) -> list[dict[str, Any]]:
     health_rows: list[dict[str, Any]] = []
     for row in rows:
+        row_keys = set(row.keys())
+        display_alias = trimmed(row["display_alias"]) if "display_alias" in row_keys else None
         agent_version = trimmed(row["agent_version"]) or "unknown"
         sync_api_version = trimmed(row["sync_api_version"]) or "unknown"
         server_version_seen = trimmed(row["server_version_seen"]) or settings.expected_agent_version
@@ -265,6 +268,8 @@ def build_remote_agent_health(rows: list[sqlite3.Row], settings: Settings) -> li
         health_rows.append(
             {
                 "source_host": row["source_host"],
+                "display_alias": display_alias,
+                "display_name": machine_display_name(str(row["source_host"]), display_alias),
                 "agent_version": agent_version,
                 "sync_api_version": sync_api_version,
                 "sync_mode": trimmed(row["sync_mode"]) or "unknown",
@@ -299,9 +304,13 @@ def fetch_remote_agent_health(
 ) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
-        SELECT *
-        FROM remote_agents
-        ORDER BY last_seen_at DESC, source_host ASC
+        SELECT
+            r.*,
+            a.display_alias AS display_alias
+        FROM remote_agents AS r
+        LEFT JOIN machine_aliases AS a
+            ON a.source_host = r.source_host
+        ORDER BY r.last_seen_at DESC, r.source_host ASC
         """
     ).fetchall()
     return build_remote_agent_health(rows, settings)
@@ -314,9 +323,13 @@ def fetch_remote_agent_status(
 ) -> dict[str, Any] | None:
     row = connection.execute(
         """
-        SELECT *
-        FROM remote_agents
-        WHERE source_host = ?
+        SELECT
+            r.*,
+            a.display_alias AS display_alias
+        FROM remote_agents AS r
+        LEFT JOIN machine_aliases AS a
+            ON a.source_host = r.source_host
+        WHERE r.source_host = ?
         """,
         (source_host,),
     ).fetchone()
@@ -345,9 +358,16 @@ def _session_title(row: sqlite3.Row) -> str:
     )
 
 
-def _new_agent_entry(source_host: str, remote: dict[str, Any] | None) -> dict[str, Any]:
+def _new_agent_entry(
+    source_host: str,
+    remote: dict[str, Any] | None,
+    display_alias: str | None = None,
+) -> dict[str, Any]:
+    effective_alias = trimmed(display_alias) or trimmed((remote or {}).get("display_alias"))
     return {
         "source_host": source_host,
+        "display_alias": effective_alias,
+        "display_name": machine_display_name(source_host, effective_alias),
         "remote": remote,
         "session_count_total": 0,
         "aborted_turn_count_total": 0,
@@ -654,6 +674,7 @@ def fetch_agents_dashboard(
 ) -> dict[str, Any]:
     remotes = fetch_remote_agent_health(connection, settings)
     rows = query_group_rows(connection, project_access=project_access)
+    machine_aliases = list_machine_display_aliases(connection)
     visible_hosts = _visible_source_hosts(rows)
     if project_access is not None and not project_access.bypass:
         remotes = [
@@ -673,7 +694,11 @@ def fetch_agents_dashboard(
     )
 
     entries: dict[str, dict[str, Any]] = {
-        str(remote["source_host"]): _new_agent_entry(str(remote["source_host"]), remote)
+        str(remote["source_host"]): _new_agent_entry(
+            str(remote["source_host"]),
+            remote,
+            machine_aliases.get(str(remote["source_host"])),
+        )
         for remote in remotes
     }
 
@@ -682,7 +707,10 @@ def fetch_agents_dashboard(
         source_host = str(project["source_host"] or "").strip()
         if not source_host:
             continue
-        entry = entries.setdefault(source_host, _new_agent_entry(source_host, None))
+        entry = entries.setdefault(
+            source_host,
+            _new_agent_entry(source_host, None, machine_aliases.get(source_host)),
+        )
         entry["session_count_total"] += 1
         entry["aborted_turn_count_total"] += int(row["aborted_turn_count"] or 0)
 
@@ -781,6 +809,8 @@ def fetch_agents_dashboard(
         latest_repo_href = latest_session["project_href"] if latest_session else ""
         row_item = {
             "source_host": source_host,
+            "display_alias": entry["display_alias"] or "",
+            "display_name": entry["display_name"],
             "section": section,
             "summary": summary,
             "last_seen_at": trimmed(remote.get("last_seen_at")) or (latest_session["timestamp"] if latest_session else ""),
