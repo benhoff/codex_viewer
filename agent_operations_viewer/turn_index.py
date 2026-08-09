@@ -20,7 +20,7 @@ from .session_insights import compute_usage_rollup
 from .text_utils import shorten, strip_codex_wrappers
 
 
-TURN_INDEX_VERSION = 4
+TURN_INDEX_VERSION = 6
 TURN_SEARCH_VERSION = 2
 
 MAX_PROMPT_SEARCH_CHARS = 8_000
@@ -101,6 +101,87 @@ def _parse_patch_change_count(detail_text: object) -> int:
     if isinstance(parsed, dict):
         return len(parsed)
     return 0
+
+
+def _is_apply_patch_exec_tool_call(event: dict[str, Any]) -> bool:
+    if event.get("kind") != "tool_call" or event.get("tool_name") != "exec_command":
+        return False
+    text = "\n".join(
+        str(event.get(key) or "")
+        for key in ("display_text", "command_text", "detail_text")
+    ).strip().lower()
+    return bool(text and "apply_patch" in text and "*** begin patch" in text)
+
+
+def _decode_json_string(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith('"') and text.endswith('"'):
+        try:
+            decoded = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+        if isinstance(decoded, str):
+            return decoded.strip()
+    return text
+
+
+def _diff_stat_counts(unified_diff: object) -> tuple[int, int, int]:
+    additions = 0
+    deletions = 0
+    hunks = 0
+    for line in _decode_json_string(unified_diff).splitlines():
+        if line.startswith("@@"):
+            hunks += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            additions += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deletions += 1
+    return additions, deletions, hunks
+
+
+def _parse_patch_file_changes(event: dict[str, Any]) -> list[dict[str, Any]]:
+    if event.get("record_type") != "event_msg" or event.get("payload_type") != "patch_apply_end":
+        return []
+    detail_text = event.get("detail_text")
+    if not isinstance(detail_text, str):
+        return []
+    text = detail_text.strip()
+    if not text or text[0] != "{":
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, dict):
+        return []
+
+    changes: list[dict[str, Any]] = []
+    for raw_path, metadata in parsed.items():
+        path = str(raw_path or "").strip()
+        if not path:
+            continue
+        operation = "update"
+        additions = 0
+        deletions = 0
+        hunks = 0
+        if isinstance(metadata, dict):
+            operation = str(metadata.get("type") or "update").strip().lower() or "update"
+            additions, deletions, hunks = _diff_stat_counts(metadata.get("unified_diff"))
+        changes.append(
+            {
+                "event_index": int(event.get("event_index") or 0),
+                "timestamp": event.get("timestamp"),
+                "path": path,
+                "operation": operation,
+                "additions": additions,
+                "deletions": deletions,
+                "hunks": hunks,
+            }
+        )
+    changes.sort(key=lambda item: (int(item["event_index"]), str(item["path"])))
+    return changes
 
 
 def _trimmed(value: object) -> str | None:
@@ -246,7 +327,8 @@ def compute_session_turn_index(
         patch_count = sum(
             1
             for event in all_events
-            if event.get("kind") == "tool_call" and event.get("tool_name") == "apply_patch"
+            if event.get("kind") == "tool_call"
+            and (event.get("tool_name") == "apply_patch" or _is_apply_patch_exec_tool_call(event))
         )
         failure_count = sum(
             1
@@ -260,6 +342,11 @@ def compute_session_turn_index(
             for event in all_events
             if event.get("record_type") == "event_msg" and event.get("payload_type") == "patch_apply_end"
         )
+        file_changes = [
+            change
+            for event in all_events
+            for change in _parse_patch_file_changes(event)
+        ]
         usage_rollup = compute_usage_rollup(all_events)
         latest_timestamp = _latest_timestamp(
             [response_timestamp, turn.get("prompt_timestamp")] + [event.get("timestamp") for event in all_events]
@@ -281,6 +368,7 @@ def compute_session_turn_index(
             "patch_count": patch_count,
             "failure_count": failure_count,
             "files_touched_count": files_touched_count,
+            "file_changes": file_changes,
             "latest_usage_timestamp": usage_rollup["latest_usage_timestamp"],
             "latest_input_tokens": int(usage_rollup["latest_input_tokens"] or 0),
             "latest_cached_input_tokens": int(usage_rollup["latest_cached_input_tokens"] or 0),
@@ -345,6 +433,7 @@ def replace_session_turns(
     events: Sequence[sqlite3.Row | dict[str, Any] | object],
 ) -> None:
     connection.execute("DELETE FROM session_turns WHERE session_id = ?", (session_id,))
+    connection.execute("DELETE FROM session_file_changes WHERE session_id = ?", (session_id,))
     rows = compute_session_turn_index(events)
     if rows:
         connection.executemany(
@@ -414,6 +503,45 @@ def replace_session_turns(
                 for row in rows
             ],
         )
+        file_change_rows: list[tuple[Any, ...]] = []
+        for row in rows:
+            turn_number = int(row["turn_number"])
+            for change in row.get("file_changes", []):
+                if not isinstance(change, dict):
+                    continue
+                path = str(change.get("path") or "").strip()
+                if not path:
+                    continue
+                file_change_rows.append(
+                    (
+                        session_id,
+                        turn_number,
+                        int(change.get("event_index") or 0),
+                        path,
+                        str(change.get("operation") or "update").strip() or "update",
+                        int(change.get("additions") or 0),
+                        int(change.get("deletions") or 0),
+                        int(change.get("hunks") or 0),
+                        change.get("timestamp"),
+                    )
+                )
+        if file_change_rows:
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO session_file_changes (
+                    session_id,
+                    turn_number,
+                    event_index,
+                    path,
+                    operation,
+                    additions,
+                    deletions,
+                    hunks,
+                    timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                file_change_rows,
+            )
     connection.execute(
         "UPDATE sessions SET turn_index_version = ? WHERE id = ?",
         (TURN_INDEX_VERSION, session_id),
@@ -466,8 +594,13 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
         f"DELETE FROM session_turns WHERE session_id IN ({placeholders})",
         session_ids,
     )
+    connection.execute(
+        f"DELETE FROM session_file_changes WHERE session_id IN ({placeholders})",
+        session_ids,
+    )
 
     inserts: list[tuple[Any, ...]] = []
+    file_change_inserts: list[tuple[Any, ...]] = []
     for session_id in session_ids:
         for row in compute_session_turn_index(rows_by_session.get(session_id, [])):
             inserts.append(
@@ -502,6 +635,26 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
                     row["latest_rate_limit_reached_type"],
                 )
             )
+            turn_number = int(row["turn_number"])
+            for change in row.get("file_changes", []):
+                if not isinstance(change, dict):
+                    continue
+                path = str(change.get("path") or "").strip()
+                if not path:
+                    continue
+                file_change_inserts.append(
+                    (
+                        session_id,
+                        turn_number,
+                        int(change.get("event_index") or 0),
+                        path,
+                        str(change.get("operation") or "update").strip() or "update",
+                        int(change.get("additions") or 0),
+                        int(change.get("deletions") or 0),
+                        int(change.get("hunks") or 0),
+                        change.get("timestamp"),
+                    )
+                )
 
     if inserts:
         connection.executemany(
@@ -538,6 +691,23 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             inserts,
+        )
+    if file_change_inserts:
+        connection.executemany(
+            """
+            INSERT OR REPLACE INTO session_file_changes (
+                session_id,
+                turn_number,
+                event_index,
+                path,
+                operation,
+                additions,
+                deletions,
+                hunks,
+                timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            file_change_inserts,
         )
 
     connection.executemany(

@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}{{ file_activity.path }} · {{ group.display_label }} | Agent Operations Viewer{% endblock %}
+
+{% block content %}
+  <div class="mx-auto w-full max-w-6xl">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-5">
+      <div class="flex flex-wrap gap-2 sm:gap-3">
+        <a href="{{ file_activity.files_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Back to files
+        </a>
+        <a href="{{ project_detail_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/80 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
+          Project
+        </a>
+      </div>
+    </div>
+
+    <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:p-6 lg:p-7">
+      <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-violet-700">File activity</p>
+      <h1 class="mt-3 break-all font-mono text-2xl font-semibold leading-tight text-stone-900 sm:text-3xl">{{ file_activity.path }}</h1>
+      <p class="mt-2 text-sm leading-7 text-stone-600">
+        Every indexed turn that touched this path, derived from patch evidence.
+      </p>
+
+      <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div class="rounded-[1.15rem] bg-stone-900 p-4 text-stone-50">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-stone-300">Turns</p>
+          <p class="mt-2 text-2xl font-semibold">{{ file_activity.summary.turn_count }}</p>
+        </div>
+        <div class="rounded-[1.15rem] bg-sky-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-sky-700">Sessions</p>
+          <p class="mt-2 text-2xl font-semibold text-stone-900">{{ file_activity.summary.session_count }}</p>
+        </div>
+        <div class="rounded-[1.15rem] bg-violet-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-violet-700">Touches</p>
+          <p class="mt-2 text-2xl font-semibold text-stone-900">{{ file_activity.summary.touch_count }}</p>
+        </div>
+        <div class="rounded-[1.15rem] bg-emerald-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-emerald-700">Additions</p>
+          <p class="mt-2 text-2xl font-semibold text-stone-900">+{{ file_activity.summary.additions }}</p>
+        </div>
+        <div class="rounded-[1.15rem] bg-rose-50 p-4">
+          <p class="text-[0.7rem] uppercase tracking-[0.18em] text-rose-700">Deletions</p>
+          <p class="mt-2 text-2xl font-semibold text-stone-900">-{{ file_activity.summary.deletions }}</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+      <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Timeline</h2>
+          <p class="mt-1 text-sm text-stone-600">
+            Showing {{ file_activity.showing_from }}-{{ file_activity.showing_to }} of {{ file_activity.total_count }} turns.
+          </p>
+        </div>
+        {% if file_activity.summary.latest_timestamp %}
+          <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700" title="{{ file_activity.summary.latest_timestamp|full_timestamp }}">
+            Latest {{ file_activity.summary.latest_timestamp|humanize_timestamp }}
+          </span>
+        {% endif %}
+      </div>
+
+      <div class="space-y-4">
+        {% for item in file_activity["items"] %}
+          <article class="rounded-[1.35rem] border border-stone-200 bg-stone-50/75 p-4 transition hover:border-violet-200 hover:bg-white sm:p-5">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">Turn {{ item.turn_number }}</span>
+                  <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">{{ item.source_host }}</span>
+                  {% if item.git_branch %}
+                    <span class="rounded-full bg-violet-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-violet-800">{{ item.git_branch }}</span>
+                  {% endif %}
+                  {% if item.agent_nickname %}
+                    <span class="rounded-full bg-sky-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-sky-800">{{ item.agent_nickname }}</span>
+                  {% endif %}
+                  {% if item.failure_count %}
+                    <span class="rounded-full bg-amber-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-800">{{ item.failure_count }} command exits</span>
+                  {% endif %}
+                </div>
+                {% if item.latest_timestamp %}
+                  <p class="mt-3 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ item.latest_timestamp|full_timestamp }}">{{ item.latest_timestamp|humanize_timestamp }}</p>
+                {% endif %}
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+                  Open turn
+                </a>
+                <a href="{{ item.audit_href }}" class="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-800 transition hover:border-violet-300 hover:bg-violet-100">
+                  File evidence
+                </a>
+              </div>
+            </div>
+
+            <div class="mt-4 grid gap-4 lg:grid-cols-2">
+              <section class="rounded-[1.1rem] border border-rose-200 bg-rose-50/80 p-4">
+                <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-rose-700">Prompt</p>
+                <p class="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-stone-800">{{ item.prompt_excerpt }}</p>
+              </section>
+              <section class="rounded-[1.1rem] border p-4 {% if item.response_state == 'canceled' %}border-amber-200 bg-amber-50/80{% elif item.response_state == 'update' %}border-sky-200 bg-sky-50/80{% else %}border-emerald-200 bg-emerald-50/80{% endif %}">
+                <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] {% if item.response_state == 'canceled' %}text-amber-700{% elif item.response_state == 'update' %}text-sky-700{% else %}text-emerald-700{% endif %}">Response</p>
+                <p class="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-stone-800">{{ item.response_excerpt }}</p>
+              </section>
+            </div>
+
+            <div class="mt-4 flex flex-wrap gap-2">
+              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.operations }}</span>
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-emerald-800">+{{ item.additions }}</span>
+              <span class="rounded-full bg-rose-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-rose-800">-{{ item.deletions }}</span>
+              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.hunks }} hunks</span>
+              <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.files_touched_count }} files in turn</span>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+
+      {% set prev_page = file_activity.page - 1 %}
+      {% set next_page = file_activity.page + 1 %}
+      <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-stone-200/80 pt-4">
+        <div class="text-sm text-stone-600">
+          Page {{ file_activity.page }} of {{ file_activity.page_count }}
+        </div>
+        <div class="flex flex-wrap gap-2">
+          {% if file_activity.has_prev %}
+            <a href="?page={{ prev_page }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+              Newer turns
+            </a>
+          {% endif %}
+          {% if file_activity.has_next %}
+            <a href="?page={{ next_page }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
+              Older turns
+            </a>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+  </div>
+{% endblock %}

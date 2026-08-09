@@ -817,6 +817,19 @@ CREATE TABLE IF NOT EXISTS session_turns (
     PRIMARY KEY (session_id, turn_number)
 );
 
+CREATE TABLE IF NOT EXISTS session_file_changes (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    turn_number INTEGER NOT NULL,
+    event_index INTEGER NOT NULL DEFAULT 0,
+    path TEXT NOT NULL,
+    operation TEXT NOT NULL DEFAULT 'update',
+    additions INTEGER NOT NULL DEFAULT 0,
+    deletions INTEGER NOT NULL DEFAULT 0,
+    hunks INTEGER NOT NULL DEFAULT 0,
+    timestamp TEXT,
+    PRIMARY KEY (session_id, turn_number, event_index, path)
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS session_turn_search USING fts5(
     project_text,
     prompt_text,
@@ -854,6 +867,15 @@ ON session_turn_activity_daily(activity_date DESC);
 
 CREATE INDEX IF NOT EXISTS idx_session_turns_latest
 ON session_turns(latest_timestamp DESC, session_id DESC, turn_number DESC);
+
+CREATE INDEX IF NOT EXISTS idx_session_file_changes_path_latest
+ON session_file_changes(path, timestamp DESC, session_id DESC, turn_number DESC);
+
+CREATE INDEX IF NOT EXISTS idx_session_file_changes_session_turn
+ON session_file_changes(session_id, turn_number);
+
+CREATE INDEX IF NOT EXISTS idx_session_file_changes_latest
+ON session_file_changes(timestamp DESC, session_id DESC, turn_number DESC);
 
 CREATE INDEX IF NOT EXISTS idx_environment_observations_project
 ON environment_command_observations(inferred_project_key, timestamp DESC, session_id DESC, event_index DESC);

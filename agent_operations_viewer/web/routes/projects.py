@@ -12,6 +12,8 @@ from ...local_auth import list_users
 from ...projects import (
     build_project_access_context,
     delete_sessions_for_project_keys,
+    fetch_project_changed_files,
+    fetch_project_file_activity,
     fetch_turn_stream,
     fetch_group_detail,
     fetch_group_source_project_keys,
@@ -106,9 +108,101 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
             "queue_counts": queue_counts,
             "queue_href": f"{detail_path}/queue",
             "stream_href": f"{detail_path}/stream",
+            "files_href": f"{detail_path}/files",
             "stream_preview": stream_preview,
             "environment_href": f"{detail_path}/environment",
             "detail_return_to": detail_path,
+        },
+    )
+
+
+def render_group_files(
+    request: Request,
+    key: str,
+    *,
+    page: int = 1,
+    q: str | None = None,
+    branch: str | None = None,
+    sort: str | None = None,
+) -> HTMLResponse:
+    context = get_app_context(request)
+    detail_path = str(request.url.path).rsplit("/files", 1)[0]
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        detail = fetch_group_detail(connection, key, project_access=project_access)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        files_data = fetch_project_changed_files(
+            connection,
+            group_key=key,
+            page=page,
+            page_size=context.settings.page_size,
+            q=q,
+            branch=branch,
+            sort=sort,
+            detail_href_override=detail_path,
+            project_access=project_access,
+        )
+    detail["group"].detail_href = detail_path
+    return context.templates.TemplateResponse(
+        request,
+        name="changed_files.html",
+        context={
+            "request": request,
+            "group": detail["group"],
+            "files_data": files_data,
+            "project_detail_href": detail_path,
+            "stream_href": f"{detail_path}/stream",
+            "environment_href": f"{detail_path}/environment",
+            "search_query": "",
+        },
+    )
+
+
+def render_group_file_activity(
+    request: Request,
+    key: str,
+    file_path: str,
+    *,
+    page: int = 1,
+) -> HTMLResponse:
+    context = get_app_context(request)
+    detail_path = str(request.url.path).split("/files/", 1)[0]
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        detail = fetch_group_detail(connection, key, project_access=project_access)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        file_activity = fetch_project_file_activity(
+            connection,
+            group_key=key,
+            path=file_path,
+            page=page,
+            page_size=context.settings.page_size,
+            detail_href_override=detail_path,
+            project_access=project_access,
+        )
+        if file_activity is None:
+            raise HTTPException(status_code=404, detail="Changed file not found")
+    detail["group"].detail_href = detail_path
+    return context.templates.TemplateResponse(
+        request,
+        name="changed_file.html",
+        context={
+            "request": request,
+            "group": detail["group"],
+            "file_activity": file_activity,
+            "project_detail_href": detail_path,
+            "stream_href": f"{detail_path}/stream",
+            "search_query": "",
         },
     )
 
@@ -388,6 +482,75 @@ def group_stream_legacy(request: Request, owner_slug: str, project_slug: str, pa
     )
 
 
+@router.get("/projects/{owner_slug}/{project_slug}/files", response_class=HTMLResponse)
+def group_files_legacy(
+    request: Request,
+    owner_slug: str,
+    project_slug: str,
+    page: int = Query(default=1),
+    q: str | None = Query(default=None),
+    branch: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        group_key = resolve_group_key_from_detail_path(
+            connection,
+            owner_slug,
+            project_slug,
+            project_access=project_access,
+        )
+        if group_key is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        detail_href = resolve_project_detail_href(connection, group_key, project_access=project_access)
+        target_path = f"{detail_href.rstrip('/')}/files"
+        if target_path != str(request.url.path):
+            return redirect_preserving_query(request, target_path)
+    return render_group_files(
+        request,
+        group_key,
+        page=page,
+        q=q,
+        branch=branch,
+        sort=sort,
+    )
+
+
+@router.get("/projects/{owner_slug}/{project_slug}/files/{file_path:path}", response_class=HTMLResponse)
+def group_file_activity_legacy(
+    request: Request,
+    owner_slug: str,
+    project_slug: str,
+    file_path: str,
+    page: int = Query(default=1),
+) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        group_key = resolve_group_key_from_detail_path(
+            connection,
+            owner_slug,
+            project_slug,
+            project_access=project_access,
+        )
+        if group_key is None:
+            raise HTTPException(status_code=404, detail="Project group not found")
+        detail_href = resolve_project_detail_href(connection, group_key, project_access=project_access)
+        target_prefix = f"{detail_href.rstrip('/')}/files/"
+        if not str(request.url.path).startswith(target_prefix):
+            return redirect_preserving_query(request, f"{target_prefix}{quote(file_path, safe='/')}")
+    return render_group_file_activity(request, group_key, file_path, page=page)
+
+
 @router.get("/{owner_slug}/{project_slug}/edit", response_class=HTMLResponse)
 def group_edit(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
     context = get_app_context(request)
@@ -522,6 +685,67 @@ def group_stream(request: Request, owner_slug: str, project_slug: str, page: int
             "search_query": "",
         },
     )
+
+
+@router.get("/{owner_slug}/{project_slug}/files", response_class=HTMLResponse)
+def group_files(
+    request: Request,
+    owner_slug: str,
+    project_slug: str,
+    page: int = Query(default=1),
+    q: str | None = Query(default=None),
+    branch: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        group_key = resolve_group_key_from_detail_path(
+            connection,
+            owner_slug,
+            project_slug,
+            project_access=project_access,
+        )
+    if group_key is None:
+        raise HTTPException(status_code=404, detail="Project group not found")
+    return render_group_files(
+        request,
+        group_key,
+        page=page,
+        q=q,
+        branch=branch,
+        sort=sort,
+    )
+
+
+@router.get("/{owner_slug}/{project_slug}/files/{file_path:path}", response_class=HTMLResponse)
+def group_file_activity(
+    request: Request,
+    owner_slug: str,
+    project_slug: str,
+    file_path: str,
+    page: int = Query(default=1),
+) -> HTMLResponse:
+    context = get_app_context(request)
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        group_key = resolve_group_key_from_detail_path(
+            connection,
+            owner_slug,
+            project_slug,
+            project_access=project_access,
+        )
+    if group_key is None:
+        raise HTTPException(status_code=404, detail="Project group not found")
+    return render_group_file_activity(request, group_key, file_path, page=page)
 
 
 @router.post("/overrides")

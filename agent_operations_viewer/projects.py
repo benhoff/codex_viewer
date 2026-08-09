@@ -1889,6 +1889,394 @@ def fetch_turn_stream(
     }
 
 
+def _file_change_from_clause(extra_conditions: list[str] | None = None) -> str:
+    return f"""
+        FROM session_file_changes AS fc
+        JOIN session_turns AS st
+            ON st.session_id = fc.session_id
+           AND st.turn_number = fc.turn_number
+        JOIN sessions AS s
+            ON s.id = fc.session_id
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
+        {visible_session_where(extra_conditions)}
+    """
+
+
+def _file_path_href(base_href: str, path: str) -> str:
+    return f"{base_href.rstrip('/')}/files/{quote(path, safe='/')}"
+
+
+def _changed_file_sort_clause(sort: str) -> str:
+    if sort == "sessions":
+        return "ORDER BY session_count DESC, latest_timestamp DESC, path ASC"
+    if sort == "touches":
+        return "ORDER BY touch_count DESC, latest_timestamp DESC, path ASC"
+    if sort == "path":
+        return "ORDER BY path ASC"
+    return "ORDER BY latest_timestamp DESC, session_count DESC, path ASC"
+
+
+def _changed_file_query_params(
+    *,
+    q: str,
+    branch: str,
+    sort: str,
+) -> list[str]:
+    parts = []
+    if q:
+        parts.append(f"q={quote(q, safe='')}")
+    if branch:
+        parts.append(f"branch={quote(branch, safe='')}")
+    if sort != "recent":
+        parts.append(f"sort={quote(sort, safe='')}")
+    return parts
+
+
+def fetch_project_changed_files(
+    connection: sqlite3.Connection,
+    *,
+    group_key: str,
+    page: int = 1,
+    page_size: int = 50,
+    q: str | None = None,
+    branch: str | None = None,
+    sort: str | None = None,
+    detail_href_override: str | None = None,
+    project_access: ProjectAccessContext | None = None,
+) -> dict[str, Any]:
+    normalized_page = max(int(page or 1), 1)
+    normalized_page_size = max(10, min(int(page_size or 50), 100))
+    normalized_sort = str(sort or "recent").strip().lower()
+    if normalized_sort not in {"recent", "sessions", "touches", "path"}:
+        normalized_sort = "recent"
+    normalized_q = trimmed(q) or ""
+    normalized_branch = trimmed(branch) or ""
+    base_href = detail_href_override or f"/groups?key={quote(group_key, safe='')}"
+
+    conditions = [GROUP_KEY_MATCH_SQL]
+    params: list[Any] = [group_key, group_key]
+    if normalized_q:
+        conditions.append("fc.path LIKE ?")
+        params.append(f"%{normalized_q}%")
+    if normalized_branch:
+        conditions.append("s.git_branch = ?")
+        params.append(normalized_branch)
+    access_condition, access_params = project_access_condition_sql(project_access)
+    if access_condition:
+        conditions.append(access_condition)
+        params.extend(access_params)
+
+    from_clause = _file_change_from_clause(conditions)
+    total_row = connection.execute(
+        f"SELECT COUNT(*) AS count FROM (SELECT fc.path {from_clause} GROUP BY fc.path)",
+        params,
+    ).fetchone()
+    total_count = int(total_row["count"] or 0) if total_row is not None else 0
+    page_count = max((total_count + normalized_page_size - 1) // normalized_page_size, 1)
+    normalized_page = min(normalized_page, page_count)
+    offset = (normalized_page - 1) * normalized_page_size
+
+    summary_row = connection.execute(
+        f"""
+        SELECT
+            COUNT(DISTINCT fc.path) AS file_count,
+            COUNT(*) AS touch_count,
+            COUNT(DISTINCT fc.session_id) AS session_count,
+            COUNT(DISTINCT fc.session_id || ':' || fc.turn_number) AS turn_count,
+            SUM(fc.additions) AS additions,
+            SUM(fc.deletions) AS deletions,
+            COUNT(DISTINCT CASE
+                WHEN st.failure_count > 0 THEN fc.session_id || ':' || fc.turn_number
+            END) AS failed_turn_count,
+            MAX(COALESCE(fc.timestamp, st.latest_timestamp, st.response_timestamp, st.prompt_timestamp)) AS latest_timestamp
+        {from_clause}
+        """,
+        params,
+    ).fetchone()
+    summary = {
+        "file_count": int(summary_row["file_count"] or 0) if summary_row else 0,
+        "touch_count": int(summary_row["touch_count"] or 0) if summary_row else 0,
+        "session_count": int(summary_row["session_count"] or 0) if summary_row else 0,
+        "turn_count": int(summary_row["turn_count"] or 0) if summary_row else 0,
+        "additions": int(summary_row["additions"] or 0) if summary_row else 0,
+        "deletions": int(summary_row["deletions"] or 0) if summary_row else 0,
+        "failed_turn_count": int(summary_row["failed_turn_count"] or 0) if summary_row else 0,
+        "latest_timestamp": str(summary_row["latest_timestamp"] or "") if summary_row else "",
+    }
+
+    branch_conditions = [GROUP_KEY_MATCH_SQL]
+    branch_params: list[Any] = [group_key, group_key]
+    if normalized_q:
+        branch_conditions.append("fc.path LIKE ?")
+        branch_params.append(f"%{normalized_q}%")
+    if access_condition:
+        branch_conditions.append(access_condition)
+        branch_params.extend(access_params)
+    branch_from_clause = _file_change_from_clause(branch_conditions)
+    branch_rows = connection.execute(
+        f"""
+        SELECT s.git_branch AS branch, COUNT(DISTINCT fc.path) AS file_count
+        {branch_from_clause}
+          AND NULLIF(TRIM(s.git_branch), '') IS NOT NULL
+        GROUP BY s.git_branch
+        ORDER BY file_count DESC, s.git_branch ASC
+        LIMIT 20
+        """,
+        branch_params,
+    ).fetchall()
+    branches = [
+        {
+            "branch": str(row["branch"] or ""),
+            "file_count": int(row["file_count"] or 0),
+            "href": (
+                f"{base_href.rstrip('/')}/files"
+                f"?branch={quote(str(row['branch'] or ''), safe='')}"
+                + (f"&q={quote(normalized_q, safe='')}" if normalized_q else "")
+                + (f"&sort={quote(normalized_sort, safe='')}" if normalized_sort != "recent" else "")
+            ),
+            "active": normalized_branch == str(row["branch"] or ""),
+        }
+        for row in branch_rows
+        if trimmed(row["branch"])
+    ]
+
+    rows = connection.execute(
+        f"""
+        SELECT
+            fc.path,
+            COUNT(*) AS touch_count,
+            COUNT(DISTINCT fc.session_id) AS session_count,
+            COUNT(DISTINCT fc.session_id || ':' || fc.turn_number) AS turn_count,
+            SUM(fc.additions) AS additions,
+            SUM(fc.deletions) AS deletions,
+            SUM(fc.hunks) AS hunks,
+            COUNT(DISTINCT CASE
+                WHEN st.failure_count > 0 THEN fc.session_id || ':' || fc.turn_number
+            END) AS failed_turn_count,
+            MAX(COALESCE(fc.timestamp, st.latest_timestamp, st.response_timestamp, st.prompt_timestamp)) AS latest_timestamp,
+            MAX(NULLIF(TRIM(s.git_branch), '')) AS latest_branch
+        {from_clause}
+        GROUP BY fc.path
+        {_changed_file_sort_clause(normalized_sort)}
+        LIMIT ? OFFSET ?
+        """,
+        [*params, normalized_page_size, offset],
+    ).fetchall()
+
+    items = [
+        {
+            "path": str(row["path"] or ""),
+            "href": _file_path_href(base_href, str(row["path"] or "")),
+            "touch_count": int(row["touch_count"] or 0),
+            "session_count": int(row["session_count"] or 0),
+            "turn_count": int(row["turn_count"] or 0),
+            "additions": int(row["additions"] or 0),
+            "deletions": int(row["deletions"] or 0),
+            "hunks": int(row["hunks"] or 0),
+            "failed_turn_count": int(row["failed_turn_count"] or 0),
+            "latest_timestamp": str(row["latest_timestamp"] or ""),
+            "latest_branch": str(row["latest_branch"] or ""),
+        }
+        for row in rows
+    ]
+
+    suffix_parts = _changed_file_query_params(
+        q=normalized_q,
+        branch=normalized_branch,
+        sort=normalized_sort,
+    )
+    query_suffix = ("&" + "&".join(suffix_parts)) if suffix_parts else ""
+    clear_branch_parts = _changed_file_query_params(
+        q=normalized_q,
+        branch="",
+        sort=normalized_sort,
+    )
+    clear_branch_href = (
+        f"{base_href.rstrip('/')}/files"
+        + (f"?{'&'.join(clear_branch_parts)}" if clear_branch_parts else "")
+    )
+
+    return {
+        "items": items,
+        "summary": summary,
+        "branches": branches,
+        "q": normalized_q,
+        "branch": normalized_branch,
+        "sort": normalized_sort,
+        "page": normalized_page,
+        "page_size": normalized_page_size,
+        "total_count": total_count,
+        "has_prev": normalized_page > 1,
+        "has_next": offset + len(items) < total_count,
+        "page_count": page_count,
+        "showing_from": offset + 1 if items else 0,
+        "showing_to": offset + len(items),
+        "page_base": f"{base_href.rstrip('/')}/files",
+        "query_suffix": query_suffix,
+        "clear_branch_href": clear_branch_href,
+    }
+
+
+def fetch_project_file_activity(
+    connection: sqlite3.Connection,
+    *,
+    group_key: str,
+    path: str,
+    page: int = 1,
+    page_size: int = 30,
+    detail_href_override: str | None = None,
+    project_access: ProjectAccessContext | None = None,
+) -> dict[str, Any] | None:
+    normalized_path = str(path or "").strip()
+    if not normalized_path:
+        return None
+
+    normalized_page = max(int(page or 1), 1)
+    normalized_page_size = max(10, min(int(page_size or 30), 100))
+    base_href = detail_href_override or f"/groups?key={quote(group_key, safe='')}"
+
+    conditions = [GROUP_KEY_MATCH_SQL, "fc.path = ?"]
+    params: list[Any] = [group_key, group_key, normalized_path]
+    access_condition, access_params = project_access_condition_sql(project_access)
+    if access_condition:
+        conditions.append(access_condition)
+        params.extend(access_params)
+    from_clause = _file_change_from_clause(conditions)
+
+    total_row = connection.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM (
+            SELECT fc.session_id, fc.turn_number
+            {from_clause}
+            GROUP BY fc.session_id, fc.turn_number
+        )
+        """,
+        params,
+    ).fetchone()
+    total_count = int(total_row["count"] or 0) if total_row is not None else 0
+    if total_count <= 0:
+        return None
+    page_count = max((total_count + normalized_page_size - 1) // normalized_page_size, 1)
+    normalized_page = min(normalized_page, page_count)
+    offset = (normalized_page - 1) * normalized_page_size
+
+    summary_row = connection.execute(
+        f"""
+        SELECT
+            COUNT(*) AS touch_count,
+            COUNT(DISTINCT fc.session_id) AS session_count,
+            COUNT(DISTINCT fc.session_id || ':' || fc.turn_number) AS turn_count,
+            SUM(fc.additions) AS additions,
+            SUM(fc.deletions) AS deletions,
+            SUM(fc.hunks) AS hunks,
+            SUM(CASE WHEN st.failure_count > 0 THEN 1 ELSE 0 END) AS failed_touch_count,
+            MIN(COALESCE(fc.timestamp, st.latest_timestamp, st.response_timestamp, st.prompt_timestamp)) AS first_timestamp,
+            MAX(COALESCE(fc.timestamp, st.latest_timestamp, st.response_timestamp, st.prompt_timestamp)) AS latest_timestamp
+        {from_clause}
+        """,
+        params,
+    ).fetchone()
+    summary = {
+        "touch_count": int(summary_row["touch_count"] or 0) if summary_row else 0,
+        "session_count": int(summary_row["session_count"] or 0) if summary_row else 0,
+        "turn_count": int(summary_row["turn_count"] or 0) if summary_row else 0,
+        "additions": int(summary_row["additions"] or 0) if summary_row else 0,
+        "deletions": int(summary_row["deletions"] or 0) if summary_row else 0,
+        "hunks": int(summary_row["hunks"] or 0) if summary_row else 0,
+        "failed_touch_count": int(summary_row["failed_touch_count"] or 0) if summary_row else 0,
+        "first_timestamp": str(summary_row["first_timestamp"] or "") if summary_row else "",
+        "latest_timestamp": str(summary_row["latest_timestamp"] or "") if summary_row else "",
+    }
+
+    rows = connection.execute(
+        f"""
+        SELECT
+            fc.session_id,
+            fc.turn_number,
+            GROUP_CONCAT(DISTINCT fc.operation) AS operations,
+            SUM(fc.additions) AS additions,
+            SUM(fc.deletions) AS deletions,
+            SUM(fc.hunks) AS hunks,
+            COUNT(*) AS touch_count,
+            MAX(COALESCE(fc.timestamp, st.latest_timestamp, st.response_timestamp, st.prompt_timestamp)) AS latest_timestamp,
+            st.prompt_excerpt,
+            st.response_excerpt,
+            st.response_state,
+            st.command_count,
+            st.patch_count,
+            st.failure_count,
+            st.files_touched_count,
+            s.source_host,
+            s.git_branch,
+            s.git_commit_hash,
+            s.agent_nickname,
+            s.agent_role
+        {from_clause}
+        GROUP BY fc.session_id, fc.turn_number
+        ORDER BY latest_timestamp DESC, fc.session_id DESC, fc.turn_number DESC
+        LIMIT ? OFFSET ?
+        """,
+        [*params, normalized_page_size, offset],
+    ).fetchall()
+
+    items = []
+    for row in rows:
+        session_id = str(row["session_id"] or "")
+        turn_number = int(row["turn_number"] or 0)
+        session_href = f"/sessions/{quote(session_id, safe='')}?view=conversation&turn={turn_number}"
+        audit_href = (
+            f"/sessions/{quote(session_id, safe='')}?view=audit&turn={turn_number}"
+            f"&focus=1#turn-{turn_number}-files"
+        )
+        items.append(
+            {
+                "session_id": session_id,
+                "turn_number": turn_number,
+                "operations": str(row["operations"] or "update"),
+                "additions": int(row["additions"] or 0),
+                "deletions": int(row["deletions"] or 0),
+                "hunks": int(row["hunks"] or 0),
+                "touch_count": int(row["touch_count"] or 0),
+                "latest_timestamp": str(row["latest_timestamp"] or ""),
+                "prompt_excerpt": trimmed(row["prompt_excerpt"]) or "No prompt excerpt",
+                "response_excerpt": trimmed(row["response_excerpt"]) or "No assistant response captured.",
+                "response_state": trimmed(row["response_state"]) or "missing",
+                "command_count": int(row["command_count"] or 0),
+                "patch_count": int(row["patch_count"] or 0),
+                "failure_count": int(row["failure_count"] or 0),
+                "files_touched_count": int(row["files_touched_count"] or 0),
+                "source_host": str(row["source_host"] or ""),
+                "git_branch": str(row["git_branch"] or ""),
+                "git_commit_hash": str(row["git_commit_hash"] or ""),
+                "agent_nickname": str(row["agent_nickname"] or ""),
+                "agent_role": str(row["agent_role"] or ""),
+                "session_href": session_href,
+                "audit_href": audit_href,
+            }
+        )
+
+    return {
+        "path": normalized_path,
+        "summary": summary,
+        "items": items,
+        "page": normalized_page,
+        "page_size": normalized_page_size,
+        "total_count": total_count,
+        "has_prev": normalized_page > 1,
+        "has_next": offset + len(items) < total_count,
+        "page_count": page_count,
+        "showing_from": offset + 1 if items else 0,
+        "showing_to": offset + len(items),
+        "files_href": f"{base_href.rstrip('/')}/files",
+    }
+
+
 def paginate_items(
     items: list[Any],
     *,
