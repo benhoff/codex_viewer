@@ -1084,6 +1084,13 @@ def response_evidence(
 
     warnings: list[str] = []
     normalized = response_text.lower()
+    if not links and _response_looks_like_pure_discussion(normalized):
+        return {
+            "links": links,
+            "warnings": warnings,
+            "warning_count": len(warnings),
+        }
+
     change_claim = any(token in normalized for token in ("updated ", "changed ", "added ", "removed ", "created ", "modified ", "renamed "))
     verification_claim = any(
         token in normalized
@@ -1141,6 +1148,36 @@ def response_evidence(
         "warnings": warnings,
         "warning_count": len(warnings),
     }
+
+
+def _response_looks_like_pure_discussion(normalized_response_text: str) -> bool:
+    if not normalized_response_text.strip():
+        return False
+
+    discussion_cues = (
+        "route idea",
+        "mental model",
+        "primary view",
+        "detail view",
+        "folder rollup",
+        "data needed",
+        "the view should",
+        "would answer",
+        "you'd ",
+        "you would ",
+        "you can ",
+        "you could ",
+        "you are not ",
+        "treat every ",
+        "example:",
+        "examples:",
+        "option ",
+        "proposal",
+        "proposed ",
+        "idea:",
+        "what would",
+    )
+    return sum(1 for cue in discussion_cues if cue in normalized_response_text) >= 2
 
 
 AUDIT_MODULE_NOT_FOUND_RE = re.compile(r"no module named ['\"]([^'\"]+)['\"]", re.IGNORECASE)
@@ -1594,7 +1631,7 @@ def build_trust_signals(
                 "tone": "rose",
                 "label": "Evidence mismatch",
                 "detail": f"{mismatch_count} response claim{'s were' if mismatch_count != 1 else ' was'} not backed by the recorded commands, patches, or verification in this turn.",
-                "href": f"#turn-{turn_number}-response",
+                "href": f"#turn-{turn_number}-response-evidence",
                 "examples": [],
             }
         )
@@ -1808,14 +1845,27 @@ def is_command_like_tool_call(event: dict[str, object]) -> bool:
     return (
         str(event.get("kind") or "") == "tool_call"
         and str(event.get("tool_name") or "") in {"exec_command", "write_stdin"}
+        and not is_apply_patch_exec_command(event)
         and bool(event.get("call_id"))
     )
+
+
+def is_apply_patch_exec_command(event: dict[str, object]) -> bool:
+    if str(event.get("kind") or "") != "tool_call" or str(event.get("tool_name") or "") != "exec_command":
+        return False
+    text = "\n".join(
+        str(event.get(key) or "")
+        for key in ("display_text", "command_text", "detail_text")
+    ).strip().lower()
+    if not text:
+        return False
+    return "apply_patch" in text and "*** begin patch" in text
 
 
 def is_patch_tool_call(event: dict[str, object]) -> bool:
     return (
         str(event.get("kind") or "") == "tool_call"
-        and str(event.get("tool_name") or "") == "apply_patch"
+        and (str(event.get("tool_name") or "") == "apply_patch" or is_apply_patch_exec_command(event))
         and bool(event.get("call_id"))
     )
 

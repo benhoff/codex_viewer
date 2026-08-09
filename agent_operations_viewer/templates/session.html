@@ -1363,7 +1363,7 @@
                     <p class="mt-3 text-[0.98rem] leading-6 text-stone-800 sm:text-[1rem] sm:leading-7">No assistant response captured.</p>
                   {% endif %}
                   {% if turn.audit_response_evidence.links or turn.audit_response_evidence.warnings %}
-                    <div class="mt-4 space-y-3 rounded-[1rem] border border-white/70 bg-white/70 p-4">
+                    <div id="turn-{{ turn.number }}-response-evidence" class="mt-4 space-y-3 rounded-[1rem] border border-white/70 bg-white/70 p-4">
                       <div class="flex flex-wrap items-center gap-2">
                         <span class="rounded-full bg-white px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-700">Supporting evidence</span>
                         {% for link in turn.audit_response_evidence.links %}
