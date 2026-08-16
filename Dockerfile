@@ -20,6 +20,7 @@ COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --no-cache-dir -r /app/requirements.txt
 
 COPY agent_operations_viewer /app/agent_operations_viewer
+COPY agent_daemon /app/agent_daemon
 COPY --from=assets /app/agent_operations_viewer/static/app.css /app/agent_operations_viewer/static/app.css
 
 EXPOSE 8000
