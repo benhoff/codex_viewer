@@ -376,6 +376,8 @@ Implementation detail that matters for larger installs:
 
 - `backup create` first snapshots SQLite into a temporary file before writing the archive.
 - Plan for free temp space roughly equal to the database size, plus the output archive.
+- Session ingestion keeps only the currently referenced raw artifact. Replaced snapshots and
+  untracked files left by failed writes are pruned after the session update commits.
 
 `backup restore` is intentionally offline and conservative. It restores into a new or empty target directory only; it does not merge into an existing install.
 

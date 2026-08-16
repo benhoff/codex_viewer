@@ -7,7 +7,12 @@ from pathlib import Path
 from .config import Settings
 from .db import connect, write_transaction
 from .projects import project_is_ignored
-from .session_artifacts import load_session_artifact_text, read_session_source_text, store_session_artifact
+from .session_artifacts import (
+    load_session_artifact_text,
+    prune_orphaned_session_artifacts,
+    read_session_source_text,
+    store_session_artifact,
+)
 from .session_parsing import (
     NormalizedEvent,
     ParsedSession,
@@ -427,5 +432,7 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
 
             if project_registry_changed:
                 sync_project_registry(connection)
+
+    prune_orphaned_session_artifacts(settings)
 
     return {"imported": imported, "updated": updated, "skipped": skipped}

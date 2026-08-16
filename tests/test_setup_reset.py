@@ -12,7 +12,7 @@ from agent_operations_viewer.config import Settings
 from agent_operations_viewer.db import connect, init_db, write_transaction
 from agent_operations_viewer.local_auth import create_initial_admin, fetch_auth_status
 from agent_operations_viewer.onboarding import reconcile_onboarding_state
-from agent_operations_viewer.session_artifacts import store_session_artifact
+from agent_operations_viewer.session_artifacts import prune_orphaned_session_artifacts, store_session_artifact
 from agent_operations_viewer.setup_reset import (
     prune_empty_artifact_dirs,
     remove_artifact_files,
@@ -176,6 +176,44 @@ class ResetSetupStateTests(unittest.TestCase):
         self.assertEqual(session_count, 0)
         self.assertEqual(artifact_count, 0)
         self.assertIsNone(onboarding["completed_at"])
+
+    def test_prune_orphaned_session_artifacts_preserves_current_artifact(self) -> None:
+        current_path = self._seed_remote_onboarding_complete()
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                orphan_sha256 = store_session_artifact(connection, self.settings, '{"event":"orphan"}\n')
+                orphan_row = connection.execute(
+                    "SELECT storage_path FROM session_artifacts WHERE sha256 = ?",
+                    (orphan_sha256,),
+                ).fetchone()
+                untracked_sha256 = store_session_artifact(
+                    connection,
+                    self.settings,
+                    '{"event":"rolled-back-write"}\n',
+                )
+                untracked_row = connection.execute(
+                    "SELECT storage_path FROM session_artifacts WHERE sha256 = ?",
+                    (untracked_sha256,),
+                ).fetchone()
+                connection.execute("DELETE FROM session_artifacts WHERE sha256 = ?", (untracked_sha256,))
+
+        self.assertIsNotNone(orphan_row)
+        self.assertIsNotNone(untracked_row)
+        orphan_path = self.settings.data_dir / str(orphan_row["storage_path"])
+        untracked_path = self.settings.data_dir / str(untracked_row["storage_path"])
+        self.assertTrue(current_path.exists())
+        self.assertTrue(orphan_path.exists())
+        self.assertTrue(untracked_path.exists())
+
+        removed = prune_orphaned_session_artifacts(self.settings)
+
+        with connect(self.settings.database_path) as connection:
+            artifact_count = connection.execute("SELECT COUNT(*) FROM session_artifacts").fetchone()[0]
+        self.assertEqual(removed, 2)
+        self.assertEqual(artifact_count, 1)
+        self.assertTrue(current_path.exists())
+        self.assertFalse(orphan_path.exists())
+        self.assertFalse(untracked_path.exists())
 
     def test_full_bootstrap_removes_users_and_clears_auth_state(self) -> None:
         self._seed_remote_onboarding_complete()

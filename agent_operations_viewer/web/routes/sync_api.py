@@ -21,7 +21,11 @@ from ...onboarding import (
     record_first_session_ingested,
 )
 from ...projects import ignored_project_keys, sync_project_registry
-from ...session_artifacts import load_session_artifact_text, store_session_artifact
+from ...session_artifacts import (
+    load_session_artifact_text,
+    prune_orphaned_session_artifacts,
+    store_session_artifact,
+)
 from ..auth import require_sync_api_auth
 from ..context import get_settings
 
@@ -189,6 +193,8 @@ async def sync_session(request: Request) -> JSONResponse:
             )
             reconcile_onboarding_state(connection, settings)
 
+    prune_orphaned_session_artifacts(settings)
+
     return JSONResponse(
         {
             "status": "ok",
@@ -219,6 +225,8 @@ async def sync_session_raw(request: Request) -> JSONResponse:
         with write_transaction(connection):
             results = store_raw_sync_sessions_batch(connection, settings, [(parsed, raw_jsonl)])
 
+    prune_orphaned_session_artifacts(settings)
+
     result = results[0]
     result["mode"] = "raw"
     return JSONResponse(result)
@@ -248,6 +256,8 @@ async def sync_sessions_raw_batch(request: Request) -> JSONResponse:
         with write_transaction(connection):
             results = store_raw_sync_sessions_batch(connection, settings, parsed_items)
 
+    prune_orphaned_session_artifacts(settings)
+
     return JSONResponse(
         {
             "status": "ok",
@@ -271,6 +281,7 @@ async def sync_session_tail(request: Request) -> JSONResponse:
     with connect(settings.database_path) as connection:
         with write_transaction(connection):
             result = store_raw_sync_session_tail(connection, settings, payload, header_host=header_host)
+    prune_orphaned_session_artifacts(settings)
     result["mode"] = "raw_tail"
     return JSONResponse(result)
 

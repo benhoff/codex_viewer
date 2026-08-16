@@ -35,7 +35,7 @@ from agent_operations_viewer.projects import (
     fetch_group_detail,
 )
 from agent_operations_viewer.session_status import is_task_complete, terminal_turn_summary
-from agent_operations_viewer.session_artifacts import store_session_artifact
+from agent_operations_viewer.session_artifacts import artifact_storage_path, store_session_artifact
 from agent_operations_viewer.session_view import build_turns
 from agent_operations_viewer.web.routes.sync_api import (
     _read_json_request_payload,
@@ -657,6 +657,53 @@ class RolloutParsingTests(unittest.TestCase):
                 self.assertEqual(row["source"], "claude-code")
                 self.assertIn("Investigate the failing test run.", row["summary"])
                 self.assertTrue(str(row["raw_artifact_sha256"] or "").strip())
+
+    def test_sync_sessions_prunes_replaced_raw_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            session_root = root / "sessions"
+            session_root.mkdir()
+            session_path = session_root / "growing-session.jsonl"
+            initial_raw_jsonl = make_raw_session_jsonl("growing-session")
+            session_path.write_text(initial_raw_jsonl, encoding="utf-8")
+
+            data_dir = root / "data"
+            data_dir.mkdir()
+            settings = make_test_settings(data_dir=data_dir, session_roots=[session_root])
+            init_db(settings.database_path)
+
+            sync_sessions(settings)
+            with connect(settings.database_path) as connection:
+                initial_row = connection.execute(
+                    "SELECT raw_artifact_sha256 FROM sessions WHERE id = ?",
+                    ("growing-session",),
+                ).fetchone()
+            self.assertIsNotNone(initial_row)
+            initial_sha256 = str(initial_row["raw_artifact_sha256"])
+            initial_path = data_dir / artifact_storage_path(initial_sha256)
+            self.assertTrue(initial_path.exists())
+
+            updated_raw_jsonl = make_raw_session_jsonl(
+                "growing-session",
+                user_message="Investigate the updated session.",
+            )
+            session_path.write_text(updated_raw_jsonl, encoding="utf-8")
+            stats = sync_sessions(settings)
+
+            with connect(settings.database_path) as connection:
+                updated_row = connection.execute(
+                    "SELECT raw_artifact_sha256 FROM sessions WHERE id = ?",
+                    ("growing-session",),
+                ).fetchone()
+                artifact_count = connection.execute("SELECT COUNT(*) FROM session_artifacts").fetchone()[0]
+
+            self.assertEqual(stats["updated"], 1)
+            self.assertIsNotNone(updated_row)
+            updated_sha256 = str(updated_row["raw_artifact_sha256"])
+            self.assertNotEqual(updated_sha256, initial_sha256)
+            self.assertFalse(initial_path.exists())
+            self.assertTrue((data_dir / artifact_storage_path(updated_sha256)).exists())
+            self.assertEqual(artifact_count, 1)
 
     def test_sync_sessions_skips_claude_warmup_sidechains(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

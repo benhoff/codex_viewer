@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import gzip
 import hashlib
+import logging
 import os
 from pathlib import Path
 import sqlite3
@@ -15,6 +16,8 @@ ARTIFACT_MEDIA_TYPE = "application/x-ndjson"
 ARTIFACT_TEXT_ENCODING = "utf-8"
 ARTIFACT_COMPRESSION = "gzip"
 ARTIFACT_ROOT = Path("session_artifacts")
+
+logger = logging.getLogger("agent_operations_viewer.session_artifacts")
 
 
 def utc_now_iso() -> str:
@@ -130,6 +133,131 @@ def store_session_artifact(
             ),
         )
     return artifact_sha256
+
+
+def _managed_artifact_path(settings: Settings, artifact_sha256: str, storage_path: str) -> Path | None:
+    normalized_sha256 = artifact_sha256.strip().lower()
+    if len(normalized_sha256) != 64 or any(character not in "0123456789abcdef" for character in normalized_sha256):
+        return None
+    expected_storage_path = artifact_storage_path(normalized_sha256)
+    if storage_path != expected_storage_path:
+        return None
+    return absolute_artifact_path(settings, expected_storage_path)
+
+
+def prune_orphaned_session_artifacts(settings: Settings) -> int:
+    """Remove raw artifacts that are not referenced by a current session.
+
+    This deliberately runs in its own write transaction after session ingestion
+    commits. Holding the write lock while unlinking prevents another writer from
+    adopting an artifact between the reference check and file removal.
+    """
+    from .db import connect, write_transaction
+
+    removed_rows = 0
+    removed_files = 0
+    removed_untracked_files = 0
+    artifact_root = settings.data_dir / ARTIFACT_ROOT
+
+    with connect(settings.database_path) as connection:
+        with write_transaction(connection):
+            orphan_rows = connection.execute(
+                """
+                SELECT sha256, storage_path
+                FROM session_artifacts AS artifact
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM sessions AS session
+                    WHERE session.raw_artifact_sha256 = artifact.sha256
+                )
+                """
+            ).fetchall()
+
+            removable_rows: list[tuple[str]] = []
+            for row in orphan_rows:
+                artifact_sha256 = str(row["sha256"] or "").strip().lower()
+                artifact_path = _managed_artifact_path(
+                    settings,
+                    artifact_sha256,
+                    str(row["storage_path"] or ""),
+                )
+                if artifact_path is None:
+                    logger.warning("Refusing to prune invalid artifact path for %s", artifact_sha256)
+                    continue
+                try:
+                    existed = artifact_path.exists()
+                    artifact_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Unable to remove orphaned session artifact %s", artifact_path, exc_info=True)
+                    continue
+                if existed:
+                    removed_files += 1
+                removable_rows.append((artifact_sha256,))
+
+            if removable_rows:
+                before_changes = connection.total_changes
+                connection.executemany(
+                    """
+                    DELETE FROM session_artifacts
+                    WHERE sha256 = ?
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM sessions
+                          WHERE sessions.raw_artifact_sha256 = session_artifacts.sha256
+                      )
+                    """,
+                    removable_rows,
+                )
+                removed_rows = connection.total_changes - before_changes
+
+            protected_paths = {
+                str(row["storage_path"])
+                for row in connection.execute("SELECT storage_path FROM session_artifacts").fetchall()
+            }
+            protected_paths.update(
+                artifact_storage_path(str(row["raw_artifact_sha256"]))
+                for row in connection.execute(
+                    """
+                    SELECT DISTINCT raw_artifact_sha256
+                    FROM sessions
+                    WHERE raw_artifact_sha256 IS NOT NULL
+                      AND TRIM(raw_artifact_sha256) <> ''
+                    """
+                ).fetchall()
+            )
+            if artifact_root.exists():
+                for artifact_path in artifact_root.glob("[0-9a-f][0-9a-f]/*.jsonl.gz"):
+                    storage_path = str(artifact_path.relative_to(settings.data_dir))
+                    if storage_path in protected_paths:
+                        continue
+                    artifact_sha256 = artifact_path.name.removesuffix(".jsonl.gz")
+                    if _managed_artifact_path(settings, artifact_sha256, storage_path) != artifact_path:
+                        continue
+                    try:
+                        artifact_path.unlink()
+                        removed_untracked_files += 1
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        logger.warning("Unable to remove untracked session artifact %s", artifact_path, exc_info=True)
+
+    if artifact_root.exists():
+        for directory in artifact_root.iterdir():
+            if not directory.is_dir():
+                continue
+            try:
+                directory.rmdir()
+            except OSError:
+                continue
+
+    if removed_rows or removed_untracked_files:
+        logger.info(
+            "Pruned %d orphaned session artifacts (%d tracked files, %d untracked files)",
+            removed_rows,
+            removed_files,
+            removed_untracked_files,
+        )
+    return removed_rows + removed_untracked_files
 
 
 def load_session_artifact_text(
