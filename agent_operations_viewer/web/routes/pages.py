@@ -19,7 +19,7 @@ from ...api_tokens import (
     list_api_tokens,
     revoke_api_token,
 )
-from ...action_queue import build_homepage_action_queue, build_repo_action_signal_map
+from ...action_queue import build_repo_action_signal_map
 from ...action_queue_state import (
     clear_action_queue_state,
     default_snoozed_until,
@@ -1450,12 +1450,6 @@ def index(
         )
         remotes = fetch_remote_agent_health(connection, context.settings)
         machine_aliases = list_machine_display_aliases(connection)
-        action_queue = build_homepage_action_queue(
-            connection,
-            rows,
-            repo_groups,
-            owner_scope=owner_scope,
-        )
         group_signals = build_group_signal_map(
             connection,
             rows,
@@ -1522,7 +1516,6 @@ def index(
             "active_hosts": active_hosts,
             "active_hosts_from_agents": active_hosts_from_agents,
             "failed_agents": failed_agents,
-            "action_queue": action_queue,
             "onboarding": onboarding,
             "setup_verification_pending": verification_pending,
         },

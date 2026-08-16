@@ -86,13 +86,13 @@
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 class="text-lg font-semibold text-stone-900">Needs Attention</h2>
-            <p class="text-sm text-stone-600">Start here when a machine is unhealthy or a recent session still needs follow-up.</p>
+            <p class="text-sm text-stone-600">Start here when a machine is unhealthy.</p>
           </div>
           <a href="/machines" class="text-sm font-semibold text-stone-600 transition hover:text-stone-900">View machines</a>
         </div>
 
-        {% if failed_agents or action_queue %}
-          <div class="mt-4 grid min-w-0 gap-4 {% if failed_agents and action_queue %}xl:grid-cols-2{% endif %}">
+        {% if failed_agents %}
+          <div class="mt-4 min-w-0">
             <section class="min-w-0 rounded-[1.15rem] border border-[#E5E7EB] bg-white">
               <div class="flex items-center justify-between gap-3 border-b border-[#E5E7EB] px-4 py-3">
                 <h3 class="text-sm font-semibold text-[#1F2937]">Machines Needing Attention</h3>
@@ -122,121 +122,10 @@
               </div>
             </section>
 
-            {% if action_queue %}
-            {% set action_queue_preview_limit = 3 %}
-            {% set action_queue_remaining_count = action_queue|length - action_queue_preview_limit %}
-            <section class="min-w-0 rounded-[1.15rem] border border-[#E5E7EB] bg-white">
-              <div class="flex items-center justify-between gap-3 border-b border-[#E5E7EB] px-4 py-3">
-                <div>
-                  <h3 class="text-sm font-semibold text-[#1F2937]">Action Queue</h3>
-                  <p class="mt-0.5 text-xs text-[#6B7280]">Showing the highest-priority unresolved items first.</p>
-                </div>
-                <div class="flex flex-wrap justify-end gap-2">
-                  {% if action_queue_remaining_count > 0 %}
-                    <span class="rounded-full bg-[#EFF6FF] px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[#2563EB]">
-                      Top {{ action_queue_preview_limit }}
-                    </span>
-                  {% endif %}
-                  <span class="rounded-full bg-[#FEF3C7] px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[#D97706]">
-                    {{ action_queue|length }}
-                  </span>
-                </div>
-              </div>
-              <div class="divide-y divide-[#E5E7EB]">
-                {% for item in action_queue[:action_queue_preview_limit] %}
-                  <article class="min-w-0 px-4 py-3 transition hover:bg-[#F9FAFB]">
-                    <div class="flex min-w-0 items-center justify-between gap-3">
-                      <a href="{{ item.session_href }}" class="min-w-0 flex-1 truncate text-sm font-semibold text-[#1F2937] transition hover:text-[#2563EB]">{{ item.title }}</a>
-                      <span class="shrink-0 rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'rose' %}bg-[#FEE2E2] text-[#DC2626]{% elif item.status_tone == 'amber' %}bg-[#FEF3C7] text-[#D97706]{% elif item.status_tone == 'emerald' %}bg-[#DCFCE7] text-[#16A34A]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}">
-                        {{ item.status_label }}
-                      </span>
-                    </div>
-                    <p class="mt-1 text-xs leading-5 text-[#6B7280]">{{ item.project_label }}</p>
-                    <p class="mt-1 break-words text-xs leading-5 text-[#6B7280]">{{ item.status_title }}</p>
-                    <p class="mt-1 break-words text-xs leading-5 font-medium text-[#1F2937]">{{ item.next_action }}</p>
-                    <p class="mt-1 text-xs text-[#6B7280]">
-                      {{ item.host }}{% if item.timestamp %} • <span title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>{% endif %}
-                    </p>
-                    <div class="mt-2 flex flex-wrap gap-2">
-                      {% for badge in item.signal_badges[:3] %}
-                        <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-[#FEE2E2] text-[#DC2626]{% elif badge.tone == 'amber' %}bg-[#FEF3C7] text-[#D97706]{% elif badge.tone == 'sky' %}bg-[#DBEAFE] text-[#2563EB]{% elif badge.tone == 'emerald' %}bg-[#DCFCE7] text-[#16A34A]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}">
-                          {{ badge.label }}
-                        </span>
-                      {% endfor %}
-                    </div>
-                    <div class="mt-3 flex flex-wrap gap-2">
-                      <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-stone-700 transition hover:bg-stone-50">
-                        Open audit
-                      </a>
-                      <form method="post" action="/action-queue/actions" class="inline-flex">
-                        <input type="hidden" name="action" value="resolve" />
-                        <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
-                        <input type="hidden" name="project_key" value="{{ item.project_key }}" />
-                        <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
-                        <input type="hidden" name="return_to" value="{{ return_to or '/' }}" />
-                        <button type="submit" class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[0.72rem] font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100">
-                          Resolve
-                        </button>
-                      </form>
-                      <form method="post" action="/action-queue/actions" class="inline-flex">
-                        <input type="hidden" name="action" value="snooze" />
-                        <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
-                        <input type="hidden" name="project_key" value="{{ item.project_key }}" />
-                        <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
-                        <input type="hidden" name="return_to" value="{{ return_to or '/' }}" />
-                        <button type="submit" class="inline-flex items-center rounded-full border border-amber-200 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-50">
-                          Snooze 1d
-                        </button>
-                      </form>
-                      <form method="post" action="/action-queue/actions" class="inline-flex">
-                        <input type="hidden" name="action" value="ignore" />
-                        <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}" />
-                        <input type="hidden" name="project_key" value="{{ item.project_key }}" />
-                        <input type="hidden" name="issue_kind" value="{{ item.issue_kind }}" />
-                        <input type="hidden" name="return_to" value="{{ return_to or '/' }}" />
-                        <button type="submit" class="inline-flex items-center rounded-full border border-stone-300 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50">
-                          Ignore fingerprint
-                        </button>
-                      </form>
-                    </div>
-                  </article>
-                {% endfor %}
-                {% if action_queue_remaining_count > 0 %}
-                  <details class="bg-[#F9FAFB]">
-                    <summary class="cursor-pointer list-none px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6B7280]">
-                      Show remaining {{ action_queue_remaining_count }} queue item{% if action_queue_remaining_count != 1 %}s{% endif %}
-                    </summary>
-                    <div class="divide-y divide-[#E5E7EB] border-t border-[#E5E7EB]">
-                      {% for item in action_queue[action_queue_preview_limit:] %}
-                        <article class="min-w-0 px-4 py-3 transition hover:bg-white">
-                          <div class="flex min-w-0 items-center justify-between gap-3">
-                            <a href="{{ item.session_href }}" class="min-w-0 flex-1 truncate text-sm font-semibold text-[#1F2937] transition hover:text-[#2563EB]">{{ item.title }}</a>
-                            <span class="shrink-0 rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] {% if item.status_tone == 'rose' %}bg-[#FEE2E2] text-[#DC2626]{% elif item.status_tone == 'amber' %}bg-[#FEF3C7] text-[#D97706]{% elif item.status_tone == 'emerald' %}bg-[#DCFCE7] text-[#16A34A]{% else %}bg-[#F3F4F6] text-[#6B7280]{% endif %}">
-                              {{ item.status_label }}
-                            </span>
-                          </div>
-                          <p class="mt-1 text-xs leading-5 text-[#6B7280]">{{ item.project_label }}</p>
-                          <p class="mt-1 break-words text-xs leading-5 text-[#6B7280]">{{ item.status_title }}</p>
-                          <p class="mt-1 text-xs text-[#6B7280]">
-                            {{ item.host }}{% if item.timestamp %} • <span title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>{% endif %}
-                          </p>
-                          <div class="mt-2 flex flex-wrap gap-2">
-                            <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-[0.72rem] font-semibold text-stone-700 transition hover:bg-stone-50">
-                              Open audit
-                            </a>
-                          </div>
-                        </article>
-                      {% endfor %}
-                    </div>
-                  </details>
-                {% endif %}
-              </div>
-            </section>
-            {% endif %}
           </div>
         {% else %}
           <div class="mt-4 rounded-[1.15rem] border border-[#E5E7EB] bg-white px-4 py-4 text-sm text-[#6B7280]">
-            All clear right now. No machines or unresolved session actions are currently surfaced.
+            All clear right now. No machines needing attention are currently reported.
           </div>
         {% endif %}
       </section>

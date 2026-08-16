@@ -94,11 +94,7 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
             "request": request,
             "group": detail["group"],
             "signal_summary": detail["signal_summary"],
-            "project_action_queue": detail["project_action_queue"],
             "project_action_groups": detail["project_action_groups"],
-            "attention_sessions": detail["attention_sessions"],
-            "attention_sessions_preview": detail["attention_sessions_preview"],
-            "attention_sessions_remaining": detail["attention_sessions_remaining"],
             "recent_sessions": detail["recent_sessions"],
             "all_sessions_page": detail["all_sessions_page"],
             "host_summaries": detail["host_summaries"],
@@ -111,7 +107,6 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
             "files_href": f"{detail_path}/files",
             "stream_preview": stream_preview,
             "environment_href": f"{detail_path}/environment",
-            "detail_return_to": detail_path,
         },
     )
 
