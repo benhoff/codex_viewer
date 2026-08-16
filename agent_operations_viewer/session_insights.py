@@ -8,6 +8,7 @@ from typing import Any
 
 
 USAGE_CONTEXT_BASELINE_TOKENS = 12_000
+AGENT_METADATA_VERSION = 1
 
 AGENT_ROLE_LABELS = {
     "default": "Agent",

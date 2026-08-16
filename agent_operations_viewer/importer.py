@@ -13,6 +13,7 @@ from .session_artifacts import (
     read_session_source_text,
     store_session_artifact,
 )
+from .session_insights import AGENT_METADATA_VERSION
 from .session_parsing import (
     NormalizedEvent,
     ParsedSession,
@@ -99,6 +100,7 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
         "agent_role",
         "agent_path",
         "memory_mode",
+        "agent_metadata_version",
         "inferred_project_kind",
         "inferred_project_key",
         "inferred_project_label",
@@ -164,6 +166,7 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
         parsed.agent_role,
         parsed.agent_path,
         parsed.memory_mode,
+        AGENT_METADATA_VERSION,
         parsed.inferred_project_kind,
         parsed.inferred_project_key,
         parsed.inferred_project_label,
@@ -253,6 +256,9 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
 
 
 def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -> list[dict[str, object]]:
+    # Session rows and their events are replaced in one write transaction, so
+    # the persisted count is the stored count. Recounting the events table here
+    # made every agent's first manifest request scale with its full history.
     rows = connection.execute(
         """
         SELECT
@@ -263,30 +269,19 @@ def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -
             s.file_size,
             s.file_mtime_ns,
             s.content_sha256,
-            MAX(CASE WHEN s.raw_artifact_sha256 IS NOT NULL AND sa.sha256 IS NOT NULL THEN 1 ELSE 0 END) AS has_raw_artifact,
+            CASE
+                WHEN s.raw_artifact_sha256 IS NOT NULL AND sa.sha256 IS NOT NULL THEN 1
+                ELSE 0
+            END AS has_raw_artifact,
             s.event_count,
             s.inferred_project_key,
             s.inferred_project_label,
-            COUNT(e.id) AS stored_event_count,
+            s.event_count AS stored_event_count,
             s.updated_at
         FROM sessions AS s
-        LEFT JOIN events AS e
-            ON e.session_id = s.id
         LEFT JOIN session_artifacts AS sa
             ON sa.sha256 = s.raw_artifact_sha256
         WHERE s.source_host = ?
-        GROUP BY
-            s.id,
-            s.source_host,
-            s.source_path,
-            s.source_root,
-            s.file_size,
-            s.file_mtime_ns,
-            s.content_sha256,
-            s.event_count,
-            s.inferred_project_key,
-            s.inferred_project_label,
-            s.updated_at
         ORDER BY s.source_path ASC
         """,
         (source_host,),

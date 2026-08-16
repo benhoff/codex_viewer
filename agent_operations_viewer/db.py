@@ -9,7 +9,7 @@ from .session_rollups import (
     backfill_session_rollups,
     backfill_session_turn_activity_daily,
 )
-from .session_insights import extract_agent_metadata, parse_raw_meta_json
+from .session_insights import AGENT_METADATA_VERSION, extract_agent_metadata, parse_raw_meta_json
 from .onboarding import ensure_onboarding_state_row
 from .turn_index import backfill_session_turn_search, backfill_session_turns
 
@@ -44,6 +44,7 @@ SESSION_COLUMN_DEFS = {
     "agent_role": "TEXT",
     "agent_path": "TEXT",
     "memory_mode": "TEXT",
+    "agent_metadata_version": "INTEGER NOT NULL DEFAULT 0",
     "inferred_project_kind": "TEXT NOT NULL DEFAULT 'directory'",
     "inferred_project_key": "TEXT NOT NULL DEFAULT ''",
     "inferred_project_label": "TEXT NOT NULL DEFAULT ''",
@@ -424,6 +425,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     agent_role TEXT,
     agent_path TEXT,
     memory_mode TEXT,
+    agent_metadata_version INTEGER NOT NULL DEFAULT 0,
     inferred_project_kind TEXT NOT NULL DEFAULT 'directory',
     inferred_project_key TEXT NOT NULL DEFAULT '',
     inferred_project_label TEXT NOT NULL DEFAULT '',
@@ -1135,6 +1137,7 @@ def default_select(column_name: str) -> str:
         "user_message_count",
         "assistant_message_count",
         "tool_call_count",
+        "agent_metadata_version",
         "rollup_version",
         "turn_activity_rollup_version",
         "turn_index_version",
@@ -1161,15 +1164,9 @@ def backfill_session_agent_metadata(connection: sqlite3.Connection) -> int:
         """
         SELECT id, raw_meta_json, forked_from_id, agent_nickname, agent_role, agent_path, memory_mode
         FROM sessions
-        WHERE COALESCE(TRIM(raw_meta_json), '') <> ''
-          AND (
-                COALESCE(TRIM(forked_from_id), '') = ''
-             OR COALESCE(TRIM(agent_nickname), '') = ''
-             OR COALESCE(TRIM(agent_role), '') = ''
-             OR COALESCE(TRIM(agent_path), '') = ''
-             OR COALESCE(TRIM(memory_mode), '') = ''
-          )
-        """
+        WHERE COALESCE(agent_metadata_version, 0) < ?
+        """,
+        (AGENT_METADATA_VERSION,),
     ).fetchall()
     updates: list[tuple[object, ...]] = []
     for row in rows:
@@ -1181,8 +1178,6 @@ def backfill_session_agent_metadata(connection: sqlite3.Connection) -> int:
             "agent_path": str(row["agent_path"] or "").strip() or metadata["agent_path"],
             "memory_mode": str(row["memory_mode"] or "").strip() or metadata["memory_mode"],
         }
-        if not any(values.values()):
-            continue
         updates.append(
             (
                 values["forked_from_id"],
@@ -1190,6 +1185,7 @@ def backfill_session_agent_metadata(connection: sqlite3.Connection) -> int:
                 values["agent_role"],
                 values["agent_path"],
                 values["memory_mode"],
+                AGENT_METADATA_VERSION,
                 str(row["id"]),
             )
         )
@@ -1205,7 +1201,8 @@ def backfill_session_agent_metadata(connection: sqlite3.Connection) -> int:
             agent_nickname = ?,
             agent_role = ?,
             agent_path = ?,
-            memory_mode = ?
+            memory_mode = ?,
+            agent_metadata_version = ?
         WHERE id = ?
         """,
         updates,
@@ -1539,7 +1536,8 @@ def init_db(database_path: Path) -> None:
             from .environment_audit import backfill_environment_rollups
 
             backfill_environment_rollups(connection)
-            from .projects import sync_project_registry
+            from .projects import project_registry_needs_sync, sync_project_registry
 
-            sync_project_registry(connection)
+            if project_registry_needs_sync(connection):
+                sync_project_registry(connection)
         connection.execute("PRAGMA foreign_keys = ON")

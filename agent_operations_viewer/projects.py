@@ -999,6 +999,68 @@ def _merge_project_acl_memberships(
         )
 
 
+def project_registry_needs_sync(connection: sqlite3.Connection) -> bool:
+    missing_or_stale = connection.execute(
+        """
+        SELECT 1
+        FROM sessions AS s
+        LEFT JOIN ignored_project_sources AS i
+            ON i.match_project_key = s.inferred_project_key
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
+        WHERE i.match_project_key IS NULL
+          AND COALESCE(TRIM(s.inferred_project_key), '') <> ''
+          AND (
+                ps.match_project_key IS NULL
+             OR p.id IS NULL
+             OR p.current_group_key != COALESCE(
+                    NULLIF(TRIM(o.override_group_key), ''),
+                    s.inferred_project_key
+                )
+          )
+        LIMIT 1
+        """
+    ).fetchone()
+    if missing_or_stale is not None:
+        return True
+
+    orphaned_source = connection.execute(
+        """
+        SELECT 1
+        FROM project_sources AS ps
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM sessions AS s
+            LEFT JOIN ignored_project_sources AS i
+                ON i.match_project_key = s.inferred_project_key
+            WHERE i.match_project_key IS NULL
+              AND s.inferred_project_key = ps.match_project_key
+        )
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphaned_source is not None:
+        return True
+
+    orphaned_project = connection.execute(
+        """
+        SELECT 1
+        FROM projects AS p
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM project_sources AS ps
+            WHERE ps.project_id = p.id
+        )
+        LIMIT 1
+        """
+    ).fetchone()
+    return orphaned_project is not None
+
+
 def sync_project_registry(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         joined_session_query(
