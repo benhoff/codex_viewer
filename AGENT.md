@@ -111,6 +111,8 @@ It reflects the behavior implemented in:
 - `agent_operations_viewer/local_auth.py`
 - `agent_operations_viewer/projects.py`
 - `agent_operations_viewer/search_api_tokens.py`
+- `agent_operations_viewer/search_query.py`
+- `agent_operations_viewer/turn_index.py`
 - `agent_operations_viewer/saved_turns.py`
 - `agent_operations_viewer/web/routes/pages.py`
 - `agent_operations_viewer/web/routes/projects.py`

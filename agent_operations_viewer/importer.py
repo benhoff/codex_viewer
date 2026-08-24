@@ -39,7 +39,11 @@ from .session_parsing import (
     summarize_web_search_action,
 )
 from .session_rollups import replace_session_turn_activity_daily
-from .turn_index import replace_session_turn_search, replace_session_turns
+from .turn_index import (
+    replace_session_search_chunks,
+    replace_session_turn_search,
+    replace_session_turns,
+)
 
 logger = logging.getLogger("agent_operations_viewer.importer")
 
@@ -248,6 +252,7 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
     replace_session_turn_activity_daily(connection, parsed.session_id, parsed.events)
     replace_session_turns(connection, parsed.session_id, parsed.events)
     replace_session_turn_search(connection, parsed.session_id, parsed.events)
+    replace_session_search_chunks(connection, parsed.session_id, parsed.events)
     from .action_queue import replace_session_action_queue_rollups
     from .environment_audit import replace_session_environment_rollups
 

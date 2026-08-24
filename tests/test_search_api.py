@@ -18,8 +18,10 @@ from agent_operations_viewer.db import connect, write_transaction
 from agent_operations_viewer.local_auth import create_initial_admin, create_local_user
 from agent_operations_viewer.projects import upsert_project_acl_member
 from agent_operations_viewer.search_api_tokens import create_search_api_token
+from agent_operations_viewer.turn_index import replace_session_search_chunks
 from agent_operations_viewer.web.app import create_app
 from tests.test_search import insert_search_turn
+from tests.test_search_chunks import search_event
 
 
 def find_free_port() -> int:
@@ -124,6 +126,39 @@ class SearchApiTests(unittest.TestCase):
                     visibility="private",
                     prompt="shared api needle",
                     response="classified private evidence",
+                )
+                self.long_marker = "api-full-content-marker-mercury"
+                insert_search_turn(
+                    connection,
+                    session_id="chunk-api-session",
+                    project_id="chunk-api-project",
+                    project_key="acme/chunk-api",
+                    project_label="acme/chunk-api",
+                    prompt="legacy chunk prompt",
+                    response="legacy chunk response",
+                )
+                replace_session_search_chunks(
+                    connection,
+                    "chunk-api-session",
+                    [
+                        search_event(
+                            event_index=1,
+                            record_type="event_msg",
+                            payload_type="user_message",
+                            kind="message",
+                            role="user",
+                            display_text="Inspect the complete API response.",
+                        ),
+                        search_event(
+                            event_index=2,
+                            record_type="response_item",
+                            payload_type="message",
+                            kind="message",
+                            role="assistant",
+                            display_text=("full response filler " * 900) + self.long_marker,
+                            phase="final_answer",
+                        ),
+                    ],
                 )
         self.viewer_token = str(viewer_token["token"])
         self.sync_token = str(sync_token["token"])
@@ -243,6 +278,19 @@ class SearchApiTests(unittest.TestCase):
             hidden_response.json()["retrieval"]["project"]["resolution"],
             "unmatched",
         )
+
+    def test_api_returns_full_content_chunk_provenance(self) -> None:
+        response = self._search(token=self.viewer_token, q=self.long_marker)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total_count"], 1)
+        hit = payload["hits"][0]
+        self.assertEqual(hit["session_id"], "chunk-api-session")
+        self.assertEqual(hit["match_source"], "chunk")
+        self.assertEqual(hit["chunk"]["field"], "response")
+        self.assertGreater(hit["chunk"]["start_offset"], 12_000)
+        self.assertIn("marker", hit["snippet"])
 
     def test_cursor_is_bound_to_query_and_advances_results(self) -> None:
         first_response = self._search(token=self.viewer_token, limit=1)

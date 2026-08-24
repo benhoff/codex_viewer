@@ -11,7 +11,11 @@ from .session_rollups import (
 )
 from .session_insights import AGENT_METADATA_VERSION, extract_agent_metadata, parse_raw_meta_json
 from .onboarding import ensure_onboarding_state_row
-from .turn_index import backfill_session_turn_search, backfill_session_turns
+from .turn_index import (
+    backfill_session_search_chunks,
+    backfill_session_turn_search,
+    backfill_session_turns,
+)
 
 
 SESSION_COLUMN_DEFS = {
@@ -57,6 +61,7 @@ SESSION_COLUMN_DEFS = {
     "turn_activity_rollup_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_index_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_search_version": "INTEGER NOT NULL DEFAULT 0",
+    "search_chunk_version": "INTEGER NOT NULL DEFAULT 0",
     "action_queue_rollup_version": "INTEGER NOT NULL DEFAULT 0",
     "environment_rollup_version": "INTEGER NOT NULL DEFAULT 0",
     "turn_count": "INTEGER NOT NULL DEFAULT 0",
@@ -438,6 +443,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     turn_activity_rollup_version INTEGER NOT NULL DEFAULT 0,
     turn_index_version INTEGER NOT NULL DEFAULT 0,
     turn_search_version INTEGER NOT NULL DEFAULT 0,
+    search_chunk_version INTEGER NOT NULL DEFAULT 0,
     action_queue_rollup_version INTEGER NOT NULL DEFAULT 0,
     environment_rollup_version INTEGER NOT NULL DEFAULT 0,
     turn_count INTEGER NOT NULL DEFAULT 0,
@@ -853,10 +859,42 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_turn_search USING fts5(
     turn_number UNINDEXED
 );
 
+CREATE TABLE IF NOT EXISTS session_search_chunks (
+    chunk_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    turn_number INTEGER NOT NULL,
+    field TEXT NOT NULL CHECK(field IN ('prompt', 'response', 'activity')),
+    chunk_index INTEGER NOT NULL,
+    start_offset INTEGER NOT NULL,
+    end_offset INTEGER NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    index_version INTEGER NOT NULL,
+    UNIQUE(session_id, turn_number, field, chunk_index),
+    FOREIGN KEY(session_id, turn_number)
+        REFERENCES session_turns(session_id, turn_number)
+        ON DELETE CASCADE
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS session_search_chunk_fts USING fts5(
+    content,
+    project_text,
+    chunk_id UNINDEXED,
+    session_id UNINDEXED,
+    turn_number UNINDEXED,
+    field UNINDEXED
+);
+
+CREATE TRIGGER IF NOT EXISTS session_search_chunks_delete_fts
+AFTER DELETE ON session_search_chunks
+BEGIN
+    DELETE FROM session_search_chunk_fts WHERE chunk_id = OLD.chunk_id;
+END;
+
 CREATE TRIGGER IF NOT EXISTS session_turn_search_delete_session
 AFTER DELETE ON sessions
 BEGIN
     DELETE FROM session_turn_search WHERE session_id = OLD.id;
+    DELETE FROM session_search_chunk_fts WHERE session_id = OLD.id;
 END;
 """
 
@@ -878,6 +916,9 @@ ON session_artifacts(storage_path);
 
 CREATE INDEX IF NOT EXISTS idx_session_turn_activity_date
 ON session_turn_activity_daily(activity_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_session_search_chunks_turn
+ON session_search_chunks(session_id, turn_number, field, chunk_index);
 
 CREATE INDEX IF NOT EXISTS idx_session_turns_latest
 ON session_turns(latest_timestamp DESC, session_id DESC, turn_number DESC);
@@ -1556,3 +1597,11 @@ def init_db(database_path: Path) -> None:
             if project_registry_needs_sync(connection):
                 sync_project_registry(connection)
         connection.execute("PRAGMA foreign_keys = ON")
+        while True:
+            with write_transaction(connection):
+                indexed_count = backfill_session_search_chunks(
+                    connection,
+                    batch_size=50,
+                )
+            if indexed_count < 50:
+                break

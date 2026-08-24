@@ -1576,8 +1576,19 @@ def query_group_rows(
 
     if q:
         like = f"%{q}%"
-        conditions.append(
+        chunk_match_expression = build_turn_search_match_expression(q)
+        chunk_condition = ""
+        if chunk_match_expression:
+            chunk_condition = """
+                OR EXISTS (
+                    SELECT 1
+                    FROM session_search_chunk_fts
+                    WHERE session_search_chunk_fts.session_id = s.id
+                      AND session_search_chunk_fts MATCH ?
+                )
             """
+        conditions.append(
+            f"""
             (
                 s.search_text LIKE ?
                 OR s.github_slug LIKE ?
@@ -1588,10 +1599,13 @@ def query_group_rows(
                 OR o.override_display_label LIKE ?
                 OR o.override_organization LIKE ?
                 OR o.override_repository LIKE ?
+                {chunk_condition}
             )
             """
         )
         params.extend([like] * 9)
+        if chunk_match_expression:
+            params.append(chunk_match_expression)
     if host:
         conditions.append("s.source_host LIKE ?")
         params.append(f"%{host}%")

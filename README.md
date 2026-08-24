@@ -272,6 +272,8 @@ Optional filters are `project_id`, `host`, `from`, and `to`. Timestamps use ISO 
 
 Natural project-history questions are also accepted, for example `q=what was the last thing we were going to do on the hws project` or `q=what issues remain on the hws project`. The response's `retrieval` object reports the detected intent, resolved project, and whether results came from strict matching, relaxed matching, or the recent project-history fallback. This stage returns evidence candidates; it does not yet reconcile them into a synthesized answer.
 
+Searchable prompt, response, and activity text is also stored in deterministic overlapping chunks. Chunk indexing uses the complete normalized event text rather than the legacy per-turn 8k/12k/24k search fields, and stale sessions are reindexed in committed versioned batches at startup. Hits found only in full-content chunks report `match_source: "chunk"` plus chunk field and offset metadata. The dashboard search also consults this full-content index, and a successful chunk build retires the obsolete `Search text truncated during import` warning. No external embedding provider is required; current ranking combines the compact turn FTS index with the full-content chunk FTS index.
+
 When browser authentication is disabled for a trusted local install, the endpoint follows the rest of the app and does not require a token.
 
 ## Docker

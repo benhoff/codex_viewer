@@ -16,6 +16,7 @@ from .projects import (
     visible_session_where,
 )
 from .search_query import SearchQueryPlan, plan_search_query
+from .turn_index import SEARCH_CHUNK_VERSION
 
 
 TURN_TIMESTAMP_SQL = """
@@ -66,6 +67,8 @@ def _matched_snippet(
     if not has_match_expression:
         fallback = trimmed(row["response_excerpt"]) or trimmed(row["prompt_excerpt"])
         return "history", fallback or "No turn excerpt available."
+    if str(row["match_source"] or "") == "chunk" and _snippet_has_hit(row["chunk_snippet"]):
+        return trimmed(row["chunk_field"]) or "activity", str(row["chunk_snippet"] or "").strip()
     snippets = [
         ("prompt", row["prompt_snippet"]),
         ("response", row["response_snippet"]),
@@ -218,12 +221,38 @@ def _base_search_conditions(
     return conditions, params
 
 
-def _search_from_clause(conditions: list[str]) -> str:
+def _turn_search_from_clause(conditions: list[str]) -> str:
     return f"""
         FROM session_turn_search
         JOIN session_turns AS st
             ON st.session_id = session_turn_search.session_id
            AND st.turn_number = session_turn_search.turn_number
+        JOIN sessions AS s
+            ON s.id = st.session_id
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
+        {visible_session_where(conditions)}
+    """
+
+
+def _matched_search_from_clause(conditions: list[str]) -> str:
+    return f"""
+        FROM (
+            SELECT session_id, turn_number
+            FROM session_turn_search
+            WHERE session_turn_search MATCH ?
+            UNION
+            SELECT session_id, turn_number
+            FROM session_search_chunk_fts
+            WHERE session_search_chunk_fts MATCH ?
+        ) AS search_candidates
+        JOIN session_turns AS st
+            ON st.session_id = search_candidates.session_id
+           AND st.turn_number = search_candidates.turn_number
         JOIN sessions AS s
             ON s.id = st.session_id
         LEFT JOIN project_overrides AS o
@@ -243,13 +272,14 @@ def _search_stage_count(
     base_params: list[Any],
     match_expression: str | None,
 ) -> int:
-    conditions = list(base_conditions)
-    params = list(base_params)
     if match_expression:
-        conditions.insert(0, "session_turn_search MATCH ?")
-        params.insert(0, match_expression)
+        from_clause = _matched_search_from_clause(base_conditions)
+        params = [match_expression, match_expression, *base_params]
+    else:
+        from_clause = _turn_search_from_clause(base_conditions)
+        params = list(base_params)
     row = connection.execute(
-        f"SELECT COUNT(*) AS count {_search_from_clause(conditions)}",
+        f"SELECT COUNT(*) AS count {from_clause}",
         params,
     ).fetchone()
     return int(row["count"] or 0) if row is not None else 0
@@ -271,6 +301,10 @@ def _retrieval_metadata(
         "terms": list(plan.relaxed_terms),
         "project": project,
         "stage_counts": stage_counts,
+        "index": {
+            "mode": "hybrid_lexical",
+            "chunk_version": SEARCH_CHUNK_VERSION,
+        },
     }
 
 
@@ -291,52 +325,141 @@ def _run_search_stage(
     normalized_page = min(normalized_page, page_count)
     offset = (normalized_page - 1) * page_size
 
-    conditions = list(base_conditions)
-    params = list(base_params)
     if match_expression:
-        conditions.insert(0, "session_turn_search MATCH ?")
-        params.insert(0, match_expression)
-        search_columns = f"""
-            bm25(session_turn_search, 1.0, 5.0, 4.0, 2.0) AS search_rank,
-            snippet(session_turn_search, 0, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 10) AS project_snippet,
-            snippet(session_turn_search, 1, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 18) AS prompt_snippet,
-            snippet(session_turn_search, 2, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 18) AS response_snippet,
-            snippet(session_turn_search, 3, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 18) AS event_snippet
-        """
+        if prefer_recent:
+            matched_order_clause = f"""
+                ORDER BY {TURN_TIMESTAMP_SQL} DESC,
+                    search_candidates.search_rank ASC,
+                    st.session_id DESC,
+                    st.turn_number DESC
+            """
+        else:
+            matched_order_clause = f"""
+                ORDER BY search_candidates.search_rank ASC,
+                    {TURN_TIMESTAMP_SQL} DESC,
+                    st.session_id DESC,
+                    st.turn_number DESC
+            """
+        ranked_conditions = ["search_candidates.candidate_rank = 1", *base_conditions]
+        rows = connection.execute(
+            f"""
+            WITH raw_candidates AS (
+                SELECT
+                    session_id,
+                    turn_number,
+                    'turn' AS match_source,
+                    bm25(session_turn_search, 1.0, 5.0, 4.0, 2.0) AS search_rank,
+                    snippet(session_turn_search, 0, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 10) AS project_snippet,
+                    snippet(session_turn_search, 1, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 18) AS prompt_snippet,
+                    snippet(session_turn_search, 2, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 18) AS response_snippet,
+                    snippet(session_turn_search, 3, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 18) AS event_snippet,
+                    NULL AS chunk_snippet,
+                    NULL AS chunk_id,
+                    NULL AS chunk_field,
+                    NULL AS chunk_index,
+                    NULL AS chunk_start_offset,
+                    NULL AS chunk_end_offset
+                FROM session_turn_search
+                WHERE session_turn_search MATCH ?
+
+                UNION ALL
+
+                SELECT
+                    session_search_chunk_fts.session_id,
+                    session_search_chunk_fts.turn_number,
+                    'chunk' AS match_source,
+                    bm25(session_search_chunk_fts, 5.0, 1.0) AS search_rank,
+                    snippet(session_search_chunk_fts, 1, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 10) AS project_snippet,
+                    NULL AS prompt_snippet,
+                    NULL AS response_snippet,
+                    NULL AS event_snippet,
+                    snippet(session_search_chunk_fts, 0, '{TURN_SEARCH_HIGHLIGHT_START}', '{TURN_SEARCH_HIGHLIGHT_END}', ' … ', 24) AS chunk_snippet,
+                    chunks.chunk_id,
+                    chunks.field AS chunk_field,
+                    chunks.chunk_index,
+                    chunks.start_offset AS chunk_start_offset,
+                    chunks.end_offset AS chunk_end_offset
+                FROM session_search_chunk_fts
+                JOIN session_search_chunks AS chunks
+                    ON chunks.chunk_id = session_search_chunk_fts.chunk_id
+                WHERE session_search_chunk_fts MATCH ?
+            ),
+            ranked_candidates AS (
+                SELECT
+                    raw_candidates.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY session_id, turn_number
+                        ORDER BY
+                            search_rank ASC,
+                            CASE WHEN match_source = 'chunk' THEN 0 ELSE 1 END ASC,
+                            COALESCE(chunk_index, 0) ASC
+                    ) AS candidate_rank
+                FROM raw_candidates
+            )
+            SELECT
+                {TURN_STREAM_SELECT},
+                search_candidates.search_rank,
+                search_candidates.project_snippet,
+                search_candidates.prompt_snippet,
+                search_candidates.response_snippet,
+                search_candidates.event_snippet,
+                search_candidates.chunk_snippet,
+                search_candidates.match_source,
+                search_candidates.chunk_id,
+                search_candidates.chunk_field,
+                search_candidates.chunk_index,
+                search_candidates.chunk_start_offset,
+                search_candidates.chunk_end_offset
+            FROM ranked_candidates AS search_candidates
+            JOIN session_turns AS st
+                ON st.session_id = search_candidates.session_id
+               AND st.turn_number = search_candidates.turn_number
+            JOIN sessions AS s
+                ON s.id = st.session_id
+            LEFT JOIN project_overrides AS o
+                ON o.match_project_key = s.inferred_project_key
+            LEFT JOIN project_sources AS ps
+                ON ps.match_project_key = s.inferred_project_key
+            LEFT JOIN projects AS p
+                ON p.id = ps.project_id
+            {visible_session_where(ranked_conditions)}
+            {matched_order_clause}
+            LIMIT ? OFFSET ?
+            """,
+            [match_expression, match_expression, *base_params, page_size, offset],
+        ).fetchall()
     else:
         search_columns = """
             0.0 AS search_rank,
             NULL AS project_snippet,
             NULL AS prompt_snippet,
             NULL AS response_snippet,
-            NULL AS event_snippet
+            NULL AS event_snippet,
+            NULL AS chunk_snippet,
+            'history' AS match_source,
+            NULL AS chunk_id,
+            NULL AS chunk_field,
+            NULL AS chunk_index,
+            NULL AS chunk_start_offset,
+            NULL AS chunk_end_offset
         """
-    if prefer_recent or not match_expression:
         order_clause = f"""
             ORDER BY {TURN_TIMESTAMP_SQL} DESC,
                 search_rank ASC,
                 st.session_id DESC,
                 st.turn_number DESC
         """
-    else:
-        order_clause = f"""
-            ORDER BY search_rank ASC,
-                {TURN_TIMESTAMP_SQL} DESC,
-                st.session_id DESC,
-                st.turn_number DESC
-        """
-
-    rows = connection.execute(
-        f"""
-        SELECT
-            {TURN_STREAM_SELECT},
-            {search_columns}
-        {_search_from_clause(conditions)}
-        {order_clause}
-        LIMIT ? OFFSET ?
-        """,
-        [*params, page_size, offset],
-    ).fetchall()
+        rows = connection.execute(
+            f"""
+            SELECT
+                {TURN_STREAM_SELECT},
+                {search_columns}
+            {_turn_search_from_clause(base_conditions)}
+            {order_clause}
+            LIMIT ? OFFSET ?
+            """,
+            [*base_params, page_size, offset],
+        ).fetchall()
 
     items: list[dict[str, Any]] = []
     for row in rows:
@@ -357,6 +480,16 @@ def _run_search_stage(
         )
         failure_count = int(row["failure_count"] or 0)
         search_rank = float(row["search_rank"] or 0.0)
+        match_source = str(row["match_source"] or "turn")
+        chunk_evidence = None
+        if match_source == "chunk" and trimmed(row["chunk_id"]):
+            chunk_evidence = {
+                "id": str(row["chunk_id"]),
+                "field": trimmed(row["chunk_field"]) or matched_field,
+                "index": int(row["chunk_index"] or 0),
+                "start_offset": int(row["chunk_start_offset"] or 0),
+                "end_offset": int(row["chunk_end_offset"] or 0),
+            }
         items.append(
             {
                 "session_id": str(row["session_id"]),
@@ -385,6 +518,8 @@ def _run_search_stage(
                 "marked_snippet": marked_snippet,
                 "snippet": plain_search_snippet(marked_snippet),
                 "score": -search_rank,
+                "match_source": match_source,
+                "chunk": chunk_evidence,
             }
         )
 

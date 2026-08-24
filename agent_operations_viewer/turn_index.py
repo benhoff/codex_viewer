@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Sequence
@@ -22,12 +23,16 @@ from .text_utils import shorten, strip_codex_wrappers
 
 TURN_INDEX_VERSION = 6
 TURN_SEARCH_VERSION = 2
+SEARCH_CHUNK_VERSION = 1
 
 MAX_PROMPT_SEARCH_CHARS = 8_000
 MAX_RESPONSE_SEARCH_CHARS = 12_000
 MAX_EVENT_SEARCH_CHARS = 24_000
 MAX_EVENT_FRAGMENT_CHARS = 4_000
 MAX_PROJECT_SEARCH_CHARS = 2_000
+SEARCH_CHUNK_TARGET_CHARS = 4_000
+SEARCH_CHUNK_OVERLAP_CHARS = 400
+LEGACY_SEARCH_TRUNCATION_WARNING = "Search text truncated during import"
 
 
 def _event_value(event: sqlite3.Row | dict[str, Any] | object, key: str) -> Any:
@@ -253,6 +258,106 @@ def _event_search_text(event: dict[str, Any]) -> str:
     return _combine_search_fragments(fragments, limit=MAX_EVENT_FRAGMENT_CHARS)
 
 
+def _full_search_text(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.replace("\x00", " ").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _record_payload_text(event: dict[str, Any], key: str) -> str:
+    raw_record = event.get("record_json")
+    if not isinstance(raw_record, str) or not raw_record.strip():
+        return ""
+    try:
+        record = json.loads(raw_record)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(record, dict):
+        return ""
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return ""
+    return _full_search_text(payload.get(key))
+
+
+def _event_search_text_full(event: dict[str, Any]) -> str:
+    fragments: list[str] = []
+    kind = str(event.get("kind") or "")
+    role = str(event.get("role") or "")
+    tool_name = _full_search_text(event.get("tool_name"))
+    command_text = _full_search_text(event.get("command_text"))
+    display_text = _full_search_text(event.get("display_text"))
+    detail_text = _full_search_text(event.get("detail_text"))
+
+    if kind == "message" and role == "user":
+        return ""
+    if kind == "tool_call" and tool_name:
+        fragments.append(tool_name)
+    if kind == "command":
+        if command_text:
+            fragments.append(command_text)
+        exit_code = event.get("exit_code")
+        if isinstance(exit_code, int):
+            fragments.append(f"exit code {exit_code}")
+    elif command_text:
+        fragments.append(command_text)
+    if display_text:
+        fragments.append(display_text)
+    if detail_text and detail_text != display_text:
+        fragments.append(detail_text)
+    return "\n".join(fragments)
+
+
+def split_search_text_chunks(
+    value: object,
+    *,
+    target_chars: int = SEARCH_CHUNK_TARGET_CHARS,
+    overlap_chars: int = SEARCH_CHUNK_OVERLAP_CHARS,
+) -> list[dict[str, Any]]:
+    """Split complete normalized text into deterministic overlapping chunks."""
+
+    text = _full_search_text(value)
+    if not text:
+        return []
+    normalized_target = max(int(target_chars or SEARCH_CHUNK_TARGET_CHARS), 256)
+    normalized_overlap = max(0, min(int(overlap_chars or 0), normalized_target // 2))
+    chunks: list[dict[str, Any]] = []
+    start = 0
+    while start < len(text):
+        hard_end = min(start + normalized_target, len(text))
+        end = hard_end
+        if hard_end < len(text):
+            boundary_floor = start + (normalized_target // 2)
+            newline_boundary = text.rfind("\n", boundary_floor, hard_end + 1)
+            space_boundary = text.rfind(" ", boundary_floor, hard_end + 1)
+            boundary = max(newline_boundary, space_boundary)
+            if boundary >= boundary_floor:
+                end = boundary + 1
+        raw_chunk = text[start:end]
+        leading = len(raw_chunk) - len(raw_chunk.lstrip())
+        trailing = len(raw_chunk) - len(raw_chunk.rstrip())
+        content_start = start + leading
+        content_end = end - trailing if trailing else end
+        if content_end > content_start:
+            content = text[content_start:content_end]
+            chunks.append(
+                {
+                    "chunk_index": len(chunks),
+                    "start_offset": content_start,
+                    "end_offset": content_end,
+                    "content": content,
+                    "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                }
+            )
+        if end >= len(text):
+            break
+        next_start = max(end - normalized_overlap, start + 1)
+        while next_start < end and text[next_start].isspace():
+            next_start += 1
+        start = next_start
+    return chunks
+
+
 def compute_session_turn_index(
     events: Sequence[sqlite3.Row | dict[str, Any] | object],
 ) -> list[dict[str, Any]]:
@@ -291,7 +396,10 @@ def compute_session_turn_index(
 
         if completion_event is not None:
             if final_response_event is completion_event:
-                response_text = str(completion_event.get("detail_text") or completion_event.get("display_text") or "")
+                response_text = (
+                    _record_payload_text(completion_event, "last_agent_message")
+                    or str(completion_event.get("detail_text") or completion_event.get("display_text") or "")
+                )
             else:
                 response_text = str(final_response_event.get("display_text") or "")
             response_timestamp = completion_event.get("timestamp") or final_response_event.get("timestamp")
@@ -309,8 +417,16 @@ def compute_session_turn_index(
             response_timestamp = update_event.get("timestamp")
             response_state = "update"
 
-        prompt_text = _compact_search_text(turn.get("prompt_text"), MAX_PROMPT_SEARCH_CHARS)
-        response_text = _compact_search_text(response_text, MAX_RESPONSE_SEARCH_CHARS)
+        full_prompt_text = _full_search_text(turn.get("prompt_text"))
+        full_response_text = _full_search_text(response_text)
+        full_event_text = "\n".join(
+            fragment
+            for event in all_events
+            if event is not final_response_event and event is not completion_event
+            if (fragment := _event_search_text_full(event))
+        )
+        prompt_text = _compact_search_text(full_prompt_text, MAX_PROMPT_SEARCH_CHARS)
+        response_text = _compact_search_text(full_response_text, MAX_RESPONSE_SEARCH_CHARS)
         event_text = _combine_search_fragments(
             [
                 _event_search_text(event)
@@ -358,9 +474,11 @@ def compute_session_turn_index(
             "end_event_index": int(turn["end_event_index"]),
             "prompt_excerpt": shorten(prompt_text, 280),
             "prompt_text": prompt_text,
+            "full_prompt_text": full_prompt_text,
             "prompt_timestamp": turn.get("prompt_timestamp"),
             "response_excerpt": shorten(response_text, 320) if response_text else "",
             "response_text": response_text,
+            "full_response_text": full_response_text,
             "response_timestamp": response_timestamp,
             "response_state": response_state,
             "latest_timestamp": latest_timestamp,
@@ -384,6 +502,7 @@ def compute_session_turn_index(
             "latest_rate_limit_name": usage_rollup["latest_rate_limit_name"],
             "latest_rate_limit_reached_type": usage_rollup["latest_rate_limit_reached_type"],
             "event_text": event_text,
+            "full_event_text": full_event_text,
         }
 
     for event in compact_events:
@@ -543,7 +662,11 @@ def replace_session_turns(
                 file_change_rows,
             )
     connection.execute(
-        "UPDATE sessions SET turn_index_version = ? WHERE id = ?",
+        """
+        UPDATE sessions
+        SET turn_index_version = ?, search_chunk_version = 0
+        WHERE id = ?
+        """,
         (TURN_INDEX_VERSION, session_id),
     )
 
@@ -711,7 +834,11 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
         )
 
     connection.executemany(
-        "UPDATE sessions SET turn_index_version = ? WHERE id = ?",
+        """
+        UPDATE sessions
+        SET turn_index_version = ?, search_chunk_version = 0
+        WHERE id = ?
+        """,
         [(TURN_INDEX_VERSION, session_id) for session_id in session_ids],
     )
     return len(session_ids)
@@ -855,6 +982,200 @@ def _session_turn_search_inserts(
     ]
 
 
+def _session_search_chunk_records(
+    session_id: str,
+    project_text: str,
+    turns: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for turn in turns:
+        turn_number = int(turn["turn_number"])
+        for field, value in (
+            ("prompt", turn.get("full_prompt_text")),
+            ("response", turn.get("full_response_text")),
+            ("activity", turn.get("full_event_text")),
+        ):
+            for chunk in split_search_text_chunks(value):
+                content_sha256 = str(chunk["content_sha256"])
+                stable_key = "\0".join(
+                    (
+                        str(SEARCH_CHUNK_VERSION),
+                        session_id,
+                        str(turn_number),
+                        field,
+                        str(chunk["chunk_index"]),
+                        content_sha256,
+                    )
+                )
+                records.append(
+                    {
+                        "chunk_id": hashlib.sha256(stable_key.encode("utf-8")).hexdigest(),
+                        "session_id": session_id,
+                        "turn_number": turn_number,
+                        "field": field,
+                        "chunk_index": int(chunk["chunk_index"]),
+                        "start_offset": int(chunk["start_offset"]),
+                        "end_offset": int(chunk["end_offset"]),
+                        "content_sha256": content_sha256,
+                        "content": str(chunk["content"]),
+                        "project_text": project_text,
+                    }
+                )
+    return records
+
+
+def _write_session_search_chunks(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    project_text: str,
+    turns: Sequence[dict[str, Any]],
+) -> int:
+    connection.execute(
+        "DELETE FROM session_search_chunk_fts WHERE session_id = ?",
+        (session_id,),
+    )
+    connection.execute(
+        "DELETE FROM session_search_chunks WHERE session_id = ?",
+        (session_id,),
+    )
+    records = _session_search_chunk_records(session_id, project_text, turns)
+    if records:
+        connection.executemany(
+            """
+            INSERT INTO session_search_chunks (
+                chunk_id,
+                session_id,
+                turn_number,
+                field,
+                chunk_index,
+                start_offset,
+                end_offset,
+                content_sha256,
+                index_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    record["chunk_id"],
+                    record["session_id"],
+                    record["turn_number"],
+                    record["field"],
+                    record["chunk_index"],
+                    record["start_offset"],
+                    record["end_offset"],
+                    record["content_sha256"],
+                    SEARCH_CHUNK_VERSION,
+                )
+                for record in records
+            ],
+        )
+        connection.executemany(
+            """
+            INSERT INTO session_search_chunk_fts (
+                content,
+                project_text,
+                chunk_id,
+                session_id,
+                turn_number,
+                field
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    record["content"],
+                    record["project_text"],
+                    record["chunk_id"],
+                    record["session_id"],
+                    record["turn_number"],
+                    record["field"],
+                )
+                for record in records
+            ],
+        )
+    if records:
+        connection.execute(
+            """
+            UPDATE sessions
+            SET
+                search_chunk_version = ?,
+                import_warning = CASE
+                    WHEN import_warning = ? THEN NULL
+                    ELSE import_warning
+                END
+            WHERE id = ?
+            """,
+            (
+                SEARCH_CHUNK_VERSION,
+                LEGACY_SEARCH_TRUNCATION_WARNING,
+                session_id,
+            ),
+        )
+    else:
+        connection.execute(
+            "UPDATE sessions SET search_chunk_version = ? WHERE id = ?",
+            (SEARCH_CHUNK_VERSION, session_id),
+        )
+    return len(records)
+
+
+def replace_session_search_chunks(
+    connection: sqlite3.Connection,
+    session_id: str,
+    events: Sequence[sqlite3.Row | dict[str, Any] | object] | None = None,
+) -> int:
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_session_id:
+        return 0
+    source_events = (
+        events
+        if events is not None
+        else _fetch_turn_search_events(connection, [normalized_session_id]).get(normalized_session_id, [])
+    )
+    turns = compute_session_turn_index(source_events)
+    metadata = _fetch_session_turn_search_metadata(connection, [normalized_session_id]).get(
+        normalized_session_id
+    )
+    return _write_session_search_chunks(
+        connection,
+        session_id=normalized_session_id,
+        project_text=_session_turn_search_project_text(metadata),
+        turns=turns,
+    )
+
+
+def backfill_session_search_chunks(
+    connection: sqlite3.Connection,
+    *,
+    batch_size: int = 50,
+) -> int:
+    normalized_batch_size = max(1, min(int(batch_size or 50), 500))
+    stale_rows = connection.execute(
+        """
+        SELECT id
+        FROM sessions
+        WHERE COALESCE(search_chunk_version, 0) < ?
+        ORDER BY id ASC
+        LIMIT ?
+        """,
+        (SEARCH_CHUNK_VERSION, normalized_batch_size),
+    ).fetchall()
+    session_ids = [str(row["id"]) for row in stale_rows]
+    if not session_ids:
+        return 0
+
+    rows_by_session = _fetch_turn_search_events(connection, session_ids)
+    metadata_by_session = _fetch_session_turn_search_metadata(connection, session_ids)
+    for session_id in session_ids:
+        _write_session_search_chunks(
+            connection,
+            session_id=session_id,
+            project_text=_session_turn_search_project_text(metadata_by_session.get(session_id)),
+            turns=compute_session_turn_index(rows_by_session.get(session_id, [])),
+        )
+    return len(session_ids)
+
+
 def replace_session_turn_search(
     connection: sqlite3.Connection,
     session_id: str,
@@ -970,9 +1291,10 @@ def reindex_session_turn_search_for_project_keys(
             (session_id,),
         )
         turns = compute_session_turn_index(rows_by_session.get(session_id, []))
+        project_text = _session_turn_search_project_text(metadata_by_session.get(session_id))
         inserts = _session_turn_search_inserts(
             session_id,
-            _session_turn_search_project_text(metadata_by_session.get(session_id)),
+            project_text,
             turns,
         )
         if inserts:
@@ -992,6 +1314,12 @@ def reindex_session_turn_search_for_project_keys(
         connection.execute(
             "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
             (TURN_SEARCH_VERSION, session_id),
+        )
+        _write_session_search_chunks(
+            connection,
+            session_id=session_id,
+            project_text=project_text,
+            turns=turns,
         )
     return len(session_ids)
 

@@ -87,6 +87,8 @@ def _serialize_hit(item: dict[str, object]) -> dict[str, object]:
         "turn_number": turn_number,
         "timestamp": item.get("timestamp"),
         "matched_field": item.get("matched_field"),
+        "match_source": item.get("match_source"),
+        "chunk": item.get("chunk"),
         "snippet": item.get("snippet"),
         "score": item.get("score"),
         "prompt_excerpt": item.get("prompt_excerpt"),
