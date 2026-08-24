@@ -12,7 +12,15 @@
             <h1 class="mt-2 font-display text-2xl leading-tight text-stone-900 sm:text-[2.2rem]">{{ q }}</h1>
             <p class="mt-2 text-sm text-stone-600">
               {% if search_data.total_count %}
-                {{ search_data.total_count }} matching turn{% if search_data.total_count != 1 %}s{% endif %} across prompts, responses, activity, and project metadata.
+                {% if search_data.retrieval.strategy == "project_history" %}
+                  {{ search_data.total_count }} recent project turn{% if search_data.total_count != 1 %}s{% endif %} for historical context.
+                {% elif search_data.retrieval.strategy == "relaxed" %}
+                  {{ search_data.total_count }} related turn{% if search_data.total_count != 1 %}s{% endif %} found with broader terms.
+                {% else %}
+                  {{ search_data.total_count }} matching turn{% if search_data.total_count != 1 %}s{% endif %} across prompts, responses, activity, and project metadata.
+                {% endif %}
+              {% elif search_data.retrieval.project.resolution in ["ambiguous", "unmatched"] %}
+                The named project could not be uniquely resolved within your project access.
               {% else %}
                 No matching turns yet. Refine the query below.
               {% endif %}
@@ -50,7 +58,7 @@
             {{ search_data.total_count }} total matches
           </span>
           <span class="rounded-full bg-stone-100 px-3 py-1">
-            Turn hits
+            {{ search_data.retrieval.strategy|replace("_", " ")|title }}
           </span>
         </div>
       </div>

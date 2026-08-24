@@ -548,6 +548,18 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     revoked_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS search_api_tokens (
+    id TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    token_prefix TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    scopes_json TEXT NOT NULL DEFAULT '["search:read"]',
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS machine_credentials (
     id TEXT PRIMARY KEY,
     label TEXT NOT NULL,
@@ -977,6 +989,9 @@ ON users(username);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_subject
 ON users(external_subject)
 WHERE external_subject IS NOT NULL AND TRIM(external_subject) <> '';
+
+CREATE INDEX IF NOT EXISTS idx_search_api_tokens_owner
+ON search_api_tokens(owner_user_id, created_at DESC);
 """
 
 WRITE_LOCK = threading.RLock()

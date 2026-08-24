@@ -88,6 +88,12 @@ from ...server_settings import (
     parse_bool_value,
     update_server_settings,
 )
+from ...search_api_tokens import (
+    create_search_api_token,
+    delete_search_api_token,
+    list_search_api_tokens,
+    revoke_search_api_token,
+)
 from ..auth import (
     build_auth_user,
     clear_auth_session,
@@ -231,6 +237,8 @@ def render_settings_page(
     request: Request,
     *,
     created_token: dict[str, str] | None = None,
+    created_search_token: dict[str, object] | None = None,
+    search_token_error: str | None = None,
     password_error: str | None = None,
     password_success: str | None = None,
     server_settings_error: str | None = None,
@@ -252,6 +260,11 @@ def render_settings_page(
         machine_credentials = list_machine_credentials(connection) if can_manage_admin else []
         auth_status = fetch_auth_status(connection)
         users = list_users(connection) if can_manage_admin else []
+        search_api_tokens = (
+            list_search_api_tokens(connection, str(current_user["user_id"]))
+            if current_user and current_user.get("user_id")
+            else []
+        )
     can_change_password = bool(
         current_user
         and current_user.get("auth_source") == "password"
@@ -275,6 +288,9 @@ def render_settings_page(
             "api_tokens": api_tokens,
             "machine_credentials": machine_credentials,
             "created_token": created_token,
+            "created_search_token": created_search_token,
+            "search_api_tokens": search_api_tokens,
+            "search_token_error": search_token_error,
             "search_query": "",
             "auth_status": auth_status,
             "effective_bootstrap_required": effective_bootstrap_required(context.settings, auth_status),
@@ -285,6 +301,7 @@ def render_settings_page(
             "server_settings_error": server_settings_error,
             "server_settings_success": server_settings_success,
             "can_change_password": can_change_password,
+            "can_manage_search_tokens": bool(current_user and current_user.get("user_id")),
             "can_manage_admin": can_manage_admin,
             "managed_users": users,
             "user_management_error": user_management_error,
@@ -1656,6 +1673,55 @@ def machine_environment_audit(request: Request, source_host: str) -> HTMLRespons
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request) -> HTMLResponse:
     return render_settings_page(request)
+
+
+@router.post("/settings/search-api-tokens")
+async def settings_create_search_api_token(request: Request) -> HTMLResponse:
+    context = get_app_context(request)
+    current_user = require_authenticated_user(request)
+    fields = await parse_form_fields(request)
+    try:
+        with connect(context.settings.database_path) as connection:
+            with write_transaction(connection):
+                created_token = create_search_api_token(
+                    connection,
+                    owner_user_id=str(current_user["user_id"]),
+                    label=fields.get("label", ""),
+                )
+    except ValueError as exc:
+        return render_settings_page(request, search_token_error=str(exc))
+    return render_settings_page(request, created_search_token=created_token)
+
+
+@router.post("/settings/search-api-tokens/actions")
+async def settings_search_api_token_action(request: Request) -> RedirectResponse:
+    context = get_app_context(request)
+    current_user = require_authenticated_user(request)
+    fields = await parse_form_fields(request)
+    token_id = fields.get("token_id", "").strip()
+    action = fields.get("action", "").strip()
+    if not token_id:
+        raise HTTPException(status_code=400, detail="Missing token id")
+    if action not in {"revoke", "delete"}:
+        raise HTTPException(status_code=400, detail="Unsupported token action")
+
+    with connect(context.settings.database_path) as connection:
+        with write_transaction(connection):
+            if action == "revoke":
+                changed = revoke_search_api_token(
+                    connection,
+                    owner_user_id=str(current_user["user_id"]),
+                    token_id=token_id,
+                )
+            else:
+                changed = delete_search_api_token(
+                    connection,
+                    owner_user_id=str(current_user["user_id"]),
+                    token_id=token_id,
+                )
+    if not changed:
+        raise HTTPException(status_code=404, detail="Search API token not found")
+    return RedirectResponse(url="/settings#settings-search-api-tokens", status_code=303)
 
 
 @router.post("/settings/password")

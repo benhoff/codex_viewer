@@ -16,6 +16,7 @@ from .context import AppContext, set_app_context
 from .routes.machine_pairing import router as machine_pairing_router
 from .routes.pages import router as pages_router
 from .routes.projects import router as projects_router
+from .routes.search_api import router as search_api_router
 from .routes.sessions import router as sessions_router
 from .routes.sync_api import router as sync_api_router
 from .templates import STATIC_ROOT, build_templates
@@ -65,6 +66,7 @@ def create_app(
             sync_sessions(app_settings)
 
     app.include_router(pages_router)
+    app.include_router(search_api_router)
     app.include_router(sessions_router)
     app.include_router(sync_api_router)
     app.include_router(machine_pairing_router)

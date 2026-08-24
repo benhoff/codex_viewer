@@ -105,8 +105,12 @@ def reset_setup_state(
         _reset_auth_state(connection, now=now)
 
     if reset_tokens:
-        result.tokens_removed = _count_rows(connection, "api_tokens")
+        result.tokens_removed = _count_rows(connection, "api_tokens") + _count_rows(
+            connection,
+            "search_api_tokens",
+        )
         connection.execute("DELETE FROM api_tokens")
+        connection.execute("DELETE FROM search_api_tokens")
 
     if reset_remote_agents:
         result.alert_deliveries_removed = _count_rows(connection, "alert_deliveries")

@@ -27,6 +27,10 @@ from ..machine_credentials import (
 )
 from ..local_auth import fetch_auth_status, fetch_user_by_id, touch_user_seen, upsert_proxy_user
 from ..onboarding import effective_bootstrap_required
+from ..search_api_tokens import (
+    find_active_search_api_token,
+    touch_search_api_token_usage,
+)
 from .context import get_settings, request_return_to
 
 
@@ -47,6 +51,7 @@ BOOTSTRAP_PUBLIC_PATHS = {
     "/setup/claim-admin",
     "/setup/status",
 }
+SEARCH_API_PATHS = {"/api/v1/search"}
 
 
 def request_bearer_token(request: Request) -> str | None:
@@ -230,6 +235,36 @@ def session_auth_user(request: Request, settings: Settings, connection: Any) -> 
     )
 
 
+def search_api_token_user(
+    request: Request,
+    connection: Any,
+) -> tuple[dict[str, object], str] | None:
+    if request.url.path not in SEARCH_API_PATHS:
+        return None
+    bearer_token = request_bearer_token(request)
+    if not bearer_token:
+        return None
+    token_row = find_active_search_api_token(connection, bearer_token)
+    if token_row is None:
+        return None
+    user = fetch_user_by_id(connection, str(token_row["owner_user_id"]))
+    if user is None or str(user["disabled_at"] or "").strip():
+        return None
+    touch_search_api_token_usage(connection, str(token_row["id"]))
+    return (
+        build_auth_user(
+            user_id=str(user["id"]),
+            username=str(user["username"]),
+            display_name=str(user["display_name"] or user["username"]),
+            email=str(user["email"] or ""),
+            auth_source="search_api_token",
+            role=str(user["role"] or "viewer"),
+            is_admin=bool(user["is_admin"]),
+        ),
+        str(token_row["id"]),
+    )
+
+
 def set_password_session(request: Request, user: dict[str, object]) -> None:
     request.session["auth_user"] = {
         "user_id": user.get("user_id"),
@@ -278,6 +313,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.auth_enabled = settings.auth_enabled()
         request.state.auth_mode = settings.auth_mode
         request.state.auth_user = None
+        request.state.search_api_token_id = None
         request.state.bootstrap_required = False
         request.state.bootstrap_completed_at = None
         request.state.local_admin = None
@@ -289,6 +325,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             with connect(settings.database_path) as connection:
                 auth_status = fetch_auth_status(connection)
                 user = proxy_auth_user(request, settings, connection) or session_auth_user(request, settings, connection)
+                if user is None:
+                    token_auth = search_api_token_user(request, connection)
+                    if token_auth is not None:
+                        user, request.state.search_api_token_id = token_auth
         except ValueError as exc:
             if wants_html_response(request):
                 return Response(content=str(exc), status_code=403)

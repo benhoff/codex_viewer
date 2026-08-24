@@ -110,6 +110,7 @@ It reflects the behavior implemented in:
 - `agent_operations_viewer/web/auth.py`
 - `agent_operations_viewer/local_auth.py`
 - `agent_operations_viewer/projects.py`
+- `agent_operations_viewer/search_api_tokens.py`
 - `agent_operations_viewer/saved_turns.py`
 - `agent_operations_viewer/web/routes/pages.py`
 - `agent_operations_viewer/web/routes/projects.py`
@@ -136,6 +137,7 @@ The app supports:
 
 - local password auth
 - trusted proxy / SSO auth
+- user-linked search API tokens
 - no auth
 
 ### Local password users
@@ -154,6 +156,10 @@ Proxy users are auto-provisioned into `users` and assigned a stable `user_id`.
 They default to role `viewer`.
 
 The app does not grant admin from proxy headers alone. Admin elevation is an explicit app-side action.
+
+### Search API tokens
+
+Personal search tokens are linked to a stable `user_id` and currently carry the `search:read` scope. They inherit the owner's global role and project ACLs, stop authenticating when the owner is disabled, and are accepted only by `/api/v1/search`. Sync API tokens and machine credentials are not accepted by the search API.
 
 ### Auth disabled
 
@@ -182,12 +188,13 @@ Viewers can:
 
 - view dashboards, projects, sessions, exports, streams, environment audits, and machines
 - use their own review queue
+- create and revoke their own personal search API tokens
 - change their own local password if they are a local password user
 
 Viewers cannot:
 
 - change install-wide settings
-- manage tokens
+- manage sync or machine tokens
 - manage users
 - manage project ACL
 - perform machine admin actions

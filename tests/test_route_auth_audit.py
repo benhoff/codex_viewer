@@ -244,7 +244,7 @@ class RouteAuthAuditTests(unittest.TestCase):
 
         path = PLACEHOLDER_PATTERN.sub(replace, route_path)
         query_items: list[tuple[str, str]] = []
-        if path == "/api/sync/manifest":
+        if path in {"/api/sync/manifest", "/api/sync/manifest-v2"}:
             query_items.append(("host", "audit-host"))
         elif path.startswith("/api/machine-pairing/sessions/") or path.startswith("/machine-pairing/"):
             query_items.append(("secret", self.pairing_secret))

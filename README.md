@@ -255,6 +255,25 @@ Concrete proxy examples:
 
 If auth is enabled and no admin exists yet, the first visit will route through `/setup` so the initial admin can be created or claimed.
 
+## Search API
+
+Signed-in users can create personal, read-scoped search tokens from **Settings → Search API**. These tokens inherit the user's project ACLs and cannot upload sessions or perform administrative actions. Daemon sync tokens are intentionally not accepted by the search API.
+
+Search imported turns:
+
+```bash
+curl --get http://127.0.0.1:8000/api/v1/search \
+  --header "Authorization: Bearer csvr_read_REPLACE_ME" \
+  --data-urlencode "q=authentication failure" \
+  --data-urlencode "limit=20"
+```
+
+Optional filters are `project_id`, `host`, `from`, and `to`. Timestamps use ISO 8601. When more results exist, pass the returned `next_cursor` value as the `cursor` query parameter. Search responses contain plain-text snippets and relative links to the matching turn.
+
+Natural project-history questions are also accepted, for example `q=what was the last thing we were going to do on the hws project` or `q=what issues remain on the hws project`. The response's `retrieval` object reports the detected intent, resolved project, and whether results came from strict matching, relaxed matching, or the recent project-history fallback. This stage returns evidence candidates; it does not yet reconcile them into a synthesized answer.
+
+When browser authentication is disabled for a trusted local install, the endpoint follows the rest of the app and does not require a token.
+
 ## Docker
 
 `docker compose up --build -d` is intentionally configured for remote-server mode.

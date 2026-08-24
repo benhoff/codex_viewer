@@ -1,0 +1,95 @@
+{
+  "projects": [
+    {
+      "id": "hws-project",
+      "key": "acme/hws",
+      "label": "acme/hws",
+      "visibility": "authenticated",
+      "host": "hws-host",
+      "turns": [
+        {
+          "session_id": "hws-plan-1",
+          "turn_number": 1,
+          "timestamp": "2026-08-18T09:00:00+00:00",
+          "prompt": "Review the HWS API backlog.",
+          "response": "Open issues: API tokens have no owner, pagination has no stable contract. Next step: add user-linked token storage.",
+          "activity": ""
+        },
+        {
+          "session_id": "hws-plan-2",
+          "turn_number": 1,
+          "timestamp": "2026-08-19T10:00:00+00:00",
+          "prompt": "Implement token ownership for HWS.",
+          "response": "User-linked token storage is complete, resolving the token ownership issue. Next step: enforce project ACL filtering.",
+          "activity": ""
+        },
+        {
+          "session_id": "hws-plan-3",
+          "turn_number": 1,
+          "timestamp": "2026-08-20T11:00:00+00:00",
+          "prompt": "Verify HWS project ACL filtering.",
+          "response": "ACL filtering works, but disabled-user tokens still authenticate. Pagination remains unresolved. Next step: reject disabled token owners.",
+          "activity": ""
+        },
+        {
+          "session_id": "hws-plan-4",
+          "turn_number": 1,
+          "timestamp": "2026-08-21T12:00:00+00:00",
+          "prompt": "Fix disabled-user token authentication.",
+          "response": "The disabled-user token regression is resolved. We were going to build the JSON route next.",
+          "activity": ""
+        },
+        {
+          "session_id": "hws-plan-5",
+          "turn_number": 1,
+          "timestamp": "2026-08-22T13:00:00+00:00",
+          "prompt": "Reconsider the HWS JSON route plan.",
+          "response": "The direct JSON-route plan is superseded. Next step: extract a raw search service before exposing the API. Pagination remains open.",
+          "activity": "tailmarkerzanzibar",
+          "legacy_search_capped": true
+        }
+      ]
+    },
+    {
+      "id": "hws-archive-project",
+      "key": "acme/hws-archive",
+      "label": "acme/hws-archive",
+      "visibility": "authenticated",
+      "host": "archive-host",
+      "turns": [
+        {
+          "session_id": "hws-archive-1",
+          "turn_number": 1,
+          "timestamp": "2026-08-17T08:00:00+00:00",
+          "prompt": "Archive the old HWS prototype.",
+          "response": "No active work remains in the archived prototype.",
+          "activity": ""
+        }
+      ]
+    },
+    {
+      "id": "hws-private-project",
+      "key": "acme/hws-secret",
+      "label": "acme/hws-secret",
+      "visibility": "private",
+      "host": "secret-host",
+      "turns": [
+        {
+          "session_id": "hws-secret-1",
+          "turn_number": 1,
+          "timestamp": "2026-08-23T14:00:00+00:00",
+          "prompt": "Review the confidential HWS launch blocker.",
+          "response": "Private launch credentials remain unresolved.",
+          "activity": ""
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "latest_next_step_source": "hws-plan-5",
+    "remaining_issue_sources": ["hws-plan-3", "hws-plan-5"],
+    "resolved_issue_sources": ["hws-plan-2", "hws-plan-4"],
+    "late_marker_source": "hws-plan-5",
+    "ambiguous_project_keys": ["acme/hws", "acme/hws-archive", "acme/hws-secret"]
+  }
+}
