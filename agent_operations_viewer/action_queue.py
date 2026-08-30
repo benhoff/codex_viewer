@@ -146,6 +146,86 @@ def replace_session_action_queue_rollups(
     )
 
 
+def replace_session_action_queue_suffix(
+    connection: sqlite3.Connection,
+    session_id: str,
+    events: Sequence[sqlite3.Row | dict[str, Any] | object],
+    *,
+    start_turn_number: int,
+) -> None:
+    """Rematerialize action signals only for the open/new turn suffix."""
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_session_id:
+        return
+    normalized_start = max(1, int(start_turn_number or 1))
+    session_row = _fetch_action_queue_session_rows(connection, [normalized_session_id]).get(
+        normalized_session_id
+    )
+    connection.execute(
+        "DELETE FROM action_queue_signals WHERE session_id = ? AND turn_number >= ?",
+        (normalized_session_id, normalized_start),
+    )
+    connection.execute(
+        "DELETE FROM action_queue_verification_successes WHERE session_id = ? AND turn_number >= ?",
+        (normalized_session_id, normalized_start),
+    )
+    if session_row is None:
+        return
+
+    turns = build_turns(
+        _normalize_action_queue_events(events),
+        cwd=_normalized_string(_row_value(session_row, "cwd")) or None,
+    )
+    for turn in turns:
+        turn["number"] = int(turn.get("number") or 0) + normalized_start - 1
+    issues = _extract_turn_issues(
+        row=session_row,
+        project=_materialization_project_fields(session_row),
+        turns=turns,
+        verification_successes=_empty_verification_success_markers(),
+        apply_verification_clears=False,
+    )
+    signal_inserts = _materialized_signal_inserts(normalized_session_id, issues)
+    if signal_inserts:
+        connection.executemany(
+            """
+            INSERT INTO action_queue_signals (
+                session_id,
+                turn_number,
+                issue_kind,
+                signature,
+                timestamp,
+                severity,
+                noise_penalty,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            signal_inserts,
+        )
+    success_inserts = _materialized_verification_success_inserts(
+        normalized_session_id,
+        turns,
+        session_row,
+    )
+    if success_inserts:
+        connection.executemany(
+            """
+            INSERT INTO action_queue_verification_successes (
+                session_id,
+                turn_number,
+                timestamp,
+                labels_json,
+                files_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            success_inserts,
+        )
+    connection.execute(
+        "UPDATE sessions SET action_queue_rollup_version = ? WHERE id = ?",
+        (ACTION_QUEUE_ROLLUP_VERSION, normalized_session_id),
+    )
+
+
 def backfill_action_queue_rollups(connection: sqlite3.Connection) -> int:
     stale_rows = connection.execute(
         """

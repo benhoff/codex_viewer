@@ -832,6 +832,58 @@ def replace_session_environment_rollups(
     )
 
 
+def append_session_environment_rollups(
+    connection: sqlite3.Connection,
+    session_id: str,
+    events: Sequence[sqlite3.Row | dict[str, Any] | object],
+) -> None:
+    """Append observations for new events without rescanning prior events."""
+    normalized_session_id = _normalized_string(session_id)
+    if not normalized_session_id:
+        return
+    session_row = _fetch_environment_session_rows(connection, [normalized_session_id]).get(
+        normalized_session_id
+    )
+    if session_row is None:
+        return
+
+    source_host = trimmed(session_row["source_host"]) or "unknown-host"
+    project_key = trimmed(session_row["inferred_project_key"]) or ""
+    project_label = _materialized_project_label(session_row)
+    title = _materialized_session_title(session_row)
+    connection.execute(
+        """
+        UPDATE environment_command_observations
+        SET
+            source_host = ?,
+            inferred_project_key = ?,
+            project_label = ?,
+            title = ?
+        WHERE session_id = ?
+        """,
+        (source_host, project_key, project_label, title, normalized_session_id),
+    )
+
+    inserts = _materialized_observation_inserts(
+        session_row,
+        _normalize_environment_events(events),
+    )
+    if inserts:
+        connection.executemany(
+            f"""
+            INSERT OR REPLACE INTO environment_command_observations (
+                {_materialized_observation_columns()}
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            inserts,
+        )
+    _rebuild_host_capability_rollups(connection, [source_host])
+    connection.execute(
+        "UPDATE sessions SET environment_rollup_version = ? WHERE id = ?",
+        (ENVIRONMENT_ROLLUP_VERSION, normalized_session_id),
+    )
+
+
 def backfill_environment_rollups(connection: sqlite3.Connection) -> int:
     stale_rows = connection.execute(
         """

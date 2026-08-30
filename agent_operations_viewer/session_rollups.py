@@ -309,6 +309,62 @@ def replace_session_turn_activity_daily(
     )
 
 
+def append_session_turn_activity_daily(
+    connection: sqlite3.Connection,
+    session_id: str,
+    turns: Sequence[dict[str, Any]],
+    *,
+    first_new_event_index: int,
+) -> None:
+    """Add activity for newly created turns while preserving prior days."""
+    by_date: dict[str, dict[str, Any]] = {}
+    for turn in turns:
+        if int(turn.get("start_event_index") or 0) < first_new_event_index:
+            continue
+        timestamp = str(turn.get("prompt_timestamp") or "").strip()
+        parsed = _parse_timestamp(timestamp)
+        if parsed is None:
+            continue
+        activity_date = parsed.date().isoformat()
+        item = by_date.setdefault(
+            activity_date,
+            {"turn_count": 0, "latest_timestamp": None, "latest_dt": None},
+        )
+        item["turn_count"] = int(item["turn_count"]) + 1
+        if item["latest_dt"] is None or parsed > item["latest_dt"]:
+            item["latest_dt"] = parsed
+            item["latest_timestamp"] = timestamp
+
+    for activity_date, item in by_date.items():
+        connection.execute(
+            """
+            INSERT INTO session_turn_activity_daily (
+                session_id,
+                activity_date,
+                turn_count,
+                latest_timestamp
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(session_id, activity_date) DO UPDATE SET
+                turn_count = session_turn_activity_daily.turn_count + excluded.turn_count,
+                latest_timestamp = CASE
+                    WHEN COALESCE(excluded.latest_timestamp, '') > COALESCE(session_turn_activity_daily.latest_timestamp, '')
+                    THEN excluded.latest_timestamp
+                    ELSE session_turn_activity_daily.latest_timestamp
+                END
+            """,
+            (
+                session_id,
+                activity_date,
+                int(item["turn_count"]),
+                item["latest_timestamp"],
+            ),
+        )
+    connection.execute(
+        "UPDATE sessions SET turn_activity_rollup_version = ? WHERE id = ?",
+        (TURN_ACTIVITY_ROLLUP_VERSION, session_id),
+    )
+
+
 def backfill_session_turn_activity_daily(connection: sqlite3.Connection) -> int:
     stale_rows = connection.execute(
         """

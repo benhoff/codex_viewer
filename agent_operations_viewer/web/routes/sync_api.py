@@ -12,9 +12,19 @@ from ...agents import (
     upsert_remote_agent_status,
 )
 from ...alerts import reconcile_remote_alerts_for_host
+from ...config import Settings
 from ...db import connect, write_transaction
-from ...importer import fetch_host_sync_manifest, upsert_parsed_session
-from ...session_parsing import parse_session_text, parsed_session_from_payload
+from ...importer import (
+    append_parsed_session_tail,
+    fetch_host_sync_manifest,
+    upsert_parsed_session,
+)
+from ...session_parsing import (
+    parse_codex_session_tail_events,
+    parse_session_text,
+    parsed_session_from_payload,
+    session_content_sha256,
+)
 from ...onboarding import (
     reconcile_onboarding_state,
     record_first_heartbeat,
@@ -25,8 +35,10 @@ from ...session_artifacts import (
     load_session_artifact_text,
     prune_orphaned_session_artifacts,
     store_session_artifact,
+    utc_now_iso,
 )
 from ..auth import require_sync_api_auth
+from ..concurrency import run_in_history_threadpool as run_in_threadpool
 from ..context import get_settings
 
 
@@ -41,6 +53,10 @@ async def _read_json_request_payload(request: Request) -> object:
         raise HTTPException(status_code=400, detail="Unable to read request body") from exc
 
     content_encoding = request.headers.get("content-encoding", "").strip().lower()
+    return await run_in_threadpool(_decode_json_request_body, body, content_encoding)
+
+
+def _decode_json_request_body(body: bytes, content_encoding: str) -> object:
     if content_encoding == "gzip":
         try:
             body = gzip.decompress(body)
@@ -56,7 +72,7 @@ async def _read_json_request_payload(request: Request) -> object:
 
 
 @router.get("/api/health")
-def health(request: Request) -> dict[str, str]:
+async def health(request: Request) -> dict[str, str]:
     settings = get_settings(request)
     return {
         "status": "ok",
@@ -70,51 +86,40 @@ def health(request: Request) -> dict[str, str]:
 async def sync_manifest(request: Request, host: str = Query(...)) -> JSONResponse:
     await require_sync_api_auth(request)
     settings = get_settings(request)
+    return JSONResponse(await run_in_threadpool(_build_sync_manifest, settings, host, False))
+
+
+def _build_sync_manifest(settings: Settings, host: str, protocol_v2: bool) -> dict[str, object]:
     with connect(settings.database_path) as connection:
         sessions = fetch_host_sync_manifest(connection, host)
         ignored_keys = sorted(ignored_project_keys(connection))
         actions = fetch_pending_remote_actions(connection, host)
-    return JSONResponse(
-        {
-            "host": host,
-            "sessions": sessions,
-            "ignored_project_keys": ignored_keys,
-            "actions": actions,
-            "server": {
-                "app_version": settings.app_version,
-                "sync_api_version": settings.sync_api_version,
-                "expected_agent_version": settings.expected_agent_version,
-            },
-        }
-    )
+    if protocol_v2:
+        for session in sessions:
+            session["accepted_size"] = int(session.get("file_size") or 0)
+            session["accepted_event_count"] = int(session.get("event_count") or 0)
+            session["append_supported"] = bool(session.get("has_raw_artifact"))
+    result: dict[str, object] = {
+        "host": host,
+        "sessions": sessions,
+        "ignored_project_keys": ignored_keys,
+        "actions": actions,
+        "server": {
+            "app_version": settings.app_version,
+            "sync_api_version": settings.sync_api_version,
+            "expected_agent_version": settings.expected_agent_version,
+        },
+    }
+    if protocol_v2:
+        result["protocol"] = "manifest-v2"
+    return result
 
 
 @router.get("/api/sync/manifest-v2")
 async def sync_manifest_v2(request: Request, host: str = Query(...)) -> JSONResponse:
     await require_sync_api_auth(request)
     settings = get_settings(request)
-    with connect(settings.database_path) as connection:
-        sessions = fetch_host_sync_manifest(connection, host)
-        ignored_keys = sorted(ignored_project_keys(connection))
-        actions = fetch_pending_remote_actions(connection, host)
-    for session in sessions:
-        session["accepted_size"] = int(session.get("file_size") or 0)
-        session["accepted_event_count"] = int(session.get("event_count") or 0)
-        session["append_supported"] = bool(session.get("has_raw_artifact"))
-    return JSONResponse(
-        {
-            "host": host,
-            "protocol": "manifest-v2",
-            "sessions": sessions,
-            "ignored_project_keys": ignored_keys,
-            "actions": actions,
-            "server": {
-                "app_version": settings.app_version,
-                "sync_api_version": settings.sync_api_version,
-                "expected_agent_version": settings.expected_agent_version,
-            },
-        }
-    )
+    return JSONResponse(await run_in_threadpool(_build_sync_manifest, settings, host, True))
 
 
 @router.post("/api/sync/heartbeat")
@@ -129,6 +134,21 @@ async def sync_heartbeat(request: Request) -> JSONResponse:
     if not source_host:
         raise HTTPException(status_code=400, detail="Heartbeat payload is missing source_host")
 
+    return JSONResponse(
+        await run_in_threadpool(
+            _process_sync_heartbeat,
+            settings,
+            payload,
+            source_host,
+        )
+    )
+
+
+def _process_sync_heartbeat(
+    settings: Settings,
+    payload: dict[str, object],
+    source_host: str,
+) -> dict[str, object]:
     with connect(settings.database_path) as connection:
         with write_transaction(connection):
             upsert_remote_agent_status(
@@ -158,7 +178,7 @@ async def sync_heartbeat(request: Request) -> JSONResponse:
                 seen_at=str(payload.get("last_seen_at") or "") or None,
             )
             reconcile_onboarding_state(connection, settings)
-    return JSONResponse({"status": "ok", "source_host": source_host})
+    return {"status": "ok", "source_host": source_host}
 
 
 @router.post("/api/sync/session")
@@ -168,6 +188,13 @@ async def sync_session(request: Request) -> JSONResponse:
     payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Sync payload must be an object")
+    return JSONResponse(await run_in_threadpool(_process_sync_session, settings, payload))
+
+
+def _process_sync_session(
+    settings: Settings,
+    payload: dict[str, object],
+) -> dict[str, object]:
     try:
         parsed = parsed_session_from_payload(payload)
     except ValueError as exc:
@@ -176,14 +203,12 @@ async def sync_session(request: Request) -> JSONResponse:
     with connect(settings.database_path) as connection:
         with write_transaction(connection):
             if parsed.inferred_project_key in ignored_project_keys(connection):
-                return JSONResponse(
-                    {
-                        "status": "ignored",
-                        "session_id": parsed.session_id,
-                        "source_host": parsed.source_host,
-                        "inferred_project_key": parsed.inferred_project_key,
-                    }
-                )
+                return {
+                    "status": "ignored",
+                    "session_id": parsed.session_id,
+                    "source_host": parsed.source_host,
+                    "inferred_project_key": parsed.inferred_project_key,
+                }
             upsert_parsed_session(connection, parsed)
             sync_project_registry(connection)
             record_first_session_ingested(
@@ -195,15 +220,13 @@ async def sync_session(request: Request) -> JSONResponse:
 
     prune_orphaned_session_artifacts(settings)
 
-    return JSONResponse(
-        {
-            "status": "ok",
-            "session_id": parsed.session_id,
-            "source_host": parsed.source_host,
-            "event_count": parsed.event_count,
-            "content_sha256": parsed.content_sha256,
-        }
-    )
+    return {
+        "status": "ok",
+        "session_id": parsed.session_id,
+        "source_host": parsed.source_host,
+        "event_count": parsed.event_count,
+        "content_sha256": parsed.content_sha256,
+    }
 
 
 @router.post("/api/sync/session-raw")
@@ -215,7 +238,22 @@ async def sync_session_raw(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Raw sync payload must be an object")
 
     header_host = request.headers.get("x-codex-viewer-host", "").strip()
+    result = await run_in_threadpool(
+        _process_raw_sync_session,
+        settings,
+        payload,
+        header_host=header_host,
+    )
+    result["mode"] = "raw"
+    return JSONResponse(result)
 
+
+def _process_raw_sync_session(
+    settings: Settings,
+    payload: dict[str, object],
+    *,
+    header_host: str,
+) -> dict[str, object]:
     parsed, raw_jsonl = _parse_raw_sync_payload(
         payload,
         header_host=header_host,
@@ -226,10 +264,7 @@ async def sync_session_raw(request: Request) -> JSONResponse:
             results = store_raw_sync_sessions_batch(connection, settings, [(parsed, raw_jsonl)])
 
     prune_orphaned_session_artifacts(settings)
-
-    result = results[0]
-    result["mode"] = "raw"
-    return JSONResponse(result)
+    return results[0]
 
 
 @router.post("/api/sync/sessions-raw")
@@ -250,6 +285,22 @@ async def sync_sessions_raw_batch(request: Request) -> JSONResponse:
         )
 
     header_host = request.headers.get("x-codex-viewer-host", "").strip()
+    return JSONResponse(
+        await run_in_threadpool(
+            _process_raw_sync_sessions_batch,
+            settings,
+            sessions,
+            header_host=header_host,
+        )
+    )
+
+
+def _process_raw_sync_sessions_batch(
+    settings: Settings,
+    sessions: list[object],
+    *,
+    header_host: str,
+) -> dict[str, object]:
     parsed_items = [_parse_raw_sync_payload(item, header_host=header_host) for item in sessions]
 
     with connect(settings.database_path) as connection:
@@ -258,14 +309,12 @@ async def sync_sessions_raw_batch(request: Request) -> JSONResponse:
 
     prune_orphaned_session_artifacts(settings)
 
-    return JSONResponse(
-        {
-            "status": "ok",
-            "mode": "raw_batch",
-            "results": results,
-            "processed_count": len(results),
-        }
-    )
+    return {
+        "status": "ok",
+        "mode": "raw_batch",
+        "results": results,
+        "processed_count": len(results),
+    }
 
 
 @router.post("/api/sync/session-tail")
@@ -278,12 +327,32 @@ async def sync_session_tail(request: Request) -> JSONResponse:
 
     header_host = request.headers.get("x-codex-viewer-host", "").strip()
 
-    with connect(settings.database_path) as connection:
-        with write_transaction(connection):
-            result = store_raw_sync_session_tail(connection, settings, payload, header_host=header_host)
-    prune_orphaned_session_artifacts(settings)
+    result = await run_in_threadpool(
+        _process_raw_sync_session_tail,
+        settings,
+        payload,
+        header_host=header_host,
+    )
     result["mode"] = "raw_tail"
     return JSONResponse(result)
+
+
+def _process_raw_sync_session_tail(
+    settings: Settings,
+    payload: dict[str, object],
+    *,
+    header_host: str,
+) -> dict[str, object]:
+    with connect(settings.database_path) as connection:
+        with write_transaction(connection):
+            result = store_raw_sync_session_tail(
+                connection,
+                settings,
+                payload,
+                header_host=header_host,
+            )
+    prune_orphaned_session_artifacts(settings)
+    return result
 
 
 def _parse_raw_sync_payload(
@@ -346,10 +415,15 @@ def store_raw_sync_session_tail(
         raise HTTPException(status_code=400, detail="Tail sync payload is missing base metadata")
     if not isinstance(file_size, int) or not isinstance(file_mtime_ns, int):
         raise HTTPException(status_code=400, detail="Tail sync payload is missing file metadata")
-
     existing = connection.execute(
         """
-        SELECT id, file_size, content_sha256, raw_artifact_sha256
+        SELECT
+            id,
+            file_size,
+            content_sha256,
+            raw_artifact_sha256,
+            raw_meta_json,
+            inferred_project_key
         FROM sessions
         WHERE source_host = ?
           AND source_path = ?
@@ -362,6 +436,8 @@ def store_raw_sync_session_tail(
         return {"status": "base_mismatch", "reason": "size-mismatch"}
     if str(existing["content_sha256"] or "") != base_content_sha256:
         return {"status": "base_mismatch", "reason": "content-hash-mismatch"}
+    if file_size != base_file_size + len(tail_jsonl.encode("utf-8")):
+        return {"status": "base_mismatch", "reason": "tail-size-mismatch"}
 
     artifact_sha256 = str(existing["raw_artifact_sha256"] or "").strip()
     if not artifact_sha256:
@@ -373,16 +449,65 @@ def store_raw_sync_session_tail(
         return {"status": "base_mismatch", "reason": "artifact-size-mismatch"}
 
     combined_raw_jsonl = base_raw_jsonl + tail_jsonl
-    parsed = parse_session_text(
+    try:
+        raw_meta = json.loads(str(existing["raw_meta_json"] or "{}"))
+    except json.JSONDecodeError:
+        raw_meta = {}
+    if isinstance(raw_meta, dict) and raw_meta.get("transcript_format") == "claude":
+        parsed = parse_session_text(
+            combined_raw_jsonl,
+            Path(source_path),
+            Path(source_root),
+            source_host,
+            file_size=file_size,
+            file_mtime_ns=file_mtime_ns,
+        )
+        result = store_raw_sync_sessions_batch(
+            connection,
+            settings,
+            [(parsed, combined_raw_jsonl)],
+        )[0]
+        result["incremental"] = False
+        return result
+
+    if str(existing["inferred_project_key"] or "") in ignored_project_keys(connection):
+        return {
+            "status": "ignored",
+            "session_id": str(existing["id"]),
+            "source_host": source_host,
+            "inferred_project_key": str(existing["inferred_project_key"] or ""),
+        }
+
+    tail_parse_jsonl = tail_jsonl
+    if base_raw_jsonl and not base_raw_jsonl.endswith(("\n", "\r")):
+        if tail_parse_jsonl.startswith("\r\n"):
+            tail_parse_jsonl = tail_parse_jsonl[2:]
+        elif tail_parse_jsonl.startswith(("\n", "\r")):
+            tail_parse_jsonl = tail_parse_jsonl[1:]
+    try:
+        tail_events = parse_codex_session_tail_events(
+            tail_parse_jsonl,
+            Path(source_path),
+            start_line_index=len(base_raw_jsonl.splitlines(keepends=True)),
+        )
+    except ValueError:
+        return {"status": "base_mismatch", "reason": "non-append-tail"}
+    combined_content_sha256 = session_content_sha256(combined_raw_jsonl)
+    combined_artifact_sha256 = store_session_artifact(
+        connection,
+        settings,
         combined_raw_jsonl,
-        Path(source_path),
-        Path(source_root),
-        source_host,
+    )
+    return append_parsed_session_tail(
+        connection,
+        session_id=str(existing["id"]),
+        events=tail_events,
         file_size=file_size,
         file_mtime_ns=file_mtime_ns,
+        content_sha256=combined_content_sha256,
+        raw_artifact_sha256=combined_artifact_sha256,
+        updated_at=utc_now_iso(),
     )
-    results = store_raw_sync_sessions_batch(connection, settings, [(parsed, combined_raw_jsonl)])
-    return results[0]
 
 
 def store_raw_sync_sessions_batch(

@@ -41,6 +41,10 @@ from agent_operations_viewer.web.routes.sync_api import (
     _read_json_request_payload,
     store_raw_sync_session_tail,
     store_raw_sync_sessions_batch,
+    sync_session,
+    sync_session_raw,
+    sync_session_tail,
+    sync_sessions_raw_batch,
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -1778,6 +1782,197 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(row["event_count"], 3)
         self.assertEqual(row["file_size"], len((base_raw_jsonl + tail_jsonl).encode("utf-8")))
 
+    def test_incremental_tail_matches_full_reimport_without_rewriting_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = Path("/tmp/incremental-equivalence.jsonl")
+            source_root = Path("/tmp")
+            base_raw_jsonl = make_raw_session_jsonl("incremental-equivalence")
+            tail_jsonl = "\n" + "\n".join(
+                json.dumps(record)
+                for record in (
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:20:00Z",
+                        "payload": {"type": "user_message", "message": "Run the incremental check."},
+                    },
+                    {
+                        "type": "response_item",
+                        "timestamp": "2026-04-20T03:20:01Z",
+                        "payload": {
+                            "type": "function_call",
+                            "name": "exec_command",
+                            "call_id": "incremental-call",
+                            "arguments": json.dumps({"cmd": "false"}),
+                        },
+                    },
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:20:02Z",
+                        "payload": {
+                            "type": "exec_command_end",
+                            "call_id": "incremental-call",
+                            "command": "false",
+                            "exit_code": 1,
+                            "aggregated_output": "incremental failure marker",
+                        },
+                    },
+                    {
+                        "type": "event_msg",
+                        "timestamp": "2026-04-20T03:20:03Z",
+                        "payload": {"type": "agent_message", "message": "Incremental result marker."},
+                    },
+                )
+            )
+            combined_raw_jsonl = base_raw_jsonl + tail_jsonl
+
+            incremental_settings = make_test_settings(
+                data_dir=Path(tmpdir) / "incremental",
+                session_roots=[source_root],
+            )
+            full_settings = make_test_settings(
+                data_dir=Path(tmpdir) / "full",
+                session_roots=[source_root],
+            )
+            incremental_settings.ensure_directories()
+            full_settings.ensure_directories()
+            init_db(incremental_settings.database_path)
+            init_db(full_settings.database_path)
+
+            base_parsed = parse_session_text(
+                base_raw_jsonl,
+                source_path,
+                source_root,
+                "remote-host",
+                file_size=len(base_raw_jsonl.encode("utf-8")),
+                file_mtime_ns=1,
+            )
+            with connect(incremental_settings.database_path) as connection:
+                with write_transaction(connection):
+                    store_raw_sync_sessions_batch(
+                        connection,
+                        incremental_settings,
+                        [(base_parsed, base_raw_jsonl)],
+                    )
+                original_event_ids = [
+                    int(row["id"])
+                    for row in connection.execute(
+                        "SELECT id FROM events WHERE session_id = ? ORDER BY event_index",
+                        ("incremental-equivalence",),
+                    ).fetchall()
+                ]
+                with write_transaction(connection):
+                    incremental_result = store_raw_sync_session_tail(
+                        connection,
+                        incremental_settings,
+                        {
+                            "source_host": "remote-host",
+                            "source_root": str(source_root),
+                            "source_path": str(source_path),
+                            "base_file_size": len(base_raw_jsonl.encode("utf-8")),
+                            "base_content_sha256": base_parsed.content_sha256,
+                            "file_size": len(combined_raw_jsonl.encode("utf-8")),
+                            "file_mtime_ns": 2,
+                            "tail_jsonl": tail_jsonl,
+                        },
+                    )
+                preserved_event_ids = [
+                    int(row["id"])
+                    for row in connection.execute(
+                        "SELECT id FROM events WHERE session_id = ? AND event_index < 3 ORDER BY event_index",
+                        ("incremental-equivalence",),
+                    ).fetchall()
+                ]
+
+            full_parsed = parse_session_text(
+                combined_raw_jsonl,
+                source_path,
+                source_root,
+                "remote-host",
+                file_size=len(combined_raw_jsonl.encode("utf-8")),
+                file_mtime_ns=2,
+            )
+            with connect(full_settings.database_path) as connection:
+                with write_transaction(connection):
+                    store_raw_sync_sessions_batch(
+                        connection,
+                        full_settings,
+                        [(full_parsed, combined_raw_jsonl)],
+                    )
+
+            def rows(database_path: Path, query: str) -> list[tuple[object, ...]]:
+                with connect(database_path) as connection:
+                    return [tuple(row) for row in connection.execute(query).fetchall()]
+
+            session_columns = """
+                SELECT file_size, file_mtime_ns, content_sha256, ended_at, summary,
+                       event_count, user_message_count, assistant_message_count,
+                       tool_call_count, turn_count, last_user_message,
+                       last_turn_timestamp, command_failure_count, aborted_turn_count,
+                       latest_input_tokens, latest_output_tokens, latest_total_tokens
+                FROM sessions ORDER BY id
+            """
+            event_columns = """
+                SELECT event_index, timestamp, record_type, payload_type, kind, role,
+                       title, display_text, detail_text, tool_name, call_id,
+                       command_text, exit_code, record_json
+                FROM events ORDER BY event_index
+            """
+            turn_columns = """
+                SELECT turn_number, start_event_index, end_event_index, prompt_excerpt,
+                       response_excerpt, response_state, command_count, failure_count
+                FROM session_turns ORDER BY turn_number
+            """
+            chunk_columns = """
+                SELECT turn_number, field, chunk_index, content_sha256
+                FROM session_search_chunks ORDER BY turn_number, field, chunk_index
+            """
+            turn_search_columns = """
+                SELECT project_text, prompt_text, response_text, event_text,
+                       session_id, turn_number
+                FROM session_turn_search ORDER BY CAST(turn_number AS INTEGER)
+            """
+            chunk_search_columns = """
+                SELECT content, project_text, session_id, turn_number, field
+                FROM session_search_chunk_fts
+                ORDER BY CAST(turn_number AS INTEGER), field, content
+            """
+            activity_columns = """
+                SELECT activity_date, turn_count, latest_timestamp
+                FROM session_turn_activity_daily ORDER BY activity_date
+            """
+            environment_columns = """
+                SELECT event_index, command_text, exit_code, binary, failure_status
+                FROM environment_command_observations ORDER BY event_index
+            """
+            action_columns = """
+                SELECT turn_number, issue_kind, signature, timestamp, severity,
+                       noise_penalty, payload_json
+                FROM action_queue_signals
+                ORDER BY turn_number, issue_kind, signature
+            """
+            comparisons = [
+                (
+                    rows(incremental_settings.database_path, query),
+                    rows(full_settings.database_path, query),
+                )
+                for query in (
+                    session_columns,
+                    event_columns,
+                    turn_columns,
+                    chunk_columns,
+                    turn_search_columns,
+                    chunk_search_columns,
+                    activity_columns,
+                    environment_columns,
+                    action_columns,
+                )
+            ]
+
+        self.assertTrue(incremental_result["incremental"])
+        self.assertEqual(preserved_event_ids, original_event_ids)
+        for incremental_rows, full_rows in comparisons:
+            self.assertEqual(incremental_rows, full_rows)
+
     def test_store_raw_sync_session_tail_reports_base_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             data_dir = Path(tmpdir) / "data"
@@ -1804,6 +1999,129 @@ class RolloutParsingTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "base_mismatch")
         self.assertEqual(result["reason"], "missing-session")
+
+    def test_sync_session_tail_delegates_processing_to_threadpool(self) -> None:
+        threadpool_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+
+        async def record_threadpool_call(
+            function: object,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            threadpool_calls.append((function, args, kwargs))
+            return {"status": "ok"}
+
+        async def exercise() -> None:
+            request = mock.Mock()
+            request.headers = {"x-codex-viewer-host": "remote-host"}
+            response = await sync_session_tail(request)
+            self.assertEqual(json.loads(response.body)["mode"], "raw_tail")
+
+        with (
+            mock.patch(
+                "agent_operations_viewer.web.routes.sync_api.require_sync_api_auth",
+                new=mock.AsyncMock(return_value={"auth_type": "test"}),
+            ),
+            mock.patch(
+                "agent_operations_viewer.web.routes.sync_api.get_settings",
+                return_value=object(),
+            ),
+            mock.patch(
+                "agent_operations_viewer.web.routes.sync_api._read_json_request_payload",
+                new=mock.AsyncMock(return_value={"tail_jsonl": "\n{}"}),
+            ),
+            mock.patch(
+                "agent_operations_viewer.web.routes.sync_api.run_in_threadpool",
+                new=record_threadpool_call,
+            ),
+        ):
+            asyncio.run(exercise())
+
+        self.assertEqual(len(threadpool_calls), 1)
+        function, args, kwargs = threadpool_calls[0]
+        self.assertEqual(function.__name__, "_process_raw_sync_session_tail")
+        self.assertEqual(args[1], {"tail_jsonl": "\n{}"})
+        self.assertEqual(kwargs, {"header_host": "remote-host"})
+
+    def test_request_json_decoding_runs_in_threadpool(self) -> None:
+        threadpool_calls: list[tuple[object, tuple[object, ...]]] = []
+
+        async def record_threadpool_call(function: object, *args: object, **kwargs: object) -> object:
+            threadpool_calls.append((function, args))
+            return {"decoded": True}
+
+        async def exercise() -> object:
+            request = mock.Mock()
+            request.body = mock.AsyncMock(return_value=b'{"decoded": true}')
+            request.headers = {"content-encoding": "identity"}
+            return await _read_json_request_payload(request)
+
+        with mock.patch(
+            "agent_operations_viewer.web.routes.sync_api.run_in_threadpool",
+            new=record_threadpool_call,
+        ):
+            result = asyncio.run(exercise())
+
+        self.assertEqual(result, {"decoded": True})
+        self.assertEqual(len(threadpool_calls), 1)
+        function, args = threadpool_calls[0]
+        self.assertEqual(function.__name__, "_decode_json_request_body")
+        self.assertEqual(args, (b'{"decoded": true}', "identity"))
+
+    def test_full_raw_sync_paths_delegate_processing_to_threadpool(self) -> None:
+        cases = (
+            (sync_session, {"session": {}}, "_process_sync_session"),
+            (sync_session_raw, {"raw_jsonl": "{}"}, "_process_raw_sync_session"),
+            (
+                sync_sessions_raw_batch,
+                {"sessions": [{"raw_jsonl": "{}"}]},
+                "_process_raw_sync_sessions_batch",
+            ),
+        )
+
+        for endpoint, payload, expected_function_name in cases:
+            with self.subTest(endpoint=endpoint.__name__):
+                threadpool_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+
+                async def record_threadpool_call(
+                    function: object,
+                    *args: object,
+                    **kwargs: object,
+                ) -> object:
+                    threadpool_calls.append((function, args, kwargs))
+                    if expected_function_name == "_process_raw_sync_sessions_batch":
+                        return {"status": "ok", "mode": "raw_batch", "results": [], "processed_count": 0}
+                    return {"status": "ok"}
+
+                async def exercise() -> None:
+                    request = mock.Mock()
+                    request.headers = {"x-codex-viewer-host": "remote-host"}
+                    response = await endpoint(request)
+                    self.assertEqual(json.loads(response.body)["status"], "ok")
+
+                with (
+                    mock.patch(
+                        "agent_operations_viewer.web.routes.sync_api.require_sync_api_auth",
+                        new=mock.AsyncMock(return_value={"auth_type": "test"}),
+                    ),
+                    mock.patch(
+                        "agent_operations_viewer.web.routes.sync_api.get_settings",
+                        return_value=object(),
+                    ),
+                    mock.patch(
+                        "agent_operations_viewer.web.routes.sync_api._read_json_request_payload",
+                        new=mock.AsyncMock(return_value=payload),
+                    ),
+                    mock.patch(
+                        "agent_operations_viewer.web.routes.sync_api.run_in_threadpool",
+                        new=record_threadpool_call,
+                    ),
+                ):
+                    asyncio.run(exercise())
+
+                self.assertEqual(len(threadpool_calls), 1)
+                function, _args, _kwargs = threadpool_calls[0]
+                self.assertEqual(function.__name__, expected_function_name)
 
     def test_sync_sessions_remote_batches_raw_uploads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

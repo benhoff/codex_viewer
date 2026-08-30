@@ -32,6 +32,7 @@ from ..search_api_tokens import (
     touch_search_api_token_usage,
 )
 from .context import get_settings, request_return_to
+from .concurrency import run_in_history_threadpool as run_in_threadpool
 
 
 PUBLIC_PATHS = {
@@ -75,6 +76,36 @@ async def require_sync_api_auth(request: Request) -> dict[str, object]:
     machine_nonce = request.headers.get(MACHINE_NONCE_HEADER, "").strip()
     machine_signature = request.headers.get(MACHINE_SIGNATURE_HEADER, "").strip()
     machine_body_sha256 = request.headers.get(MACHINE_BODY_SHA256_HEADER, "").strip()
+    return await run_in_threadpool(
+        _require_sync_api_auth,
+        settings,
+        bearer_token=bearer_token,
+        source_host=source_host,
+        raw_body=raw_body,
+        method=request.method,
+        path=path,
+        machine_id=machine_id,
+        machine_timestamp=machine_timestamp,
+        machine_nonce=machine_nonce,
+        machine_signature=machine_signature,
+        machine_body_sha256=machine_body_sha256,
+    )
+
+
+def _require_sync_api_auth(
+    settings: Settings,
+    *,
+    bearer_token: str | None,
+    source_host: str | None,
+    raw_body: bytes,
+    method: str,
+    path: str,
+    machine_id: str,
+    machine_timestamp: str,
+    machine_nonce: str,
+    machine_signature: str,
+    machine_body_sha256: str,
+) -> dict[str, object]:
     with connect(settings.database_path) as connection:
         if bearer_token:
             token_row = find_active_api_token(connection, bearer_token)
@@ -93,7 +124,7 @@ async def require_sync_api_auth(request: Request) -> dict[str, object]:
                 and verify_machine_request_signature(
                     public_key=str(machine_row["public_key"]),
                     machine_id=machine_id,
-                    method=request.method,
+                    method=method,
                     path=path,
                     raw_body=raw_body,
                     source_host=source_host,
@@ -303,6 +334,25 @@ def require_admin_user(request: Request) -> dict[str, object]:
     return user
 
 
+def _resolve_request_auth_state(
+    request: Request,
+    settings: Settings,
+) -> tuple[Any, dict[str, object] | None, str | None]:
+    with connect(settings.database_path) as connection:
+        auth_status = fetch_auth_status(connection)
+        user = proxy_auth_user(request, settings, connection) or session_auth_user(
+            request,
+            settings,
+            connection,
+        )
+        search_api_token_id = None
+        if user is None:
+            token_auth = search_api_token_user(request, connection)
+            if token_auth is not None:
+                user, search_api_token_id = token_auth
+    return auth_status, user, search_api_token_id
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: Any, *, settings: Settings) -> None:
         super().__init__(app)
@@ -322,13 +372,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         try:
-            with connect(settings.database_path) as connection:
-                auth_status = fetch_auth_status(connection)
-                user = proxy_auth_user(request, settings, connection) or session_auth_user(request, settings, connection)
-                if user is None:
-                    token_auth = search_api_token_user(request, connection)
-                    if token_auth is not None:
-                        user, request.state.search_api_token_id = token_auth
+            auth_status, user, request.state.search_api_token_id = await run_in_threadpool(
+                _resolve_request_auth_state,
+                request,
+                settings,
+            )
         except ValueError as exc:
             if wants_html_response(request):
                 return Response(content=str(exc), status_code=403)

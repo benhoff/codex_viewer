@@ -1903,6 +1903,48 @@ def parse_session_text(
     )
 
 
+def session_content_sha256(raw_jsonl: str) -> str:
+    """Return the canonical content digest used by parsed sessions.
+
+    The digest deliberately follows the parser's existing normalization rules
+    rather than hashing the artifact bytes directly.  Tail ingestion can use
+    this without decoding and normalizing every historical JSON record again.
+    """
+    content_hash = hashlib.sha256()
+    for index, line in enumerate(raw_jsonl.splitlines(keepends=True)):
+        normalized_line = normalize_jsonl_line(line, index + 1)
+        if normalized_line is not None:
+            content_hash.update(normalized_line.encode("utf-8"))
+    return content_hash.hexdigest()
+
+
+def parse_codex_session_tail_events(
+    tail_jsonl: str,
+    source_path: Path,
+    *,
+    start_line_index: int,
+) -> list[NormalizedEvent]:
+    """Parse only appended Codex JSONL records with stable full-file indexes."""
+    events: list[NormalizedEvent] = []
+    for offset, line in enumerate(tail_jsonl.splitlines(keepends=True)):
+        event_index = start_line_index + offset
+        line_number = event_index + 1
+        normalized_line = normalize_jsonl_line(line, line_number)
+        if normalized_line is None:
+            continue
+        record = _parse_json_record(normalized_line, source_path, line_number=line_number)
+        if record.get("type") == "session_meta":
+            raise SessionParseError(
+                source_path,
+                "appended data unexpectedly contained session metadata",
+                line_number=line_number,
+            )
+        normalized = normalize_event(record, event_index)
+        if normalized is not None:
+            events.append(normalized)
+    return events
+
+
 def iter_session_files(roots: Iterable[Path]) -> Iterable[tuple[Path, Path]]:
     for root in roots:
         expanded_root = root.expanduser()

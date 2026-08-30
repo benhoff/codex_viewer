@@ -19,6 +19,7 @@ from agent_operations_viewer.search_query import (
     SEARCH_INTENT_RESOLVED_ISSUES,
     plan_search_query,
 )
+from agent_operations_viewer.turn_index import TURN_INDEX_VERSION, TURN_SEARCH_VERSION
 
 
 NOW = "2026-08-23T12:00:00+00:00"
@@ -74,12 +75,14 @@ def insert_search_turn(
             inferred_project_key,
             inferred_project_label,
             summary,
+            turn_index_version,
+            turn_search_version,
             import_warning,
             search_text,
             raw_meta_json,
             imported_at,
             updated_at
-        ) VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 'project', ?, ?, ?, ?, ?, '{}', ?, ?)
+        ) VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 'project', ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)
         """,
         (
             session_id,
@@ -93,6 +96,8 @@ def insert_search_turn(
             project_key,
             project_label,
             prompt or response or session_id,
+            TURN_INDEX_VERSION,
+            TURN_SEARCH_VERSION,
             import_warning,
             "x" * 200_000 if import_warning else "",
             NOW,

@@ -1543,7 +1543,37 @@ def ensure_auth_state_row(connection: sqlite3.Connection) -> None:
         )
 
 
-def init_db(database_path: Path) -> None:
+def run_db_backfills(database_path: Path) -> None:
+    """Bring derived session data up to date without gating schema readiness."""
+    with connect(database_path) as connection:
+        with write_transaction(connection):
+            backfill_session_agent_metadata(connection)
+            backfill_session_rollups(connection)
+            backfill_session_turn_activity_daily(connection)
+            backfill_session_turns(connection)
+            backfill_session_turn_search(connection)
+            from .action_queue import backfill_action_queue_rollups
+
+            backfill_action_queue_rollups(connection)
+            from .environment_audit import backfill_environment_rollups
+
+            backfill_environment_rollups(connection)
+            from .projects import project_registry_needs_sync, sync_project_registry
+
+            if project_registry_needs_sync(connection):
+                sync_project_registry(connection)
+
+        while True:
+            with write_transaction(connection):
+                indexed_count = backfill_session_search_chunks(
+                    connection,
+                    batch_size=50,
+                )
+            if indexed_count < 50:
+                break
+
+
+def init_db(database_path: Path, *, defer_backfills: bool = False) -> None:
     with connect(database_path) as connection:
         connection.execute("PRAGMA foreign_keys = OFF")
         with write_transaction(connection):
@@ -1581,27 +1611,7 @@ def init_db(database_path: Path) -> None:
             ensure_auth_state_row(connection)
             ensure_onboarding_state_row(connection)
             connection.executescript(INDEX_SQL)
-            backfill_session_agent_metadata(connection)
-            backfill_session_rollups(connection)
-            backfill_session_turn_activity_daily(connection)
-            backfill_session_turns(connection)
-            backfill_session_turn_search(connection)
-            from .action_queue import backfill_action_queue_rollups
-
-            backfill_action_queue_rollups(connection)
-            from .environment_audit import backfill_environment_rollups
-
-            backfill_environment_rollups(connection)
-            from .projects import project_registry_needs_sync, sync_project_registry
-
-            if project_registry_needs_sync(connection):
-                sync_project_registry(connection)
         connection.execute("PRAGMA foreign_keys = ON")
-        while True:
-            with write_transaction(connection):
-                indexed_count = backfill_session_search_chunks(
-                    connection,
-                    batch_size=50,
-                )
-            if indexed_count < 50:
-                break
+
+    if not defer_backfills:
+        run_db_backfills(database_path)

@@ -13,7 +13,7 @@ from .session_artifacts import (
     read_session_source_text,
     store_session_artifact,
 )
-from .session_insights import AGENT_METADATA_VERSION
+from .session_insights import AGENT_METADATA_VERSION, compute_usage_rollup
 from .session_parsing import (
     NormalizedEvent,
     ParsedSession,
@@ -38,14 +38,60 @@ from .session_parsing import (
     summarize_tool_call_input,
     summarize_web_search_action,
 )
-from .session_rollups import replace_session_turn_activity_daily
+from .session_rollups import (
+    ROLLUP_VERSION,
+    append_session_turn_activity_daily,
+    replace_session_turn_activity_daily,
+)
+from .session_status import terminal_turn_summary
+from .text_utils import shorten, strip_codex_wrappers
 from .turn_index import (
     replace_session_search_chunks,
+    replace_session_turn_suffix,
     replace_session_turn_search,
     replace_session_turns,
 )
 
 logger = logging.getLogger("agent_operations_viewer.importer")
+
+
+def _insert_session_events(
+    connection: sqlite3.Connection,
+    session_id: str,
+    events: list[NormalizedEvent],
+) -> None:
+    if not events:
+        return
+    connection.executemany(
+        """
+        INSERT INTO events (
+            session_id, event_index, timestamp, record_type, payload_type,
+            kind, role, title, display_text, detail_text, tool_name,
+            call_id, command_text, exit_code, record_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                session_id,
+                event.event_index,
+                event.timestamp,
+                event.record_type,
+                event.payload_type,
+                event.kind,
+                event.role,
+                event.title,
+                event.display_text,
+                event.detail_text,
+                event.tool_name,
+                event.call_id,
+                event.command_text,
+                event.exit_code,
+                event.record_json,
+            )
+            for event in events
+        ],
+    )
+
 
 def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession) -> None:
     existing_by_path = connection.execute(
@@ -220,35 +266,7 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
             f"UPDATE sessions SET {update_assignments_sql} WHERE id = ?",
             session_values[1:] + (parsed.session_id,),
         )
-    connection.executemany(
-        """
-        INSERT INTO events (
-            session_id, event_index, timestamp, record_type, payload_type,
-            kind, role, title, display_text, detail_text, tool_name,
-            call_id, command_text, exit_code, record_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (
-                parsed.session_id,
-                event.event_index,
-                event.timestamp,
-                event.record_type,
-                event.payload_type,
-                event.kind,
-                event.role,
-                event.title,
-                event.display_text,
-                event.detail_text,
-                event.tool_name,
-                event.call_id,
-                event.command_text,
-                event.exit_code,
-                event.record_json,
-            )
-            for event in parsed.events
-        ],
-    )
+    _insert_session_events(connection, parsed.session_id, parsed.events)
     replace_session_turn_activity_daily(connection, parsed.session_id, parsed.events)
     replace_session_turns(connection, parsed.session_id, parsed.events)
     replace_session_turn_search(connection, parsed.session_id, parsed.events)
@@ -258,6 +276,298 @@ def upsert_parsed_session(connection: sqlite3.Connection, parsed: ParsedSession)
 
     replace_session_action_queue_rollups(connection, parsed.session_id, parsed.events)
     replace_session_environment_rollups(connection, parsed.session_id, parsed.events)
+
+
+def append_parsed_session_tail(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    events: list[NormalizedEvent],
+    file_size: int,
+    file_mtime_ns: int,
+    content_sha256: str,
+    raw_artifact_sha256: str,
+    updated_at: str,
+) -> dict[str, object]:
+    """Persist an append-only Codex tail without replacing historical rows."""
+    existing = connection.execute(
+        "SELECT * FROM sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+    if existing is None:
+        raise ValueError(f"Session {session_id} disappeared during tail sync")
+
+    last_turn = connection.execute(
+        """
+        SELECT turn_number, start_event_index
+        FROM session_turns
+        WHERE session_id = ?
+        ORDER BY turn_number DESC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    had_event_msg_user_turns = bool(
+        connection.execute(
+            """
+            SELECT EXISTS(
+                SELECT 1
+                FROM events
+                WHERE session_id = ?
+                  AND record_type = 'event_msg'
+                  AND payload_type = 'user_message'
+            )
+            """,
+            (session_id,),
+        ).fetchone()[0]
+    )
+    introduces_event_msg_user_turns = any(
+        event.record_type == "event_msg" and event.payload_type == "user_message"
+        for event in events
+    )
+    rebuild_all_turns = not had_event_msg_user_turns and introduces_event_msg_user_turns
+    start_turn_number = (
+        1
+        if rebuild_all_turns or last_turn is None
+        else int(last_turn["turn_number"])
+    )
+    suffix_event_index = (
+        0
+        if rebuild_all_turns or last_turn is None
+        else int(last_turn["start_event_index"])
+    )
+    first_new_event_index = min(
+        (event.event_index for event in events),
+        default=int(existing["event_count"] or 0),
+    )
+
+    _insert_session_events(connection, session_id, events)
+    suffix_events = connection.execute(
+        """
+        SELECT
+            session_id,
+            event_index,
+            timestamp,
+            record_type,
+            payload_type,
+            kind,
+            role,
+            title,
+            display_text,
+            detail_text,
+            tool_name,
+            call_id,
+            command_text,
+            exit_code,
+            record_json
+        FROM events
+        WHERE session_id = ? AND event_index >= ?
+        ORDER BY event_index ASC
+        """,
+        (session_id, suffix_event_index),
+    ).fetchall()
+    turn_rows = replace_session_turn_suffix(
+        connection,
+        session_id,
+        suffix_events,
+        start_turn_number=start_turn_number,
+    )
+
+    event_msg_user_count = sum(
+        1
+        for event in events
+        if event.kind == "message"
+        and event.role == "user"
+        and event.record_type == "event_msg"
+        and bool(strip_codex_wrappers(event.display_text).strip())
+    )
+    fallback_user_count = (
+        1
+        if int(existing["user_message_count"] or 0) == 0
+        and event_msg_user_count == 0
+        and any(
+            event.kind == "message"
+            and event.role == "user"
+            and bool(strip_codex_wrappers(event.display_text).strip())
+            for event in events
+        )
+        else 0
+    )
+    new_user_count = event_msg_user_count + fallback_user_count
+    new_assistant_count = sum(
+        1
+        for event in events
+        if event.kind == "message" and event.role == "assistant" and bool(event.display_text)
+    )
+    new_tool_count = sum(1 for event in events if event.kind == "tool_call")
+    new_failure_count = sum(
+        1
+        for event in events
+        if event.kind == "command" and event.exit_code is not None and event.exit_code != 0
+    )
+    new_aborted_count = sum(
+        1
+        for event in events
+        if event.record_type == "event_msg" and event.payload_type == "turn_aborted"
+    )
+
+    turn_count = start_turn_number - 1 + len(turn_rows)
+    last_turn = turn_rows[-1] if turn_rows else None
+    last_user_message = str(existing["last_user_message"] or "")
+    last_turn_timestamp = existing["last_turn_timestamp"]
+    if last_turn is not None:
+        last_user_message = shorten(str(last_turn.get("prompt_text") or ""), 220)
+        last_turn_timestamp = last_turn.get("prompt_timestamp") or last_turn_timestamp
+    latest_turn_summary = terminal_turn_summary(suffix_events) or existing["latest_turn_summary"]
+
+    usage = compute_usage_rollup(events)
+    usage_values = {
+        key: existing[key]
+        for key in (
+            "latest_usage_timestamp",
+            "latest_input_tokens",
+            "latest_cached_input_tokens",
+            "latest_output_tokens",
+            "latest_reasoning_output_tokens",
+            "latest_total_tokens",
+            "latest_context_window",
+            "latest_context_remaining_percent",
+            "latest_primary_limit_used_percent",
+            "latest_primary_limit_resets_at",
+            "latest_secondary_limit_used_percent",
+            "latest_secondary_limit_resets_at",
+            "latest_rate_limit_name",
+            "latest_rate_limit_reached_type",
+        )
+    }
+    if usage["latest_usage_timestamp"] is not None:
+        usage_values.update(usage)
+
+    ended_at = next(
+        (event.timestamp for event in reversed(events) if event.timestamp),
+        existing["ended_at"],
+    )
+    search_text = str(existing["search_text"] or "")
+    appended_search = "\n".join(event.display_text for event in events if event.display_text)
+    if appended_search and len(search_text) < 200_000:
+        search_text = "\n".join(part for part in (search_text, appended_search) if part)
+    import_warning = existing["import_warning"]
+    if len(search_text) > 200_000:
+        search_text = search_text[:200_000]
+        import_warning = import_warning or "Search text truncated during import"
+
+    summary = str(existing["summary"] or "")
+    if int(existing["user_message_count"] or 0) == 0 and new_user_count and last_turn is not None:
+        summary = shorten(str(last_turn.get("prompt_text") or ""), 120)
+
+    connection.execute(
+        """
+        UPDATE sessions
+        SET
+            file_size = ?,
+            file_mtime_ns = ?,
+            content_sha256 = ?,
+            raw_artifact_sha256 = ?,
+            ended_at = ?,
+            summary = ?,
+            event_count = event_count + ?,
+            user_message_count = user_message_count + ?,
+            assistant_message_count = assistant_message_count + ?,
+            tool_call_count = tool_call_count + ?,
+            rollup_version = ?,
+            turn_count = ?,
+            last_user_message = ?,
+            last_turn_timestamp = ?,
+            latest_turn_summary = ?,
+            command_failure_count = command_failure_count + ?,
+            aborted_turn_count = aborted_turn_count + ?,
+            latest_usage_timestamp = ?,
+            latest_input_tokens = ?,
+            latest_cached_input_tokens = ?,
+            latest_output_tokens = ?,
+            latest_reasoning_output_tokens = ?,
+            latest_total_tokens = ?,
+            latest_context_window = ?,
+            latest_context_remaining_percent = ?,
+            latest_primary_limit_used_percent = ?,
+            latest_primary_limit_resets_at = ?,
+            latest_secondary_limit_used_percent = ?,
+            latest_secondary_limit_resets_at = ?,
+            latest_rate_limit_name = ?,
+            latest_rate_limit_reached_type = ?,
+            import_warning = ?,
+            search_text = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            file_size,
+            file_mtime_ns,
+            content_sha256,
+            raw_artifact_sha256,
+            ended_at,
+            summary,
+            len(events),
+            new_user_count,
+            new_assistant_count,
+            new_tool_count,
+            ROLLUP_VERSION,
+            turn_count,
+            last_user_message,
+            last_turn_timestamp,
+            latest_turn_summary,
+            new_failure_count,
+            new_aborted_count,
+            usage_values["latest_usage_timestamp"],
+            int(usage_values["latest_input_tokens"] or 0),
+            int(usage_values["latest_cached_input_tokens"] or 0),
+            int(usage_values["latest_output_tokens"] or 0),
+            int(usage_values["latest_reasoning_output_tokens"] or 0),
+            int(usage_values["latest_total_tokens"] or 0),
+            usage_values["latest_context_window"],
+            usage_values["latest_context_remaining_percent"],
+            usage_values["latest_primary_limit_used_percent"],
+            usage_values["latest_primary_limit_resets_at"],
+            usage_values["latest_secondary_limit_used_percent"],
+            usage_values["latest_secondary_limit_resets_at"],
+            usage_values["latest_rate_limit_name"],
+            usage_values["latest_rate_limit_reached_type"],
+            import_warning,
+            search_text,
+            updated_at,
+            session_id,
+        ),
+    )
+    if rebuild_all_turns:
+        replace_session_turn_activity_daily(connection, session_id, suffix_events)
+    else:
+        append_session_turn_activity_daily(
+            connection,
+            session_id,
+            turn_rows,
+            first_new_event_index=first_new_event_index,
+        )
+
+    from .action_queue import replace_session_action_queue_suffix
+    from .environment_audit import append_session_environment_rollups
+
+    replace_session_action_queue_suffix(
+        connection,
+        session_id,
+        suffix_events,
+        start_turn_number=start_turn_number,
+    )
+    append_session_environment_rollups(connection, session_id, events)
+    return {
+        "status": "ok",
+        "session_id": session_id,
+        "source_host": str(existing["source_host"] or ""),
+        "event_count": int(existing["event_count"] or 0) + len(events),
+        "content_sha256": content_sha256,
+        "incremental": True,
+        "appended_event_count": len(events),
+        "reindexed_turn_count": len(turn_rows),
+    }
 
 
 def fetch_host_sync_manifest(connection: sqlite3.Connection, source_host: str) -> list[dict[str, object]]:

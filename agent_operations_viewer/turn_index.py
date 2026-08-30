@@ -554,113 +554,7 @@ def replace_session_turns(
     connection.execute("DELETE FROM session_turns WHERE session_id = ?", (session_id,))
     connection.execute("DELETE FROM session_file_changes WHERE session_id = ?", (session_id,))
     rows = compute_session_turn_index(events)
-    if rows:
-        connection.executemany(
-            """
-            INSERT INTO session_turns (
-                session_id,
-                turn_number,
-                start_event_index,
-                end_event_index,
-                prompt_excerpt,
-                prompt_timestamp,
-                response_excerpt,
-                response_timestamp,
-                response_state,
-                latest_timestamp,
-                command_count,
-                patch_count,
-                failure_count,
-                files_touched_count,
-                latest_usage_timestamp,
-                latest_input_tokens,
-                latest_cached_input_tokens,
-                latest_output_tokens,
-                latest_reasoning_output_tokens,
-                latest_total_tokens,
-                latest_context_window,
-                latest_context_remaining_percent,
-                latest_primary_limit_used_percent,
-                latest_primary_limit_resets_at,
-                latest_secondary_limit_used_percent,
-                latest_secondary_limit_resets_at,
-                latest_rate_limit_name,
-                latest_rate_limit_reached_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    session_id,
-                    int(row["turn_number"]),
-                    int(row["start_event_index"]),
-                    int(row["end_event_index"]),
-                    str(row["prompt_excerpt"] or ""),
-                    row["prompt_timestamp"],
-                    str(row["response_excerpt"] or ""),
-                    row["response_timestamp"],
-                    str(row["response_state"] or "missing"),
-                    row["latest_timestamp"],
-                    int(row["command_count"] or 0),
-                    int(row["patch_count"] or 0),
-                    int(row["failure_count"] or 0),
-                    int(row["files_touched_count"] or 0),
-                    row["latest_usage_timestamp"],
-                    int(row["latest_input_tokens"] or 0),
-                    int(row["latest_cached_input_tokens"] or 0),
-                    int(row["latest_output_tokens"] or 0),
-                    int(row["latest_reasoning_output_tokens"] or 0),
-                    int(row["latest_total_tokens"] or 0),
-                    row["latest_context_window"],
-                    row["latest_context_remaining_percent"],
-                    row["latest_primary_limit_used_percent"],
-                    row["latest_primary_limit_resets_at"],
-                    row["latest_secondary_limit_used_percent"],
-                    row["latest_secondary_limit_resets_at"],
-                    row["latest_rate_limit_name"],
-                    row["latest_rate_limit_reached_type"],
-                )
-                for row in rows
-            ],
-        )
-        file_change_rows: list[tuple[Any, ...]] = []
-        for row in rows:
-            turn_number = int(row["turn_number"])
-            for change in row.get("file_changes", []):
-                if not isinstance(change, dict):
-                    continue
-                path = str(change.get("path") or "").strip()
-                if not path:
-                    continue
-                file_change_rows.append(
-                    (
-                        session_id,
-                        turn_number,
-                        int(change.get("event_index") or 0),
-                        path,
-                        str(change.get("operation") or "update").strip() or "update",
-                        int(change.get("additions") or 0),
-                        int(change.get("deletions") or 0),
-                        int(change.get("hunks") or 0),
-                        change.get("timestamp"),
-                    )
-                )
-        if file_change_rows:
-            connection.executemany(
-                """
-                INSERT OR REPLACE INTO session_file_changes (
-                    session_id,
-                    turn_number,
-                    event_index,
-                    path,
-                    operation,
-                    additions,
-                    deletions,
-                    hunks,
-                    timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                file_change_rows,
-            )
+    _insert_session_turn_rows(connection, session_id, rows)
     connection.execute(
         """
         UPDATE sessions
@@ -669,6 +563,121 @@ def replace_session_turns(
         """,
         (TURN_INDEX_VERSION, session_id),
     )
+
+
+def _insert_session_turn_rows(
+    connection: sqlite3.Connection,
+    session_id: str,
+    rows: Sequence[dict[str, Any]],
+) -> None:
+    if not rows:
+        return
+    connection.executemany(
+        """
+        INSERT INTO session_turns (
+            session_id,
+            turn_number,
+            start_event_index,
+            end_event_index,
+            prompt_excerpt,
+            prompt_timestamp,
+            response_excerpt,
+            response_timestamp,
+            response_state,
+            latest_timestamp,
+            command_count,
+            patch_count,
+            failure_count,
+            files_touched_count,
+            latest_usage_timestamp,
+            latest_input_tokens,
+            latest_cached_input_tokens,
+            latest_output_tokens,
+            latest_reasoning_output_tokens,
+            latest_total_tokens,
+            latest_context_window,
+            latest_context_remaining_percent,
+            latest_primary_limit_used_percent,
+            latest_primary_limit_resets_at,
+            latest_secondary_limit_used_percent,
+            latest_secondary_limit_resets_at,
+            latest_rate_limit_name,
+            latest_rate_limit_reached_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                session_id,
+                int(row["turn_number"]),
+                int(row["start_event_index"]),
+                int(row["end_event_index"]),
+                str(row["prompt_excerpt"] or ""),
+                row["prompt_timestamp"],
+                str(row["response_excerpt"] or ""),
+                row["response_timestamp"],
+                str(row["response_state"] or "missing"),
+                row["latest_timestamp"],
+                int(row["command_count"] or 0),
+                int(row["patch_count"] or 0),
+                int(row["failure_count"] or 0),
+                int(row["files_touched_count"] or 0),
+                row["latest_usage_timestamp"],
+                int(row["latest_input_tokens"] or 0),
+                int(row["latest_cached_input_tokens"] or 0),
+                int(row["latest_output_tokens"] or 0),
+                int(row["latest_reasoning_output_tokens"] or 0),
+                int(row["latest_total_tokens"] or 0),
+                row["latest_context_window"],
+                row["latest_context_remaining_percent"],
+                row["latest_primary_limit_used_percent"],
+                row["latest_primary_limit_resets_at"],
+                row["latest_secondary_limit_used_percent"],
+                row["latest_secondary_limit_resets_at"],
+                row["latest_rate_limit_name"],
+                row["latest_rate_limit_reached_type"],
+            )
+            for row in rows
+        ],
+    )
+    file_change_rows: list[tuple[Any, ...]] = []
+    for row in rows:
+        turn_number = int(row["turn_number"])
+        for change in row.get("file_changes", []):
+            if not isinstance(change, dict):
+                continue
+            path = str(change.get("path") or "").strip()
+            if not path:
+                continue
+            file_change_rows.append(
+                (
+                    session_id,
+                    turn_number,
+                    int(change.get("event_index") or 0),
+                    path,
+                    str(change.get("operation") or "update").strip() or "update",
+                    int(change.get("additions") or 0),
+                    int(change.get("deletions") or 0),
+                    int(change.get("hunks") or 0),
+                    change.get("timestamp"),
+                )
+            )
+    if file_change_rows:
+        connection.executemany(
+            """
+            INSERT OR REPLACE INTO session_file_changes (
+                session_id,
+                turn_number,
+                event_index,
+                path,
+                operation,
+                additions,
+                deletions,
+                hunks,
+                timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            file_change_rows,
+        )
 
 
 def backfill_session_turns(connection: sqlite3.Connection) -> int:
@@ -1213,6 +1222,152 @@ def replace_session_turn_search(
         "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
         (TURN_SEARCH_VERSION, normalized_session_id),
     )
+
+
+def replace_session_turn_suffix(
+    connection: sqlite3.Connection,
+    session_id: str,
+    events: Sequence[sqlite3.Row | dict[str, Any] | object],
+    *,
+    start_turn_number: int,
+) -> list[dict[str, Any]]:
+    """Replace only the open/new turn suffix after an append-only sync."""
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_session_id:
+        return []
+    normalized_start = max(1, int(start_turn_number or 1))
+    rows = compute_session_turn_index(events)
+    for row in rows:
+        row["turn_number"] = int(row["turn_number"]) + normalized_start - 1
+
+    suffix_params = (normalized_session_id, normalized_start)
+    connection.execute(
+        "DELETE FROM session_turn_search WHERE session_id = ? AND CAST(turn_number AS INTEGER) >= ?",
+        suffix_params,
+    )
+    connection.execute(
+        "DELETE FROM session_search_chunk_fts WHERE session_id = ? AND CAST(turn_number AS INTEGER) >= ?",
+        suffix_params,
+    )
+    connection.execute(
+        "DELETE FROM session_search_chunks WHERE session_id = ? AND turn_number >= ?",
+        suffix_params,
+    )
+    connection.execute(
+        "DELETE FROM session_file_changes WHERE session_id = ? AND turn_number >= ?",
+        suffix_params,
+    )
+    connection.execute(
+        "DELETE FROM session_turns WHERE session_id = ? AND turn_number >= ?",
+        suffix_params,
+    )
+    _insert_session_turn_rows(connection, normalized_session_id, rows)
+
+    metadata = _fetch_session_turn_search_metadata(connection, [normalized_session_id]).get(
+        normalized_session_id
+    )
+    project_text = _session_turn_search_project_text(metadata)
+    turn_search_inserts = _session_turn_search_inserts(
+        normalized_session_id,
+        project_text,
+        rows,
+    )
+    if turn_search_inserts:
+        connection.executemany(
+            """
+            INSERT INTO session_turn_search (
+                project_text,
+                prompt_text,
+                response_text,
+                event_text,
+                session_id,
+                turn_number
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            turn_search_inserts,
+        )
+
+    chunk_records = _session_search_chunk_records(
+        normalized_session_id,
+        project_text,
+        rows,
+    )
+    if chunk_records:
+        connection.executemany(
+            """
+            INSERT INTO session_search_chunks (
+                chunk_id,
+                session_id,
+                turn_number,
+                field,
+                chunk_index,
+                start_offset,
+                end_offset,
+                content_sha256,
+                index_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    record["chunk_id"],
+                    record["session_id"],
+                    record["turn_number"],
+                    record["field"],
+                    record["chunk_index"],
+                    record["start_offset"],
+                    record["end_offset"],
+                    record["content_sha256"],
+                    SEARCH_CHUNK_VERSION,
+                )
+                for record in chunk_records
+            ],
+        )
+        connection.executemany(
+            """
+            INSERT INTO session_search_chunk_fts (
+                content,
+                project_text,
+                chunk_id,
+                session_id,
+                turn_number,
+                field
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    record["content"],
+                    record["project_text"],
+                    record["chunk_id"],
+                    record["session_id"],
+                    record["turn_number"],
+                    record["field"],
+                )
+                for record in chunk_records
+            ],
+        )
+
+    connection.execute(
+        """
+        UPDATE sessions
+        SET
+            turn_index_version = ?,
+            turn_search_version = ?,
+            search_chunk_version = ?,
+            import_warning = CASE
+                WHEN import_warning = ? THEN NULL
+                ELSE import_warning
+            END
+        WHERE id = ?
+        """,
+        (
+            TURN_INDEX_VERSION,
+            TURN_SEARCH_VERSION,
+            SEARCH_CHUNK_VERSION,
+            LEGACY_SEARCH_TRUNCATION_WARNING,
+            normalized_session_id,
+        ),
+    )
+    return rows
 
 
 def backfill_session_turn_search(connection: sqlite3.Connection) -> int:
