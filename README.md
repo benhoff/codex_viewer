@@ -210,7 +210,9 @@ You usually only need to care about these variables:
 - `CODEX_SESSION_ROOTS`: comma-separated local import roots, default `~/.codex/sessions`
 - `CODEX_VIEWER_SERVER_URL`: required for remote agents uploading to a server
 - `CODEX_VIEWER_SYNC_API_TOKEN`: required for remote agents
-- `CODEX_VIEWER_REMOTE_BATCH_SIZE`: remote daemon upload batch size, default `25`
+- `CODEX_VIEWER_REMOTE_TIMEOUT`: remote request timeout in seconds, default `120`
+- `CODEX_VIEWER_REMOTE_BATCH_SIZE`: remote daemon upload batch size, default `1`
+- `CODEX_VIEWER_REMOTE_UPLOAD_WORKERS`: concurrent upload requests, default `1`
 - `CODEX_VIEWER_AUTH_MODE`: `none`, `password`, `proxy`, or `password_or_proxy`
 
 Env files are loaded in this order:

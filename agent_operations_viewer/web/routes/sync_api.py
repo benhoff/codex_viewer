@@ -38,12 +38,36 @@ from ...session_artifacts import (
     utc_now_iso,
 )
 from ..auth import require_sync_api_auth
-from ..concurrency import run_in_history_threadpool as run_in_threadpool
+from ..concurrency import (
+    run_in_history_threadpool as run_in_threadpool,
+    run_in_upload_threadpool,
+)
 from ..context import get_settings
 
 
 router = APIRouter()
 RAW_SYNC_BATCH_MAX_ITEMS = 25
+
+
+def _upload_payload_identity(payload: object) -> tuple[object, ...]:
+    if not isinstance(payload, dict):
+        return ("invalid", type(payload).__name__)
+    session = payload.get("session")
+    source = session if isinstance(session, dict) else payload
+    return (
+        str(source.get("source_host") or ""),
+        str(source.get("source_path") or ""),
+        source.get("file_size") if isinstance(source.get("file_size"), int) else None,
+        source.get("file_mtime_ns") if isinstance(source.get("file_mtime_ns"), int) else None,
+        str(source.get("content_sha256") or ""),
+        str(source.get("base_content_sha256") or ""),
+    )
+
+
+def _upload_work_key(kind: str, payload: object) -> tuple[object, ...]:
+    if kind == "raw-batch" and isinstance(payload, list):
+        return ("session-upload", kind, tuple(_upload_payload_identity(item) for item in payload))
+    return ("session-upload", kind, _upload_payload_identity(payload))
 
 
 async def _read_json_request_payload(request: Request) -> object:
@@ -188,7 +212,14 @@ async def sync_session(request: Request) -> JSONResponse:
     payload = await _read_json_request_payload(request)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Sync payload must be an object")
-    return JSONResponse(await run_in_threadpool(_process_sync_session, settings, payload))
+    return JSONResponse(
+        await run_in_upload_threadpool(
+            _process_sync_session,
+            settings,
+            payload,
+            dedupe_key=_upload_work_key("parsed", payload),
+        )
+    )
 
 
 def _process_sync_session(
@@ -238,10 +269,11 @@ async def sync_session_raw(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Raw sync payload must be an object")
 
     header_host = request.headers.get("x-codex-viewer-host", "").strip()
-    result = await run_in_threadpool(
+    result = await run_in_upload_threadpool(
         _process_raw_sync_session,
         settings,
         payload,
+        dedupe_key=_upload_work_key("raw", payload),
         header_host=header_host,
     )
     result["mode"] = "raw"
@@ -286,10 +318,11 @@ async def sync_sessions_raw_batch(request: Request) -> JSONResponse:
 
     header_host = request.headers.get("x-codex-viewer-host", "").strip()
     return JSONResponse(
-        await run_in_threadpool(
+        await run_in_upload_threadpool(
             _process_raw_sync_sessions_batch,
             settings,
             sessions,
+            dedupe_key=_upload_work_key("raw-batch", sessions),
             header_host=header_host,
         )
     )
@@ -301,11 +334,17 @@ def _process_raw_sync_sessions_batch(
     *,
     header_host: str,
 ) -> dict[str, object]:
-    parsed_items = [_parse_raw_sync_payload(item, header_host=header_host) for item in sessions]
-
+    results: list[dict[str, object]] = []
     with connect(settings.database_path) as connection:
-        with write_transaction(connection):
-            results = store_raw_sync_sessions_batch(connection, settings, parsed_items)
+        # Bound each transaction to one session. A large batch can then make
+        # durable progress without holding the SQLite writer and WAL for every
+        # item in the request at once.
+        for item in sessions:
+            parsed_item = _parse_raw_sync_payload(item, header_host=header_host)
+            with write_transaction(connection):
+                results.extend(
+                    store_raw_sync_sessions_batch(connection, settings, [parsed_item])
+                )
 
     prune_orphaned_session_artifacts(settings)
 
@@ -327,10 +366,11 @@ async def sync_session_tail(request: Request) -> JSONResponse:
 
     header_host = request.headers.get("x-codex-viewer-host", "").strip()
 
-    result = await run_in_threadpool(
+    result = await run_in_upload_threadpool(
         _process_raw_sync_session_tail,
         settings,
         payload,
+        dedupe_key=_upload_work_key("raw-tail", payload),
         header_host=header_host,
     )
     result["mode"] = "raw_tail"

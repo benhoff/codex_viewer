@@ -884,17 +884,20 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_search_chunk_fts USING fts5(
     field UNINDEXED
 );
 
-CREATE TRIGGER IF NOT EXISTS session_search_chunks_delete_fts
+DROP TRIGGER IF EXISTS session_search_chunks_delete_fts;
+CREATE TRIGGER session_search_chunks_delete_fts
 AFTER DELETE ON session_search_chunks
 BEGIN
-    DELETE FROM session_search_chunk_fts WHERE chunk_id = OLD.chunk_id;
+    DELETE FROM session_search_chunk_fts
+    WHERE rowid = OLD.rowid
+      AND chunk_id = OLD.chunk_id;
 END;
 
-CREATE TRIGGER IF NOT EXISTS session_turn_search_delete_session
+DROP TRIGGER IF EXISTS session_turn_search_delete_session;
+CREATE TRIGGER session_turn_search_delete_session
 AFTER DELETE ON sessions
 BEGIN
     DELETE FROM session_turn_search WHERE session_id = OLD.id;
-    DELETE FROM session_search_chunk_fts WHERE session_id = OLD.id;
 END;
 """
 
@@ -1059,6 +1062,43 @@ def write_transaction(connection: sqlite3.Connection):
             raise
         else:
             connection.commit()
+
+
+@contextmanager
+def try_write_transaction(connection: sqlite3.Connection):
+    """Start an immediate transaction only when the writer is available now.
+
+    This is for incidental bookkeeping that must never delay or fail a read
+    request, such as updating an authenticated user's last-seen timestamp.
+    Callers must check the yielded boolean before issuing writes.
+    """
+
+    if not WRITE_LOCK.acquire(blocking=False):
+        yield False
+        return
+
+    timeout_row = connection.execute("PRAGMA busy_timeout").fetchone()
+    previous_timeout = int(timeout_row[0]) if timeout_row is not None else 30000
+    try:
+        connection.execute("PRAGMA busy_timeout = 0")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                raise
+            yield False
+            return
+
+        try:
+            yield True
+        except Exception:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
+    finally:
+        connection.execute(f"PRAGMA busy_timeout = {previous_timeout}")
+        WRITE_LOCK.release()
 
 
 def table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:

@@ -60,6 +60,7 @@ async function startServer({ rootDir, outputDir, authMode = "password", syncMode
   const port = await getFreePort();
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-viewer-e2e-"));
   const dataDir = path.join(runDir, "data");
+  const databasePath = path.join(dataDir, "viewer.sqlite3");
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(outputDir, { recursive: true });
   const logPath = path.join(outputDir, "server.log");
@@ -68,6 +69,7 @@ async function startServer({ rootDir, outputDir, authMode = "password", syncMode
     ...process.env,
     PYTHONPATH: buildPythonPath(rootDir),
     CODEX_VIEWER_DATA_DIR: dataDir,
+    CODEX_VIEWER_DB: databasePath,
     CODEX_VIEWER_AUTH_MODE: authMode,
     CODEX_VIEWER_SYNC_MODE: syncMode,
     CODEX_VIEWER_SESSION_SECRET: "e2e-session-secret",

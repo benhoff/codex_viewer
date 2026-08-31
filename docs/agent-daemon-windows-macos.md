@@ -29,7 +29,15 @@ Optional but commonly useful:
 ```env
 CODEX_VIEWER_SOURCE_HOST=my-laptop
 CODEX_VIEWER_SYNC_INTERVAL=30
+CODEX_VIEWER_REMOTE_TIMEOUT=120
+CODEX_VIEWER_REMOTE_BATCH_SIZE=1
+CODEX_VIEWER_REMOTE_UPLOAD_WORKERS=1
 ```
+
+Keep uploads serialized unless the viewer uses a database that supports
+multiple concurrent writers. The built-in SQLite server commits one uploaded
+session at a time and returns retryable backpressure when its upload lane is
+full.
 
 If the machine only has Codex sessions, you can usually leave
 `CODEX_SESSION_ROOTS` unset and use the default:

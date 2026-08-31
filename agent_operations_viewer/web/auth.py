@@ -10,7 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from ..api_tokens import find_active_api_token, touch_api_token_usage
 from ..config import Settings
-from ..db import connect, write_transaction
+from ..db import connect, try_write_transaction, write_transaction
 from ..machine_auth import (
     MACHINE_BODY_SHA256_HEADER,
     MACHINE_ID_HEADER,
@@ -254,7 +254,12 @@ def session_auth_user(request: Request, settings: Settings, connection: Any) -> 
     if str(user["disabled_at"] or "").strip():
         clear_auth_session(request)
         return None
-    touch_user_seen(connection, user_id)
+    # This is bookkeeping, not part of authentication. Skip it immediately
+    # when an upload owns SQLite's single writer slot so browser reads remain
+    # available throughout ingestion.
+    with try_write_transaction(connection) as writable:
+        if writable:
+            touch_user_seen(connection, user_id)
     return build_auth_user(
         user_id=user["id"],
         username=str(user["username"] or "").strip(),
@@ -281,7 +286,9 @@ def search_api_token_user(
     user = fetch_user_by_id(connection, str(token_row["owner_user_id"]))
     if user is None or str(user["disabled_at"] or "").strip():
         return None
-    touch_search_api_token_usage(connection, str(token_row["id"]))
+    with try_write_transaction(connection) as writable:
+        if writable:
+            touch_search_api_token_usage(connection, str(token_row["id"]))
     return (
         build_auth_user(
             user_id=str(user["id"]),
@@ -367,6 +374,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.bootstrap_required = False
         request.state.bootstrap_completed_at = None
         request.state.local_admin = None
+
+        # Health checks must not wait behind database work. In particular, an
+        # authenticated deployment can otherwise make /api/health depend on a
+        # history worker that is queued behind a large upload transaction.
+        if request.url.path == "/api/health":
+            return await call_next(request)
 
         if not settings.auth_enabled():
             return await call_next(request)

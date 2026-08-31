@@ -27,7 +27,12 @@ from agent_operations_viewer.importer import (
     upsert_parsed_session,
 )
 from agent_operations_viewer.file_watch import SessionFileWatcher
-from agent_operations_viewer.remote_sync import RemoteSyncError, json_request, sync_sessions_remote
+from agent_operations_viewer.remote_sync import (
+    RemoteSyncBusyError,
+    RemoteSyncError,
+    json_request,
+    sync_sessions_remote,
+)
 from agent_operations_viewer.projects import (
     build_project_access_context,
     effective_project_fields,
@@ -38,6 +43,7 @@ from agent_operations_viewer.session_status import is_task_complete, terminal_tu
 from agent_operations_viewer.session_artifacts import artifact_storage_path, store_session_artifact
 from agent_operations_viewer.session_view import build_turns
 from agent_operations_viewer.web.routes.sync_api import (
+    _process_raw_sync_sessions_batch,
     _read_json_request_payload,
     store_raw_sync_session_tail,
     store_raw_sync_sessions_batch,
@@ -1724,6 +1730,122 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(session_count, 2)
         self.assertEqual(artifact_count, 2)
 
+    def test_search_chunk_fts_rows_stay_rowid_aligned_across_session_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            settings = make_test_settings(
+                data_dir=data_dir,
+                session_roots=[Path(tmpdir) / "sessions"],
+            )
+            init_db(settings.database_path)
+
+            def parsed_item(session_id: str, message: str, mtime: int) -> tuple[object, str]:
+                raw_jsonl = make_raw_session_jsonl(session_id, user_message=message)
+                return (
+                    parse_session_text(
+                        raw_jsonl,
+                        Path(f"/tmp/{session_id}.jsonl"),
+                        Path("/tmp"),
+                        "remote-host",
+                        file_size=len(raw_jsonl.encode("utf-8")),
+                        file_mtime_ns=mtime,
+                    ),
+                    raw_jsonl,
+                )
+
+            with connect(settings.database_path) as connection:
+                with write_transaction(connection):
+                    store_raw_sync_sessions_batch(
+                        connection,
+                        settings,
+                        [
+                            parsed_item("rowid-one", "First version.", 1),
+                            parsed_item("rowid-two", "Unrelated session.", 1),
+                        ],
+                    )
+                with write_transaction(connection):
+                    store_raw_sync_sessions_batch(
+                        connection,
+                        settings,
+                        [parsed_item("rowid-one", "Replacement version.", 2)],
+                    )
+
+                chunk_count = int(
+                    connection.execute("SELECT COUNT(*) FROM session_search_chunks").fetchone()[0]
+                )
+                fts_count = int(
+                    connection.execute("SELECT COUNT(*) FROM session_search_chunk_fts").fetchone()[0]
+                )
+                aligned_count = int(
+                    connection.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM session_search_chunks AS chunks
+                        JOIN session_search_chunk_fts AS search
+                          ON search.rowid = chunks.rowid
+                         AND search.chunk_id = chunks.chunk_id
+                        """
+                    ).fetchone()[0]
+                )
+                trigger_sql = str(
+                    connection.execute(
+                        """
+                        SELECT sql FROM sqlite_master
+                        WHERE type = 'trigger' AND name = 'session_search_chunks_delete_fts'
+                        """
+                    ).fetchone()[0]
+                )
+
+        self.assertGreater(chunk_count, 0)
+        self.assertEqual(fts_count, chunk_count)
+        self.assertEqual(aligned_count, chunk_count)
+        self.assertIn("rowid = OLD.rowid", trigger_sql)
+        self.assertNotIn("WHERE chunk_id = OLD.chunk_id", trigger_sql)
+
+    def test_raw_sync_batch_commits_each_session_separately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            settings = make_test_settings(
+                data_dir=data_dir,
+                session_roots=[Path(tmpdir) / "sessions"],
+            )
+            init_db(settings.database_path)
+            payloads: list[dict[str, object]] = []
+            for index, session_id in enumerate(("commit-one", "commit-two"), start=1):
+                raw_jsonl = make_raw_session_jsonl(session_id)
+                payloads.append(
+                    {
+                        "source_host": "remote-host",
+                        "source_root": "/tmp",
+                        "source_path": f"/tmp/{session_id}.jsonl",
+                        "raw_jsonl": raw_jsonl,
+                        "file_size": len(raw_jsonl.encode("utf-8")),
+                        "file_mtime_ns": index,
+                    }
+                )
+
+            transaction_count = 0
+
+            def counted_write_transaction(connection: object) -> object:
+                nonlocal transaction_count
+                transaction_count += 1
+                return write_transaction(connection)
+
+            with mock.patch(
+                "agent_operations_viewer.web.routes.sync_api.write_transaction",
+                side_effect=counted_write_transaction,
+            ):
+                result = _process_raw_sync_sessions_batch(
+                    settings,
+                    payloads,
+                    header_host="remote-host",
+                )
+
+        self.assertEqual(result["processed_count"], 2)
+        self.assertEqual(transaction_count, 2)
+
     def test_store_raw_sync_session_tail_appends_existing_raw_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             data_dir = Path(tmpdir) / "data"
@@ -2000,7 +2122,7 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(result["status"], "base_mismatch")
         self.assertEqual(result["reason"], "missing-session")
 
-    def test_sync_session_tail_delegates_processing_to_threadpool(self) -> None:
+    def test_sync_session_tail_delegates_processing_to_upload_lane(self) -> None:
         threadpool_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
 
         async def record_threadpool_call(
@@ -2031,7 +2153,7 @@ class RolloutParsingTests(unittest.TestCase):
                 new=mock.AsyncMock(return_value={"tail_jsonl": "\n{}"}),
             ),
             mock.patch(
-                "agent_operations_viewer.web.routes.sync_api.run_in_threadpool",
+                "agent_operations_viewer.web.routes.sync_api.run_in_upload_threadpool",
                 new=record_threadpool_call,
             ),
         ):
@@ -2041,6 +2163,8 @@ class RolloutParsingTests(unittest.TestCase):
         function, args, kwargs = threadpool_calls[0]
         self.assertEqual(function.__name__, "_process_raw_sync_session_tail")
         self.assertEqual(args[1], {"tail_jsonl": "\n{}"})
+        dedupe_key = kwargs.pop("dedupe_key")
+        self.assertEqual(dedupe_key[:2], ("session-upload", "raw-tail"))
         self.assertEqual(kwargs, {"header_host": "remote-host"})
 
     def test_request_json_decoding_runs_in_threadpool(self) -> None:
@@ -2068,7 +2192,7 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(function.__name__, "_decode_json_request_body")
         self.assertEqual(args, (b'{"decoded": true}', "identity"))
 
-    def test_full_raw_sync_paths_delegate_processing_to_threadpool(self) -> None:
+    def test_full_raw_sync_paths_delegate_processing_to_upload_lane(self) -> None:
         cases = (
             (sync_session, {"session": {}}, "_process_sync_session"),
             (sync_session_raw, {"raw_jsonl": "{}"}, "_process_raw_sync_session"),
@@ -2113,15 +2237,16 @@ class RolloutParsingTests(unittest.TestCase):
                         new=mock.AsyncMock(return_value=payload),
                     ),
                     mock.patch(
-                        "agent_operations_viewer.web.routes.sync_api.run_in_threadpool",
+                        "agent_operations_viewer.web.routes.sync_api.run_in_upload_threadpool",
                         new=record_threadpool_call,
                     ),
                 ):
                     asyncio.run(exercise())
 
                 self.assertEqual(len(threadpool_calls), 1)
-                function, _args, _kwargs = threadpool_calls[0]
+                function, _args, kwargs = threadpool_calls[0]
                 self.assertEqual(function.__name__, expected_function_name)
+                self.assertEqual(kwargs["dedupe_key"][0], "session-upload")
 
     def test_sync_sessions_remote_batches_raw_uploads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2215,6 +2340,64 @@ class RolloutParsingTests(unittest.TestCase):
         self.assertEqual(stats, {"uploaded": 3, "skipped": 0, "failed": 0})
         self.assertEqual(len(batch_calls), 1)
         self.assertEqual(len(single_calls), 3)
+
+    def test_sync_sessions_remote_does_not_fan_out_busy_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_root = Path(tmpdir) / "sessions"
+            session_root.mkdir(parents=True, exist_ok=True)
+            for session_id in ("remote-busy-1", "remote-busy-2", "remote-busy-3"):
+                (session_root / f"{session_id}.jsonl").write_text(
+                    make_raw_session_jsonl(session_id),
+                    encoding="utf-8",
+                )
+
+            settings = make_test_settings(
+                data_dir=Path(tmpdir) / "data",
+                session_roots=[session_root],
+                remote_batch_size=2,
+            )
+            calls: list[tuple[str, str, object | None]] = []
+
+            def fake_json_request(
+                _settings: Settings,
+                method: str,
+                path: str,
+                payload: dict[str, object] | None = None,
+            ) -> dict[str, object]:
+                calls.append((method, path, payload))
+                if path == "/api/sync/sessions-raw":
+                    raise RemoteSyncBusyError("server upload lane is busy")
+                if path == "/api/sync/session-raw":
+                    return {"status": "ok"}
+                if path == "/api/sync/heartbeat":
+                    return {"status": "ok"}
+                raise AssertionError(f"Unexpected request path: {path}")
+
+            with mock.patch(
+                "agent_operations_viewer.remote_sync.json_request",
+                side_effect=fake_json_request,
+            ):
+                stats = sync_sessions_remote(settings, force=True)
+
+        batch_calls = [call for call in calls if call[1] == "/api/sync/sessions-raw"]
+        single_calls = [call for call in calls if call[1] == "/api/sync/session-raw"]
+        self.assertEqual(stats, {"uploaded": 0, "skipped": 0, "failed": 3})
+        self.assertEqual(len(batch_calls), 1)
+        self.assertEqual(len(single_calls), 0)
+
+    def test_json_request_wraps_socket_timeout_as_remote_sync_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = make_test_settings(
+                data_dir=Path(tmpdir) / "data",
+                session_roots=[Path(tmpdir) / "sessions"],
+            )
+            settings.remote_timeout_seconds = 120
+            with mock.patch(
+                "agent_operations_viewer.remote_sync.urlopen",
+                side_effect=TimeoutError("timed out"),
+            ):
+                with self.assertRaisesRegex(RemoteSyncError, "timed out after 120s"):
+                    json_request(settings, "GET", "/api/sync/manifest-v2?host=test-host")
 
     def test_json_request_gzips_large_payloads(self) -> None:
         settings = make_test_settings(

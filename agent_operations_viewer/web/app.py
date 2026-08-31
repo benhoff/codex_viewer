@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import faulthandler
 import logging
 from pathlib import Path
+import signal
 import threading
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import Settings
@@ -14,6 +17,7 @@ from ..local_auth import fetch_auth_status
 from ..saved_turns import migrate_global_saved_turns_to_owner
 from ..server_settings import apply_server_settings
 from .auth import install_auth
+from .concurrency import WorkQueueFull
 from .context import AppContext, set_app_context
 from .routes.machine_pairing import router as machine_pairing_router
 from .routes.pages import router as pages_router
@@ -26,6 +30,16 @@ from .templates import STATIC_ROOT, build_templates
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 logger = logging.getLogger("agent_operations_viewer.web.app")
+
+
+def _install_stack_dump_signal() -> None:
+    stack_signal = getattr(signal, "SIGUSR1", None)
+    if stack_signal is None:
+        return
+    try:
+        faulthandler.register(stack_signal, all_threads=True)
+    except (OSError, RuntimeError, ValueError):
+        logger.warning("Could not register the SIGUSR1 stack-dump handler", exc_info=True)
 
 
 def _run_post_startup_maintenance(settings: Settings) -> None:
@@ -57,6 +71,7 @@ def create_app(
     *,
     preserve_sync_on_start: bool = False,
 ) -> FastAPI:
+    _install_stack_dump_signal()
     app_settings = settings or Settings.from_env(PROJECT_ROOT)
     app_settings.ensure_directories()
     # Endpoints require current tables and columns, but derived session data is
@@ -79,6 +94,18 @@ def create_app(
     STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="Agent Operations Viewer", version=app_settings.app_version)
+
+    @app.exception_handler(WorkQueueFull)
+    async def work_queue_full_response(
+        _request: Request,
+        exc: WorkQueueFull,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": str(exc), "retryable": True},
+            headers={"Retry-After": "5"},
+        )
+
     install_auth(app, app_settings)
     templates = build_templates(app_settings.app_version)
     set_app_context(app, AppContext(settings=app_settings, templates=templates))

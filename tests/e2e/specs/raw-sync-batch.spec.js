@@ -237,7 +237,7 @@ test("raw sync batch uploads persist raw artifacts and avoid duplicate sessions 
 
     await expectPageLoad(page, app.url("/search?q=raw%20batch%20session%20two"), {
       expectedPathname: "/search",
-      expectedText: "Turn Hits",
+      expectedText: "Investigation Search",
     });
     await expect(page.getByRole("link", { name: projectLabel }).first()).toBeVisible();
 

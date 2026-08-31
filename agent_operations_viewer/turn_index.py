@@ -1033,6 +1033,78 @@ def _session_search_chunk_records(
     return records
 
 
+def _insert_session_search_chunk_records(
+    connection: sqlite3.Connection,
+    records: Sequence[dict[str, Any]],
+) -> None:
+    if not records:
+        return
+
+    connection.executemany(
+        """
+        INSERT INTO session_search_chunks (
+            chunk_id,
+            session_id,
+            turn_number,
+            field,
+            chunk_index,
+            start_offset,
+            end_offset,
+            content_sha256,
+            index_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                record["chunk_id"],
+                record["session_id"],
+                record["turn_number"],
+                record["field"],
+                record["chunk_index"],
+                record["start_offset"],
+                record["end_offset"],
+                record["content_sha256"],
+                SEARCH_CHUNK_VERSION,
+            )
+            for record in records
+        ],
+    )
+
+    session_id = str(records[0]["session_id"])
+    rowid_by_chunk_id = {
+        str(row["chunk_id"]): int(row["rowid"])
+        for row in connection.execute(
+            "SELECT rowid, chunk_id FROM session_search_chunks WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+    }
+    connection.executemany(
+        """
+        INSERT INTO session_search_chunk_fts (
+            rowid,
+            content,
+            project_text,
+            chunk_id,
+            session_id,
+            turn_number,
+            field
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                rowid_by_chunk_id[str(record["chunk_id"])],
+                record["content"],
+                record["project_text"],
+                record["chunk_id"],
+                record["session_id"],
+                record["turn_number"],
+                record["field"],
+            )
+            for record in records
+        ],
+    )
+
+
 def _write_session_search_chunks(
     connection: sqlite3.Connection,
     *,
@@ -1041,67 +1113,11 @@ def _write_session_search_chunks(
     turns: Sequence[dict[str, Any]],
 ) -> int:
     connection.execute(
-        "DELETE FROM session_search_chunk_fts WHERE session_id = ?",
-        (session_id,),
-    )
-    connection.execute(
         "DELETE FROM session_search_chunks WHERE session_id = ?",
         (session_id,),
     )
     records = _session_search_chunk_records(session_id, project_text, turns)
-    if records:
-        connection.executemany(
-            """
-            INSERT INTO session_search_chunks (
-                chunk_id,
-                session_id,
-                turn_number,
-                field,
-                chunk_index,
-                start_offset,
-                end_offset,
-                content_sha256,
-                index_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    record["chunk_id"],
-                    record["session_id"],
-                    record["turn_number"],
-                    record["field"],
-                    record["chunk_index"],
-                    record["start_offset"],
-                    record["end_offset"],
-                    record["content_sha256"],
-                    SEARCH_CHUNK_VERSION,
-                )
-                for record in records
-            ],
-        )
-        connection.executemany(
-            """
-            INSERT INTO session_search_chunk_fts (
-                content,
-                project_text,
-                chunk_id,
-                session_id,
-                turn_number,
-                field
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    record["content"],
-                    record["project_text"],
-                    record["chunk_id"],
-                    record["session_id"],
-                    record["turn_number"],
-                    record["field"],
-                )
-                for record in records
-            ],
-        )
+    _insert_session_search_chunk_records(connection, records)
     if records:
         connection.execute(
             """
@@ -1246,10 +1262,6 @@ def replace_session_turn_suffix(
         suffix_params,
     )
     connection.execute(
-        "DELETE FROM session_search_chunk_fts WHERE session_id = ? AND CAST(turn_number AS INTEGER) >= ?",
-        suffix_params,
-    )
-    connection.execute(
         "DELETE FROM session_search_chunks WHERE session_id = ? AND turn_number >= ?",
         suffix_params,
     )
@@ -1292,59 +1304,7 @@ def replace_session_turn_suffix(
         project_text,
         rows,
     )
-    if chunk_records:
-        connection.executemany(
-            """
-            INSERT INTO session_search_chunks (
-                chunk_id,
-                session_id,
-                turn_number,
-                field,
-                chunk_index,
-                start_offset,
-                end_offset,
-                content_sha256,
-                index_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    record["chunk_id"],
-                    record["session_id"],
-                    record["turn_number"],
-                    record["field"],
-                    record["chunk_index"],
-                    record["start_offset"],
-                    record["end_offset"],
-                    record["content_sha256"],
-                    SEARCH_CHUNK_VERSION,
-                )
-                for record in chunk_records
-            ],
-        )
-        connection.executemany(
-            """
-            INSERT INTO session_search_chunk_fts (
-                content,
-                project_text,
-                chunk_id,
-                session_id,
-                turn_number,
-                field
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    record["content"],
-                    record["project_text"],
-                    record["chunk_id"],
-                    record["session_id"],
-                    record["turn_number"],
-                    record["field"],
-                )
-                for record in chunk_records
-            ],
-        )
+    _insert_session_search_chunk_records(connection, chunk_records)
 
     connection.execute(
         """

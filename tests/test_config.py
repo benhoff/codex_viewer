@@ -10,6 +10,15 @@ from agent_operations_viewer.config import Settings
 
 
 class ConfigTests(unittest.TestCase):
+    def test_remote_upload_defaults_are_serial_and_allow_long_commits(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(os.environ, {}, clear=True):
+                settings = Settings.from_env(project_root=Path(temp_dir))
+
+        self.assertEqual(settings.remote_timeout_seconds, 120)
+        self.assertEqual(settings.remote_batch_size, 1)
+        self.assertEqual(settings.remote_upload_workers, 1)
+
     def test_from_env_prefers_legacy_database_after_repo_rename(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)

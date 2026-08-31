@@ -40,6 +40,10 @@ class RemoteSyncError(RuntimeError):
     pass
 
 
+class RemoteSyncBusyError(RemoteSyncError):
+    pass
+
+
 class RestartRequired(RuntimeError):
     pass
 
@@ -197,7 +201,15 @@ def json_request(
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
+        if exc.code in {429, 503}:
+            raise RemoteSyncBusyError(
+                f"Remote sync server is busy: {exc.code} {detail}"
+            ) from exc
         raise RemoteSyncError(f"Remote sync request failed: {exc.code} {detail}") from exc
+    except TimeoutError as exc:
+        raise RemoteSyncError(
+            f"Remote sync request timed out after {settings.remote_timeout_seconds}s"
+        ) from exc
     except URLError as exc:
         raise RemoteSyncError(f"Remote sync request failed: {exc.reason}") from exc
 
@@ -681,6 +693,10 @@ def _upload_prepared_chunk(
                     )
                 )
             return outcomes
+        except RemoteSyncBusyError:
+            # Capacity responses are backpressure, not a signal to fan a batch
+            # out into even more individual requests.
+            raise
         except Exception:
             pass
 
@@ -1026,80 +1042,127 @@ def sync_sessions_remote(
                 prepared_uploads[index : index + chunk_size]
                 for index in range(0, len(prepared_uploads), chunk_size)
             ]
-            with ThreadPoolExecutor(max_workers=settings.remote_upload_workers) as executor:
-                future_map = {
-                    executor.submit(
-                        _upload_prepared_chunk,
-                        settings,
-                        chunk,
-                        batch_uploads_enabled=batch_uploads_enabled,
-                    ): chunk
-                    for chunk in chunks
-                }
-                for future in as_completed(future_map):
-                    chunk = future_map[future]
+            chunk_results: list[
+                tuple[list[PreparedUpload], list[UploadOutcome] | None, BaseException | None]
+            ] = []
+            if settings.remote_upload_workers == 1:
+                # Sequential admission is the safe default for the viewer's
+                # single SQLite writer. Stop the pass on backpressure instead
+                # of turning every remaining session into another 503.
+                for chunk_index, chunk in enumerate(chunks):
                     try:
-                        outcomes = future.result()
-                    except Exception as exc:
+                        outcomes = _upload_prepared_chunk(
+                            settings,
+                            chunk,
+                            batch_uploads_enabled=batch_uploads_enabled,
+                        )
+                    except RemoteSyncBusyError as exc:
+                        deferred = [
+                            item
+                            for remaining_chunk in chunks[chunk_index:]
+                            for item in remaining_chunk
+                        ]
                         summary = exception_summary(exc)
-                        for item in chunk:
-                            failed += 1
-                            last_failed_source_path = str(item.path)
+                        failed += len(deferred)
+                        if deferred:
+                            last_failed_source_path = str(deferred[-1].path)
                             last_failure_detail = summary
-                            logger.exception("Failed to upload session from %s", item.path)
+                        logger.warning(
+                            "Viewer upload lane is busy; deferred %s session(s): %s",
+                            len(deferred),
+                            summary,
+                        )
+                        break
+                    except Exception as exc:
+                        chunk_results.append((chunk, None, exc))
+                    else:
+                        chunk_results.append((chunk, outcomes, None))
+            else:
+                with ThreadPoolExecutor(max_workers=settings.remote_upload_workers) as executor:
+                    future_map = {
+                        executor.submit(
+                            _upload_prepared_chunk,
+                            settings,
+                            chunk,
+                            batch_uploads_enabled=batch_uploads_enabled,
+                        ): chunk
+                        for chunk in chunks
+                    }
+                    for future in as_completed(future_map):
+                        chunk = future_map[future]
+                        try:
+                            outcomes = future.result()
+                        except Exception as exc:
+                            chunk_results.append((chunk, None, exc))
+                        else:
+                            chunk_results.append((chunk, outcomes, None))
+
+            for chunk, outcomes, upload_error in chunk_results:
+                if upload_error is not None:
+                    summary = exception_summary(upload_error)
+                    for item in chunk:
+                        failed += 1
+                        last_failed_source_path = str(item.path)
+                        last_failure_detail = summary
+                    logger.error(
+                        "Failed to upload %s session(s): %s",
+                        len(chunk),
+                        summary,
+                    )
+                    continue
+
+                assert outcomes is not None
+                for outcome in outcomes:
+                    prepared_item = prepared_by_path.get(str(outcome.path))
+                    if outcome.status == "ignored":
+                        skipped += 1
+                        logger.info(
+                            "Skipped ignored session %s from %s (%s)",
+                            outcome.session_id,
+                            outcome.path,
+                            outcome.reason,
+                        )
+                        upsert_agent_file_state(
+                            state_connection,
+                            source_root=(
+                                prepared_item.source_root
+                                if prepared_item is not None
+                                else _match_source_root(outcome.path, settings.session_roots) or outcome.path.parent
+                            ),
+                            source_path=outcome.path,
+                            file_size=prepared_item.file_size if prepared_item is not None else 0,
+                            file_mtime_ns=prepared_item.file_mtime_ns if prepared_item is not None else 0,
+                            last_seen_at=utc_now_iso(),
+                            state="ignored",
+                        )
+                        continue
+                    if outcome.status == "ok":
+                        uploaded += 1
+                        logger.info(
+                            "Uploaded session %s from %s (%s)",
+                            outcome.session_id,
+                            outcome.path,
+                            outcome.reason,
+                        )
+                        mark_agent_file_uploaded(
+                            state_connection,
+                            source_path=outcome.path,
+                            uploaded_at=utc_now_iso(),
+                            file_size=prepared_item.file_size if prepared_item is not None else None,
+                            content_sha256=outcome.content_sha256,
+                            last_line_hash=prepared_item.last_line_hash if prepared_item is not None else None,
+                            event_count=outcome.event_count,
+                        )
                         continue
 
-                    for outcome in outcomes:
-                        prepared_item = prepared_by_path.get(str(outcome.path))
-                        if outcome.status == "ignored":
-                            skipped += 1
-                            logger.info(
-                                "Skipped ignored session %s from %s (%s)",
-                                outcome.session_id,
-                                outcome.path,
-                                outcome.reason,
-                            )
-                            upsert_agent_file_state(
-                                state_connection,
-                                source_root=(
-                                    prepared_item.source_root
-                                    if prepared_item is not None
-                                    else _match_source_root(outcome.path, settings.session_roots) or outcome.path.parent
-                                ),
-                                source_path=outcome.path,
-                                file_size=prepared_item.file_size if prepared_item is not None else 0,
-                                file_mtime_ns=prepared_item.file_mtime_ns if prepared_item is not None else 0,
-                                last_seen_at=utc_now_iso(),
-                                state="ignored",
-                            )
-                            continue
-                        if outcome.status == "ok":
-                            uploaded += 1
-                            logger.info(
-                                "Uploaded session %s from %s (%s)",
-                                outcome.session_id,
-                                outcome.path,
-                                outcome.reason,
-                            )
-                            mark_agent_file_uploaded(
-                                state_connection,
-                                source_path=outcome.path,
-                                uploaded_at=utc_now_iso(),
-                                file_size=prepared_item.file_size if prepared_item is not None else None,
-                                content_sha256=outcome.content_sha256,
-                                last_line_hash=prepared_item.last_line_hash if prepared_item is not None else None,
-                                event_count=outcome.event_count,
-                            )
-                            continue
-
-                        failed += 1
-                        last_failed_source_path = str(outcome.path)
-                        last_failure_detail = outcome.error
-                        logger.error(
-                            "Failed to upload session from %s: %s",
-                            outcome.path,
-                            outcome.error or "unknown error",
-                        )
+                    failed += 1
+                    last_failed_source_path = str(outcome.path)
+                    last_failure_detail = outcome.error
+                    logger.error(
+                        "Failed to upload session from %s: %s",
+                        outcome.path,
+                        outcome.error or "unknown error",
+                    )
 
     stats = {"uploaded": uploaded, "skipped": skipped, "failed": failed}
     sync_completed_at = utc_now_iso()

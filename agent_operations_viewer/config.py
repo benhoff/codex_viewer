@@ -183,7 +183,7 @@ class Settings:
     auth_cookie_secure: bool
     remote_gzip_min_bytes: int = 1024
     remote_prepare_workers: int = 4
-    remote_upload_workers: int = 2
+    remote_upload_workers: int = 1
     remote_watch_mode: str = "auto"
     remote_watch_debounce_seconds: float = 1.0
     remote_watch_poll_seconds: float = 1.0
@@ -218,11 +218,11 @@ class Settings:
         server_base_url = _clean_url(os.getenv("CODEX_VIEWER_SERVER_URL"))
         sync_api_token = os.getenv("CODEX_VIEWER_SYNC_API_TOKEN", "").strip() or None
         sync_interval_seconds = int(os.getenv("CODEX_VIEWER_SYNC_INTERVAL", "30"))
-        remote_timeout_seconds = int(os.getenv("CODEX_VIEWER_REMOTE_TIMEOUT", "15"))
-        remote_batch_size = max(1, min(int(os.getenv("CODEX_VIEWER_REMOTE_BATCH_SIZE", "25")), 25))
+        remote_timeout_seconds = max(15, int(os.getenv("CODEX_VIEWER_REMOTE_TIMEOUT", "120")))
+        remote_batch_size = max(1, min(int(os.getenv("CODEX_VIEWER_REMOTE_BATCH_SIZE", "1")), 25))
         remote_gzip_min_bytes = max(0, int(os.getenv("CODEX_VIEWER_REMOTE_GZIP_MIN_BYTES", "1024")))
         remote_prepare_workers = max(1, int(os.getenv("CODEX_VIEWER_REMOTE_PREPARE_WORKERS", "4")))
-        remote_upload_workers = max(1, int(os.getenv("CODEX_VIEWER_REMOTE_UPLOAD_WORKERS", "2")))
+        remote_upload_workers = max(1, int(os.getenv("CODEX_VIEWER_REMOTE_UPLOAD_WORKERS", "1")))
         remote_watch_mode = (os.getenv("CODEX_VIEWER_REMOTE_WATCH_MODE") or "auto").strip().lower() or "auto"
         remote_watch_debounce_seconds = max(
             0.0,
