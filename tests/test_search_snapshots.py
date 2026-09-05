@@ -15,6 +15,7 @@ from agent_operations_viewer.db import connect, init_db
 from agent_operations_viewer.search import search_turn_hits_raw
 from agent_operations_viewer.search_snapshots import evidence_snapshot, _BUILDS
 from agent_operations_viewer.search import _search_coverage, prepare_coverage_inventory
+from agent_operations_viewer.projects import project_access_condition_sql
 from tests.test_search import insert_search_turn
 
 
@@ -171,6 +172,38 @@ class SearchSnapshotTests(unittest.TestCase):
             )
             self.assertEqual(coverage["sessions_total"], 1)
             self.assertEqual(coverage["turns_missing_evidence"], 1)
+
+    def test_unscoped_coverage_reuses_snapshot_metadata_without_scanning_corpus(self):
+        with self.snapshot() as (connection, access, metadata, _, _):
+            condition, params = project_access_condition_sql(access)
+
+            def authorize(action, table, column, database, trigger):
+                if action == sqlite3.SQLITE_READ and table not in {
+                    "sqlite_master", "evidence_snapshot_metadata"
+                }:
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+
+            connection.set_authorizer(authorize)
+            coverage = _search_coverage(
+                connection, base_conditions=[condition], base_params=params
+            )
+            self.assertEqual(coverage, metadata["coverage"])
+            # A different scope must not get the cached authorization totals.
+            with self.assertRaises(sqlite3.DatabaseError):
+                _search_coverage(connection, base_conditions=[], base_params=[])
+
+    def test_filtered_coverage_does_not_reuse_unscoped_totals(self):
+        with self.snapshot() as (connection, access, metadata, _, _):
+            condition, params = project_access_condition_sql(access)
+            self.assertEqual(metadata["coverage"]["sessions_total"], 1)
+            for extra, value in (("s.id != ?", "public"), ("s.id = ?", "private")):
+                coverage = _search_coverage(
+                    connection,
+                    base_conditions=[extra, condition],
+                    base_params=[value, *params],
+                )
+                self.assertEqual(coverage["sessions_total"], 0)
 
     def test_inventory_uses_explicit_keys_and_tracks_missing_search_rows(self):
         with closing(connect(self.settings.database_path)) as connection:

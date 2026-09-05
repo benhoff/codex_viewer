@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from collections.abc import Sequence
@@ -248,12 +249,15 @@ def _matched_candidate_ctes(
             """
         )
     if match.chunk_expression:
+        # Writers assign the FTS rowid from the metadata rowid. Joining on the
+        # UNINDEXED chunk_id instead forces SQLite to load full text records
+        # before rejecting other fields; use the existing integer identity.
         placeholders = ", ".join("?" for _field in match.chunk_fields)
         candidate_queries.append(
             f"""
             SELECT
-                session_search_chunk_fts.session_id,
-                session_search_chunk_fts.turn_number,
+                chunks.session_id,
+                chunks.turn_number,
                 'chunk' AS match_source,
                 bm25(session_search_chunk_fts, 5.0, 1.0) AS search_rank,
                 {chunk_project} AS project_snippet,
@@ -272,7 +276,7 @@ def _matched_candidate_ctes(
                 chunks.end_offset AS chunk_end_offset
             FROM session_search_chunk_fts
             JOIN session_search_chunks AS chunks
-                ON chunks.chunk_id = session_search_chunk_fts.chunk_id
+                ON chunks.rowid = session_search_chunk_fts.rowid
             WHERE session_search_chunk_fts MATCH ?
               AND chunks.field IN ({placeholders})
             """
@@ -569,6 +573,21 @@ def _search_coverage(
     base_conditions: list[str],
     base_params: list[Any],
 ) -> dict[str, Any]:
+    # The builder already computed coverage for the frozen authorization scope.
+    # Reuse it only for that exact scope: query text/fields do not narrow corpus
+    # coverage, but project/date/exclusion filters and different ACLs do.
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'evidence_snapshot_metadata'"
+    ).fetchone():
+        stored = json.loads(connection.execute(
+            "SELECT payload FROM evidence_snapshot_metadata"
+        ).fetchone()[0])
+        condition, params = project_access_condition_sql(
+            ProjectAccessContext(**stored["access"])
+        )
+        if base_conditions == ([condition] if condition else []) and base_params == params:
+            return stored["metadata"]["coverage"]
+
     fully_indexed_sql = f"""
         COALESCE(s.turn_index_version, 0) >= {TURN_INDEX_VERSION}
         AND COALESCE(s.turn_search_version, 0) >= {TURN_SEARCH_VERSION}

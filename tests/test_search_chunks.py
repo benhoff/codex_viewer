@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 import tempfile
 import unittest
@@ -82,6 +83,40 @@ class SearchChunkIndexTests(unittest.TestCase):
             )
             if index:
                 self.assertLess(chunk["start_offset"], first[index - 1]["end_offset"])
+
+    def test_search_joins_chunk_metadata_without_loading_fts_identity_columns(self) -> None:
+        events = [
+            search_event(event_index=1, record_type="event_msg", payload_type="user_message",
+                         kind="message", role="user", display_text="needle in prompt"),
+            search_event(event_index=2, record_type="response_item", payload_type="message",
+                         kind="message", role="assistant", phase="final_answer",
+                         display_text="needle in response " * 1000),
+        ]
+        with connect(self.db_path) as connection:
+            insert_search_turn(connection, session_id="chunk-join", project_id="join-project",
+                               project_key="join-project", project_label="Join",
+                               prompt="legacy excerpt without the search term")
+            replace_session_search_chunks(connection, "chunk-join", events)
+
+            def authorize(action, table, column, database, trigger):
+                if (action == sqlite3.SQLITE_READ and table == "session_search_chunk_fts"
+                        and column in {"chunk_id", "session_id", "turn_number", "field"}):
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+
+            connection.set_authorizer(authorize)
+            for group_by in ("none", "session"):
+                page = search_turn_hits_raw(
+                    connection, "needle", fields="response", mode="exact", page_size=1,
+                    group_by=group_by, facets=["matched_field", "session"],
+                )
+                self.assertEqual(page["total_count"], 1)
+                self.assertEqual(page["session_count"], 1)
+                self.assertEqual(page["items"][0]["matched_field"], "response")
+                self.assertEqual(page["items"][0]["match_source"], "chunk")
+                self.assertIn("needle", page["items"][0]["snippet"])
+                self.assertEqual(page["facets"]["matched_field"][0]["value"], "response")
+                self.assertEqual(page["facets"]["matched_field"][0]["count"], 1)
 
     def test_legacy_search_tables_are_rebuilt_as_derived_data(self) -> None:
         with connect(self.db_path) as connection:
