@@ -5,6 +5,7 @@ import hashlib
 import json
 import sqlite3
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
@@ -24,7 +25,7 @@ from ..context import get_app_context
 
 
 router = APIRouter()
-CURSOR_VERSION = 1
+CURSOR_VERSION = 2
 
 
 def _timestamp_param(value: datetime | None) -> str | None:
@@ -42,9 +43,22 @@ def _cursor_fingerprint(
     from_timestamp: str | None,
     to_timestamp: str | None,
     limit: int,
+    sort: str,
+    group_by: str,
+    max_hits_per_session: int,
 ) -> str:
     payload = json.dumps(
-        [q, project_id, host, from_timestamp, to_timestamp, limit],
+        [
+            q,
+            project_id,
+            host,
+            from_timestamp,
+            to_timestamp,
+            limit,
+            sort,
+            group_by,
+            max_hits_per_session,
+        ],
         ensure_ascii=True,
         separators=(",", ":"),
     )
@@ -269,6 +283,9 @@ def search_api(
     host: str | None = Query(default=None, max_length=255),
     from_date: datetime | None = Query(default=None, alias="from"),
     to_date: datetime | None = Query(default=None, alias="to"),
+    sort: Literal["relevance", "time_asc", "time_desc"] = Query(default="relevance"),
+    group_by: Literal["none", "session"] = Query(default="none"),
+    max_hits_per_session: int = Query(default=3, ge=1, le=100),
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = Query(default=None, max_length=2048),
 ) -> JSONResponse:
@@ -296,6 +313,9 @@ def search_api(
         from_timestamp=from_timestamp,
         to_timestamp=to_timestamp,
         limit=limit,
+        sort=sort,
+        group_by=group_by,
+        max_hits_per_session=max_hits_per_session,
     )
     page = _decode_cursor(cursor, fingerprint)
 
@@ -314,6 +334,9 @@ def search_api(
             host=normalized_host,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
+            sort=sort,
+            group_by=group_by,
+            max_hits_per_session=max_hits_per_session,
             project_access=project_access,
         )
 
@@ -321,6 +344,20 @@ def search_api(
         _encode_cursor(int(search_page["page"]) + 1, fingerprint)
         if bool(search_page["has_next"])
         else None
+    )
+    serialized_groups = [
+        {
+            "session_id": group["session_id"],
+            "match_count": int(group["match_count"]),
+            "returned_hit_count": len(group["items"]),
+            "hits": [_serialize_hit(item) for item in group["items"]],
+        }
+        for group in search_page["groups"]
+    ]
+    serialized_hits = (
+        []
+        if group_by == "session"
+        else [_serialize_hit(item) for item in search_page["items"]]
     )
     return JSONResponse(
         {
@@ -332,8 +369,22 @@ def search_api(
                 "to": to_timestamp,
             },
             "retrieval": search_page["retrieval"],
-            "hits": [_serialize_hit(item) for item in search_page["items"]],
+            "sort": sort,
+            "group_by": group_by,
+            "max_hits_per_session": max_hits_per_session,
+            "hits": serialized_hits,
+            "groups": serialized_groups,
             "total_count": int(search_page["total_count"]),
+            "session_count": int(search_page["session_count"]),
+            "pagination": {
+                "unit": search_page["pagination_unit"],
+                "total_count": int(search_page["pagination_total"]),
+                "returned_count": (
+                    len(serialized_groups)
+                    if group_by == "session"
+                    else len(serialized_hits)
+                ),
+            },
             "limit": int(search_page["page_size"]),
             "next_cursor": next_cursor,
         },

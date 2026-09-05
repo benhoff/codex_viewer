@@ -403,10 +403,26 @@ class SearchServiceTests(unittest.TestCase):
                 connection,
                 "What was the last thing we were going to do on the atlas project?",
             )
+            grouped_page = search_turn_hits_raw(
+                connection,
+                "What was the last thing we were going to do on the atlas project?",
+                sort="time_asc",
+                group_by="session",
+                max_hits_per_session=1,
+            )
 
         self.assertEqual(page["retrieval"]["strategy"], "project_history")
         self.assertEqual(page["items"][0]["session_id"], "atlas-new")
         self.assertEqual(page["items"][0]["matched_field"], "history")
+        self.assertEqual(grouped_page["pagination_unit"], "session")
+        self.assertEqual(grouped_page["session_count"], 2)
+        self.assertEqual(
+            [group["session_id"] for group in grouped_page["groups"]],
+            ["atlas-old", "atlas-new"],
+        )
+        self.assertTrue(
+            all(len(group["items"]) == 1 for group in grouped_page["groups"])
+        )
 
     def test_unavailable_project_hint_does_not_broaden_across_projects(self) -> None:
         fixture = load_hws_search_fixture()

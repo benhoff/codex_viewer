@@ -50,7 +50,10 @@ Use `--data-urlencode` (or an equivalent URL encoder) for every query parameter.
 | `host` | No | Exact source-host name. |
 | `from` | No | Inclusive lower timestamp bound in ISO 8601 format. A timestamp without an offset is treated as UTC. |
 | `to` | No | Inclusive upper timestamp bound in ISO 8601 format. A timestamp without an offset is treated as UTC. |
-| `limit` | No | Results per page, from 1 to 100. Defaults to 20. |
+| `sort` | No | `relevance` (default), `time_asc` (oldest first), or `time_desc` (newest first). |
+| `group_by` | No | `none` (default) returns flat hits. `session` returns session groups. |
+| `max_hits_per_session` | No | Maximum hits returned in each session group, from 1 to 100. Defaults to 3 and is ignored when `group_by=none`. |
+| `limit` | No | Page size, from 1 to 100. Defaults to 20. It counts hits when ungrouped and sessions when grouped. |
 | `cursor` | No | Opaque value returned as `next_cursor` by the preceding page. |
 
 For example, restrict a search to a host and a UTC date range:
@@ -67,6 +70,33 @@ curl --get "https://codex.home.benhoff.net/api/v1/search" \
 ```
 
 Filters are combined. Results are also limited automatically to projects the token owner may view. An inaccessible project produces no hits rather than exposing its content.
+
+### Ordering and session grouping
+
+Use chronological sorting when reconstruction order matters:
+
+```bash
+curl --get "https://codex.home.benhoff.net/api/v1/search" \
+  --header "Accept: application/json" \
+  --header "Authorization: Bearer $CODEX_SEARCH_TOKEN" \
+  --data-urlencode "q=recovery experiment" \
+  --data-urlencode "sort=time_asc"
+```
+
+Use session grouping to prevent a long session from filling a page and to keep related turns together:
+
+```bash
+curl --get "https://codex.home.benhoff.net/api/v1/search" \
+  --header "Accept: application/json" \
+  --header "Authorization: Bearer $CODEX_SEARCH_TOKEN" \
+  --data-urlencode "q=recovery experiment" \
+  --data-urlencode "sort=time_desc" \
+  --data-urlencode "group_by=session" \
+  --data-urlencode "max_hits_per_session=3" \
+  --data-urlencode "limit=20"
+```
+
+For `sort=relevance`, ordinary keyword searches rank sessions and turns by their best lexical match. Project-history questions that express a latest/next-step intent retain their newest-first preference. With chronological sorting, session groups are ordered by their earliest matching turn for `time_asc` and their latest matching turn for `time_desc`; hits inside each group use the same direction.
 
 ## Search Behavior
 
@@ -105,6 +135,9 @@ A successful request returns HTTP `200` with JSON. This representative response 
     "from": null,
     "to": null
   },
+  "sort": "relevance",
+  "group_by": "none",
+  "max_hits_per_session": 3,
   "retrieval": {
     "strategy": "strict",
     "intent": "keyword",
@@ -169,7 +202,14 @@ A successful request returns HTTP `200` with JSON. This representative response 
       }
     }
   ],
+  "groups": [],
   "total_count": 3,
+  "session_count": 2,
+  "pagination": {
+    "unit": "hit",
+    "total_count": 3,
+    "returned_count": 1
+  },
   "limit": 20,
   "next_cursor": null
 }
@@ -178,7 +218,10 @@ A successful request returns HTTP `200` with JSON. This representative response 
 Important response fields:
 
 - `hits` contains the evidence returned for the current page.
-- `total_count` counts all hits for the selected retrieval strategy and filters.
+- `groups` is empty for the default flat response. With `group_by=session`, `hits` is empty and `groups` contains the page of sessions. Each group includes `session_id`, the session's full `match_count`, `returned_hit_count`, and its capped `hits` list.
+- `total_count` always counts all matching turns for the selected retrieval strategy and filters, before the per-session cap.
+- `session_count` counts distinct sessions containing those matches.
+- `pagination.unit` is `hit` for flat results and `session` for grouped results. `pagination.total_count` is the count in that unit, while `pagination.returned_count` describes the current page.
 - `next_cursor` is `null` on the final page.
 - `repository` records the remote, working directory, branch, and commit stored with the session. The current `root` value is the session working directory and may be below the actual repository root. `dirty` is currently `null` because ingestion does not yet capture dirty state.
 - `snippet`, `prompt_excerpt`, and `response_excerpt` are plain text, not HTML.
@@ -187,6 +230,34 @@ Important response fields:
 - `chunk` is non-null for a full-content match and includes its field, chunk index, and source-text offsets.
 - `links` are relative to `https://codex.home.benhoff.net`; `turn` retrieves complete API evidence, while `conversation` and `audit` open browser views.
 - `signals` contains any viewer warning or status badges associated with the session.
+
+A grouped response uses this shape (hit objects are abbreviated here):
+
+```json
+{
+  "group_by": "session",
+  "hits": [],
+  "groups": [
+    {
+      "session_id": "019-session-id",
+      "match_count": 7,
+      "returned_hit_count": 3,
+      "hits": [
+        {"session_id": "019-session-id", "turn_number": 12},
+        {"session_id": "019-session-id", "turn_number": 9},
+        {"session_id": "019-session-id", "turn_number": 4}
+      ]
+    }
+  ],
+  "total_count": 31,
+  "session_count": 8,
+  "pagination": {
+    "unit": "session",
+    "total_count": 8,
+    "returned_count": 1
+  }
+}
+```
 
 The `retrieval.strategy` value is one of:
 
@@ -239,7 +310,9 @@ curl --get "https://codex.home.benhoff.net/api/v1/search" \
   --data-urlencode "cursor=PASTE_NEXT_CURSOR_HERE"
 ```
 
-A cursor is bound to the original `q`, filters, and `limit`. Repeat those parameters exactly on every page. Changing one of them while reusing the cursor returns HTTP `400`. Cursors are opaque implementation details; do not decode or construct them.
+A cursor is bound to the original `q`, filters, `sort`, `group_by`, `max_hits_per_session`, and `limit`. Repeat those parameters exactly on every page. Changing one of them while reusing the cursor returns HTTP `400`. Cursors are opaque implementation details; do not decode or construct them.
+
+For flat requests, each page contains up to `limit` items in `hits`. For grouped requests, each page contains up to `limit` items in `groups`, and each group contains up to `max_hits_per_session` hits. Follow `next_cursor` in the same way for either response shape.
 
 Here is a complete Python example that follows every page using only the standard library:
 
@@ -285,7 +358,7 @@ Errors are JSON objects with a `detail` field when the client sends `Accept: app
 | `400` | The cursor is malformed or does not belong to this query. | Start again without a cursor, or repeat the original query, filters, and limit. |
 | `401` | Authentication failed. | Confirm the bearer header uses an active personal search token. Sync/daemon tokens are not accepted. |
 | `403` | The server is not ready for normal authenticated use. | An administrator may need to complete initial setup. |
-| `422` | A parameter failed validation. | Check that `q` is present, timestamps are valid, `from` is not after `to`, and `limit` is between 1 and 100. |
+| `422` | A parameter failed validation. | Check `q`, timestamps, the date range, `sort`, `group_by`, `limit`, and `max_hits_per_session`. |
 
 Common problems:
 

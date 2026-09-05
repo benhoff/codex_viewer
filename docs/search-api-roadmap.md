@@ -33,11 +33,11 @@ API behavior:
 - Keep `dirty: null` for historical or unreachable repositories.
 - Consider adding `captured_at` and `source` (`session_metadata` or `import_probe`) so clients can judge provenance quality.
 
-## Slice 3: Result Ordering, Grouping, and Deduplication
+## Slice 3: Result Ordering, Grouping, and Deduplication (Implemented)
 
 Goal: make the final state of an experiment easy to distinguish from superseded intermediate work.
 
-Proposed request parameters:
+Request parameters:
 
 ```text
 sort=relevance|time_asc|time_desc
@@ -45,14 +45,11 @@ group_by=none|session
 max_hits_per_session=3
 ```
 
-Implementation steps:
+The route validates and passes these options into the search service, and cursors are bound to all three values. Flat searches paginate by hit; grouped searches paginate by session and apply `max_hits_per_session` inside each selected group. `total_count` remains the backward-compatible raw matching-turn count, while `session_count` reports the distinct group count. The `pagination` object states which unit is being paged.
 
-1. Add and validate the parameters at the route boundary.
-2. Pass them into `search_turn_hits_raw` and include them in the cursor fingerprint.
-3. Add explicit SQL order clauses for relevance and chronological modes.
-4. For session grouping, rank hits with `ROW_NUMBER() OVER (PARTITION BY session_id ...)` and filter by `max_hits_per_session` before page limiting.
-5. Decide whether `total_count` means raw matching turns or returned grouped hits; preferably return both as `match_count` and `grouped_count`.
-6. Move from page-number cursors to keyset cursors containing the last timestamp/rank, session ID, and turn number. This prevents duplicate or skipped results if new sessions arrive between pages.
+Both relevance and chronological order are explicit in SQL. For grouped chronological results, `time_asc` orders sessions by their earliest matching turn and `time_desc` by their latest matching turn. Hits within a session use the requested direction. Each group reports both its full `match_count` and the number of hits returned after capping.
+
+Page cursors remain page-number based. Replacing them with keyset cursors containing the last timestamp/rank, session ID, and turn number remains a future hardening step to prevent duplicate or skipped results if new sessions arrive between page requests.
 
 Turn/chunk overlap is already deduplicated to one result per `(session_id, turn_number)` by the current candidate-ranking query. This slice should retain that behavior and add grouping across turns in the same session.
 

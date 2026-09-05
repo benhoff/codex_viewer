@@ -104,7 +104,7 @@ class SearchApiTests(unittest.TestCase):
                     project_id="public-project",
                     project_key="acme/public-hws",
                     project_label="acme/public-hws",
-                    prompt="shared api needle",
+                    prompt="shared api needle grouping",
                     response="public response one",
                 )
                 connection.execute(
@@ -145,6 +145,25 @@ class SearchApiTests(unittest.TestCase):
                         "neighboring response",
                         "2026-08-23T12:03:00+00:00",
                         "2026-08-23T12:03:00+00:00",
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO session_turn_search (
+                        project_text,
+                        prompt_text,
+                        response_text,
+                        event_text,
+                        session_id,
+                        turn_number
+                    ) VALUES (?, ?, ?, '', ?, ?)
+                    """,
+                    (
+                        "acme/public-hws",
+                        "grouping api needle neighboring prompt",
+                        "grouping api needle neighboring response",
+                        "public-one",
+                        2,
                     ),
                 )
                 connection.executemany(
@@ -353,6 +372,16 @@ class SearchApiTests(unittest.TestCase):
                     prompt="shared api needle",
                     response="public response two",
                     timestamp="2026-08-23T13:00:00+00:00",
+                )
+                insert_search_turn(
+                    connection,
+                    session_id="grouping-newest",
+                    project_id="grouping-project",
+                    project_key="acme/grouping",
+                    project_label="acme/grouping",
+                    prompt="grouping api needle",
+                    response="newest grouping evidence",
+                    timestamp="2026-08-23T14:00:00+00:00",
                 )
                 insert_search_turn(
                     connection,
@@ -638,6 +667,109 @@ class SearchApiTests(unittest.TestCase):
             timeout=2,
         )
         self.assertEqual(mismatched_response.status_code, 400)
+
+    def test_chronological_sorting_is_explicit_and_stable(self) -> None:
+        ascending_response = self._search(
+            token=self.viewer_token,
+            sort="time_asc",
+        )
+        descending_response = self._search(
+            token=self.viewer_token,
+            sort="time_desc",
+        )
+
+        self.assertEqual(ascending_response.status_code, 200, ascending_response.text)
+        self.assertEqual(descending_response.status_code, 200, descending_response.text)
+        ascending = ascending_response.json()
+        descending = descending_response.json()
+        self.assertEqual(
+            [hit["session_id"] for hit in ascending["hits"]],
+            ["public-one", "public-two"],
+        )
+        self.assertEqual(
+            [hit["session_id"] for hit in descending["hits"]],
+            ["public-two", "public-one"],
+        )
+        self.assertEqual(ascending["sort"], "time_asc")
+        self.assertEqual(ascending["group_by"], "none")
+        self.assertEqual(ascending["session_count"], 2)
+        self.assertEqual(ascending["pagination"]["unit"], "hit")
+        self.assertEqual(ascending["groups"], [])
+
+    def test_session_grouping_caps_hits_and_paginates_by_session(self) -> None:
+        first_response = self._search(
+            token=self.viewer_token,
+            q="grouping api needle",
+            sort="time_desc",
+            group_by="session",
+            max_hits_per_session=1,
+            limit=1,
+        )
+
+        self.assertEqual(first_response.status_code, 200, first_response.text)
+        first = first_response.json()
+        self.assertEqual(first["hits"], [])
+        self.assertEqual(first["total_count"], 3)
+        self.assertEqual(first["session_count"], 2)
+        self.assertEqual(first["pagination"]["unit"], "session")
+        self.assertEqual(first["pagination"]["total_count"], 2)
+        self.assertEqual(len(first["groups"]), 1)
+        self.assertEqual(first["groups"][0]["session_id"], "grouping-newest")
+        self.assertEqual(first["groups"][0]["match_count"], 1)
+        self.assertEqual(first["groups"][0]["returned_hit_count"], 1)
+        self.assertIsNotNone(first["next_cursor"])
+
+        second_response = self._search(
+            token=self.viewer_token,
+            q="grouping api needle",
+            sort="time_desc",
+            group_by="session",
+            max_hits_per_session=1,
+            limit=1,
+            cursor=first["next_cursor"],
+        )
+        self.assertEqual(second_response.status_code, 200, second_response.text)
+        second = second_response.json()
+        self.assertEqual(second["groups"][0]["session_id"], "public-one")
+        self.assertEqual(second["groups"][0]["match_count"], 2)
+        self.assertEqual(second["groups"][0]["returned_hit_count"], 1)
+        self.assertEqual(second["groups"][0]["hits"][0]["turn_number"], 2)
+        self.assertIsNone(second["next_cursor"])
+
+        mismatched_response = self._search(
+            token=self.viewer_token,
+            q="grouping api needle",
+            sort="time_asc",
+            group_by="session",
+            max_hits_per_session=1,
+            limit=1,
+            cursor=first["next_cursor"],
+        )
+        self.assertEqual(mismatched_response.status_code, 400)
+
+        mismatched_cap_response = self._search(
+            token=self.viewer_token,
+            q="grouping api needle",
+            sort="time_desc",
+            group_by="session",
+            max_hits_per_session=2,
+            limit=1,
+            cursor=first["next_cursor"],
+        )
+        self.assertEqual(mismatched_cap_response.status_code, 400)
+
+    def test_search_sort_and_group_parameters_are_validated(self) -> None:
+        invalid_sort = self._search(token=self.viewer_token, sort="newest")
+        invalid_group = self._search(token=self.viewer_token, group_by="project")
+        invalid_cap = self._search(
+            token=self.viewer_token,
+            group_by="session",
+            max_hits_per_session=0,
+        )
+
+        self.assertEqual(invalid_sort.status_code, 422)
+        self.assertEqual(invalid_group.status_code, 422)
+        self.assertEqual(invalid_cap.status_code, 422)
 
 
 if __name__ == "__main__":
