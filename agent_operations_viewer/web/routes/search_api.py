@@ -19,6 +19,11 @@ from ...projects import (
     fetch_session_with_project,
     row_is_visible_to_project_access,
 )
+from ...repositories import (
+    list_repository_projects,
+    normalize_repository_remote_filter,
+    normalize_repository_root,
+)
 from ...search import (
     SEARCH_FACETS,
     SEARCH_FIELDS,
@@ -31,7 +36,7 @@ from ..context import get_app_context
 
 
 router = APIRouter()
-CURSOR_VERSION = 3
+CURSOR_VERSION = 4
 
 SearchMode = Literal["all", "any", "phrase", "exact"]
 SearchField = Literal[
@@ -52,6 +57,9 @@ class BatchSearchQuery(BaseModel):
     id: str | None = Field(default=None, max_length=128)
     q: str = Field(min_length=1, max_length=500)
     project_id: str | None = Field(default=None, max_length=128)
+    repository_id: str | None = Field(default=None, max_length=128)
+    remote: str | None = Field(default=None, max_length=2048)
+    root: str | None = Field(default=None, max_length=2048)
     host: str | None = Field(default=None, max_length=255)
     from_date: datetime | None = Field(default=None, alias="from")
     to_date: datetime | None = Field(default=None, alias="to")
@@ -82,6 +90,9 @@ def _cursor_fingerprint(
     *,
     q: str,
     project_id: str | None,
+    repository_id: str | None,
+    remote: str | None,
+    root: str | None,
     host: str | None,
     from_timestamp: str | None,
     to_timestamp: str | None,
@@ -97,6 +108,9 @@ def _cursor_fingerprint(
         [
             q,
             project_id,
+            repository_id,
+            remote,
+            root,
             host,
             from_timestamp,
             to_timestamp,
@@ -215,11 +229,25 @@ def _validate_date_range(
     return _timestamp_param(from_date), _timestamp_param(to_date)
 
 
+def _normalize_repository_filters(
+    remote: str | None,
+    root: str | None,
+) -> tuple[str | None, str | None]:
+    try:
+        normalized_remote = normalize_repository_remote_filter(remote)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return normalized_remote, normalize_repository_root(root)
+
+
 def _serialize_search_page(
     search_page: dict[str, object],
     *,
     query: str,
     project_id: str | None,
+    repository_id: str | None,
+    remote: str | None,
+    root: str | None,
     host: str | None,
     from_timestamp: str | None,
     to_timestamp: str | None,
@@ -254,6 +282,9 @@ def _serialize_search_page(
         "query": query,
         "filters": {
             "project_id": project_id,
+            "repository_id": repository_id,
+            "remote": remote,
+            "root": root,
             "host": host,
             "from": from_timestamp,
             "to": to_timestamp,
@@ -435,6 +466,9 @@ def search_api(
     request: Request,
     q: str = Query(..., min_length=1, max_length=500),
     project_id: str | None = Query(default=None, max_length=128),
+    repository_id: str | None = Query(default=None, max_length=128),
+    remote: str | None = Query(default=None, max_length=2048),
+    root: str | None = Query(default=None, max_length=2048),
     host: str | None = Query(default=None, max_length=255),
     from_date: datetime | None = Query(default=None, alias="from"),
     to_date: datetime | None = Query(default=None, alias="to"),
@@ -455,7 +489,9 @@ def search_api(
     if not search_query:
         raise HTTPException(status_code=422, detail="Search query cannot be empty")
     normalized_project_id = str(project_id or "").strip() or None
+    normalized_repository_id = str(repository_id or "").strip() or None
     normalized_host = str(host or "").strip() or None
+    normalized_remote, normalized_root = _normalize_repository_filters(remote, root)
     from_timestamp, to_timestamp = _validate_date_range(from_date, to_date)
     normalized_fields = _normalize_api_values(
         fields,
@@ -471,6 +507,9 @@ def search_api(
     fingerprint = _cursor_fingerprint(
         q=search_query,
         project_id=normalized_project_id,
+        repository_id=normalized_repository_id,
+        remote=normalized_remote,
+        root=normalized_root,
         host=normalized_host,
         from_timestamp=from_timestamp,
         to_timestamp=to_timestamp,
@@ -496,6 +535,9 @@ def search_api(
             page=page,
             page_size=limit,
             project_id=normalized_project_id,
+            repository_id=normalized_repository_id,
+            remote=normalized_remote,
+            root=normalized_root,
             host=normalized_host,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
@@ -512,6 +554,9 @@ def search_api(
             search_page,
             query=search_query,
             project_id=normalized_project_id,
+            repository_id=normalized_repository_id,
+            remote=normalized_remote,
+            root=normalized_root,
             host=normalized_host,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
@@ -563,7 +608,12 @@ def search_batch_api(
             if not search_query:
                 raise HTTPException(status_code=422, detail="Search query cannot be empty")
             normalized_project_id = str(query.project_id or "").strip() or None
+            normalized_repository_id = str(query.repository_id or "").strip() or None
             normalized_host = str(query.host or "").strip() or None
+            normalized_remote, normalized_root = _normalize_repository_filters(
+                query.remote,
+                query.root,
+            )
             from_timestamp, to_timestamp = _validate_date_range(
                 query.from_date,
                 query.to_date,
@@ -584,6 +634,9 @@ def search_batch_api(
                 page=1,
                 page_size=query.limit,
                 project_id=normalized_project_id,
+                repository_id=normalized_repository_id,
+                remote=normalized_remote,
+                root=normalized_root,
                 host=normalized_host,
                 from_timestamp=from_timestamp,
                 to_timestamp=to_timestamp,
@@ -599,6 +652,9 @@ def search_batch_api(
                 search_page,
                 query=search_query,
                 project_id=normalized_project_id,
+                repository_id=normalized_repository_id,
+                remote=normalized_remote,
+                root=normalized_root,
                 host=normalized_host,
                 from_timestamp=from_timestamp,
                 to_timestamp=to_timestamp,
@@ -622,6 +678,74 @@ def search_batch_api(
             "returned_hit_count": returned_hit_count,
             "max_total_hits": body.max_total_hits,
             "results": results,
+        },
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@router.get("/api/v1/projects", response_class=JSONResponse)
+def projects_api(
+    request: Request,
+    repository_id: str | None = Query(default=None, max_length=128),
+    remote: str | None = Query(default=None, max_length=2048),
+    root: str | None = Query(default=None, max_length=2048),
+    host: str | None = Query(default=None, max_length=255),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=2048),
+) -> JSONResponse:
+    context = get_app_context(request)
+    if bool(getattr(request.state, "auth_enabled", False)):
+        require_authenticated_user(request)
+
+    normalized_repository_id = str(repository_id or "").strip() or None
+    normalized_host = str(host or "").strip() or None
+    normalized_remote, normalized_root = _normalize_repository_filters(remote, root)
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            [
+                "projects",
+                normalized_repository_id,
+                normalized_remote,
+                normalized_root,
+                normalized_host,
+                limit,
+            ],
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    page = _decode_cursor(cursor, fingerprint)
+
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        result = list_repository_projects(
+            connection,
+            repository_id=normalized_repository_id,
+            remote=normalized_remote,
+            root=normalized_root,
+            host=normalized_host,
+            page=page,
+            page_size=limit,
+            project_access=project_access,
+        )
+    next_cursor = (
+        _encode_cursor(page + 1, fingerprint) if bool(result["has_next"]) else None
+    )
+    return JSONResponse(
+        {
+            "filters": {
+                "repository_id": normalized_repository_id,
+                "remote": normalized_remote,
+                "root": normalized_root,
+                "host": normalized_host,
+            },
+            "projects": result["items"],
+            "total_count": int(result["total_count"]),
+            "limit": int(result["page_size"]),
+            "next_cursor": next_cursor,
         },
         headers={"Cache-Control": "private, no-store"},
     )
@@ -715,6 +839,7 @@ def session_turn_api(
                 "host": project["source_host"],
             },
             "repository": {
+                "id": str(session["repository_id"] or "").strip() or None,
                 "remote": str(
                     session["git_repository_url"] or session["github_remote_url"] or ""
                 ).strip()

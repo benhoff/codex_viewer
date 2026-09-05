@@ -53,7 +53,7 @@ BOOTSTRAP_PUBLIC_PATHS = {
     "/setup/claim-admin",
     "/setup/status",
 }
-SEARCH_API_PATHS = {"/api/v1/search", "/api/v1/search/batch"}
+SEARCH_API_PATHS = {"/api/v1/search", "/api/v1/search/batch", "/api/v1/projects"}
 SEARCH_API_TURN_PATH = re.compile(r"^/api/v1/sessions/[^/]+/turns/[0-9]+$")
 
 

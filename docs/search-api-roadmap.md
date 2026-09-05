@@ -2,7 +2,7 @@
 
 This roadmap breaks the search API improvements into independently deployable slices. The ordering prioritizes evidence reconstruction and trustworthy negative results before adding broader retrieval techniques.
 
-## Current Slice: Complete Evidence and Provenance
+## Slice 1: Complete Evidence and Provenance (Implemented)
 
 The first slice is implemented without a database migration:
 
@@ -81,16 +81,16 @@ The aggregate query uses the same project ACL, `project_id`, `host`, and date co
 
 The schema now persists `sessions.search_indexed_at` only after the turn, compact-search, and full-content chunk index versions are all current. Existing rows migrate to `NULL`; the API reports `timestamp_unknown` rather than substituting import time. Future imports, incremental suffix indexing, project reindexing, and bounded chunk/turn backfills update the timestamp at actual completion.
 
-## Slice 5: Canonical Repository Identity and Project Discovery
+## Slice 5: Canonical Repository Identity and Project Discovery (Implemented)
 
 Goal: link histories such as `my-laptop/hws` and `github:benhoff/hws` without collapsing unrelated repositories that share a basename.
 
-Recommended model:
+Implemented model:
 
-- Keep `projects.id` as the access-control and presentation identity.
-- Add a stable `repositories` table for repository identity.
-- Add `repository_aliases` for normalized remotes, `(host, root)` pairs, and manually confirmed aliases.
-- Link projects and sessions to a nullable `repository_id`.
+- `projects.id` remains the access-control and presentation identity.
+- Stable `repositories` records are separate from project grouping and survive source remapping.
+- `repository_aliases` records normalized non-local remotes, `(host, root)` locations, and project-source keys.
+- Projects and sessions link to a nullable `repository_id`; conflicting manually grouped projects remain explicitly ambiguous.
 
 Identity rules:
 
@@ -101,9 +101,11 @@ Identity rules:
 5. Require an explicit manual merge when evidence is ambiguous.
 6. Preserve per-project ACL enforcement even when multiple projects refer to one canonical repository.
 
-Add `GET /api/v1/projects` with filters such as `repository_id`, `remote`, `root`, and `host`. Each result should include its project ID, repository ID, known aliases, sources, time range, and session count. The search endpoint can then accept the same repository filters.
+`GET /api/v1/projects` supports `repository_id`, `remote`, `root`, and `host` filters and returns project IDs, repository IDs, known aliases, sources, time ranges, and session counts. Search and batch search accept `repository_id`, `remote`, and `root` alongside the existing project and host filters. All discovery, search, coverage, and pagination paths retain project-level ACL enforcement.
 
-Migration work needs special care: the existing project registry can merge or remove project rows as source mappings change, so stable repository IDs must be created independently of display/group keys.
+Remote IDs are derived from normalized remote identities, so SSH and HTTPS forms converge. Local fallbacks are scoped by source host and normalized working directory and never merge by basename. When later remote evidence supersedes a location fallback, the older repository record becomes a durable redirect to the canonical record.
+
+The current location alias uses the session working directory because a captured Git root is not available yet. Slice 2 remains responsible for replacing that approximation with ingestion-time repository-root provenance.
 
 ## Slice 6: Search Modes, Fields, Batch Requests, and Facets (Implemented)
 

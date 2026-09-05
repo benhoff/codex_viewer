@@ -113,6 +113,8 @@ def _collect_database_stats(database_path: Path) -> dict[str, int]:
             "sessions": _count_rows(connection, "sessions"),
             "events": _count_rows(connection, "events"),
             "projects": _count_rows(connection, "projects"),
+            "repositories": _count_rows(connection, "repositories"),
+            "repository_aliases": _count_rows(connection, "repository_aliases"),
             "users": _count_rows(connection, "users"),
             "session_artifacts": _count_rows(connection, "session_artifacts"),
             "saved_turns": _count_rows(connection, "saved_turns"),

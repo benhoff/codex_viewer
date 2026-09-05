@@ -43,6 +43,7 @@ SESSION_COLUMN_DEFS = {
     "github_org": "TEXT",
     "github_repo": "TEXT",
     "github_slug": "TEXT",
+    "repository_id": "TEXT REFERENCES repositories(id) ON DELETE SET NULL",
     "forked_from_id": "TEXT",
     "agent_nickname": "TEXT",
     "agent_role": "TEXT",
@@ -157,6 +158,32 @@ PROJECT_COLUMN_DEFS = {
     "current_group_key": "TEXT NOT NULL UNIQUE",
     "display_label": "TEXT NOT NULL DEFAULT ''",
     "visibility": "TEXT NOT NULL DEFAULT 'authenticated'",
+    "repository_id": "TEXT REFERENCES repositories(id) ON DELETE SET NULL",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
+REPOSITORY_COLUMN_DEFS = {
+    "id": "TEXT PRIMARY KEY",
+    "canonical_key": "TEXT NOT NULL UNIQUE",
+    "kind": "TEXT NOT NULL DEFAULT 'location'",
+    "remote_host": "TEXT NOT NULL DEFAULT ''",
+    "remote_path": "TEXT NOT NULL DEFAULT ''",
+    "display_label": "TEXT NOT NULL DEFAULT ''",
+    "merged_into_repository_id": "TEXT REFERENCES repositories(id) ON DELETE SET NULL",
+    "created_at": "TEXT NOT NULL",
+    "updated_at": "TEXT NOT NULL",
+}
+
+REPOSITORY_ALIAS_COLUMN_DEFS = {
+    "alias_key": "TEXT PRIMARY KEY",
+    "repository_id": "TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE",
+    "alias_type": "TEXT NOT NULL",
+    "alias_value": "TEXT NOT NULL",
+    "display_value": "TEXT NOT NULL DEFAULT ''",
+    "source_host": "TEXT NOT NULL DEFAULT ''",
+    "root": "TEXT NOT NULL DEFAULT ''",
+    "remote_url": "TEXT NOT NULL DEFAULT ''",
     "created_at": "TEXT NOT NULL",
     "updated_at": "TEXT NOT NULL",
 }
@@ -426,6 +453,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     github_org TEXT,
     github_repo TEXT,
     github_slug TEXT,
+    repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
     forked_from_id TEXT,
     agent_nickname TEXT,
     agent_role TEXT,
@@ -634,6 +662,32 @@ CREATE TABLE IF NOT EXISTS projects (
     current_group_key TEXT NOT NULL UNIQUE,
     display_label TEXT NOT NULL DEFAULT '',
     visibility TEXT NOT NULL DEFAULT 'authenticated',
+    repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS repositories (
+    id TEXT PRIMARY KEY,
+    canonical_key TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL DEFAULT 'location',
+    remote_host TEXT NOT NULL DEFAULT '',
+    remote_path TEXT NOT NULL DEFAULT '',
+    display_label TEXT NOT NULL DEFAULT '',
+    merged_into_repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS repository_aliases (
+    alias_key TEXT PRIMARY KEY,
+    repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    alias_type TEXT NOT NULL,
+    alias_value TEXT NOT NULL,
+    display_value TEXT NOT NULL DEFAULT '',
+    source_host TEXT NOT NULL DEFAULT '',
+    root TEXT NOT NULL DEFAULT '',
+    remote_url TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -916,6 +970,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_model_provider ON sessions(model_provide
 CREATE INDEX IF NOT EXISTS idx_sessions_source_host ON sessions(source_host);
 CREATE INDEX IF NOT EXISTS idx_sessions_github_slug ON sessions(github_slug);
 CREATE INDEX IF NOT EXISTS idx_sessions_project_key ON sessions(inferred_project_key);
+CREATE INDEX IF NOT EXISTS idx_sessions_repository_id ON sessions(repository_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_turn_timestamp ON sessions(last_turn_timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_raw_artifact_sha256 ON sessions(raw_artifact_sha256);
 CREATE INDEX IF NOT EXISTS idx_sessions_forked_from_id ON sessions(forked_from_id);
@@ -998,6 +1053,18 @@ ON project_overrides(override_group_key);
 
 CREATE INDEX IF NOT EXISTS idx_projects_visibility
 ON projects(visibility, current_group_key);
+
+CREATE INDEX IF NOT EXISTS idx_projects_repository_id
+ON projects(repository_id);
+
+CREATE INDEX IF NOT EXISTS idx_repositories_merged_into
+ON repositories(merged_into_repository_id);
+
+CREATE INDEX IF NOT EXISTS idx_repository_aliases_repository
+ON repository_aliases(repository_id, alias_type);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_repository_aliases_type_value
+ON repository_aliases(alias_type, alias_value);
 
 CREATE INDEX IF NOT EXISTS idx_project_sources_project_id
 ON project_sources(project_id);
@@ -1394,6 +1461,28 @@ def ensure_project_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_repository_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "repositories"):
+        return
+    repository_columns = table_columns(connection, "repositories")
+    for column_name, column_def in REPOSITORY_COLUMN_DEFS.items():
+        if column_name not in repository_columns and column_name != "id":
+            connection.execute(
+                f"ALTER TABLE repositories ADD COLUMN {column_name} {column_def}"
+            )
+
+
+def ensure_repository_alias_columns(connection: sqlite3.Connection) -> None:
+    if not table_exists(connection, "repository_aliases"):
+        return
+    alias_columns = table_columns(connection, "repository_aliases")
+    for column_name, column_def in REPOSITORY_ALIAS_COLUMN_DEFS.items():
+        if column_name not in alias_columns and column_name != "alias_key":
+            connection.execute(
+                f"ALTER TABLE repository_aliases ADD COLUMN {column_name} {column_def}"
+            )
+
+
 def ensure_project_source_columns(connection: sqlite3.Connection) -> None:
     if not table_exists(connection, "project_sources"):
         return
@@ -1698,6 +1787,13 @@ def run_db_backfills(database_path: Path) -> None:
 
             if project_registry_needs_sync(connection):
                 sync_project_registry(connection)
+            from .repositories import (
+                repository_registry_needs_sync,
+                sync_repository_registry,
+            )
+
+            if repository_registry_needs_sync(connection):
+                sync_repository_registry(connection)
 
         while True:
             with write_transaction(connection):
@@ -1722,6 +1818,8 @@ def init_db(database_path: Path, *, defer_backfills: bool = False) -> None:
             ensure_machine_alias_columns(connection)
             ensure_user_columns(connection)
             backfill_user_access_columns(connection)
+            ensure_repository_columns(connection)
+            ensure_repository_alias_columns(connection)
             ensure_project_columns(connection)
             ensure_project_source_columns(connection)
             ensure_project_acl_columns(connection)

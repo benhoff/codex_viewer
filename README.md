@@ -275,7 +275,7 @@ curl --get http://127.0.0.1:8000/api/v1/search \
   --data-urlencode "limit=20"
 ```
 
-Optional filters are `project_id`, `host`, `from`, and `to`. Deterministic lexical options include `mode=all|any|phrase|exact`, field filters for prompts, responses, activity, commands, paths, commit IDs, and tool output, plus pre-pagination facets. Related bounded queries can be sent to `POST /api/v1/search/batch`. Timestamps use ISO 8601. When more results exist, pass the returned `next_cursor` value as the `cursor` query parameter. Search responses contain plain-text snippets and relative links to the matching turn.
+Optional filters are `project_id`, canonical `repository_id`, normalized Git `remote`, working-directory `root`, `host`, `from`, and `to`. `GET /api/v1/projects` discovers ACL-visible project IDs, canonical repository IDs, aliases, sources, time ranges, and session counts. Deterministic lexical options include `mode=all|any|phrase|exact`, field filters for prompts, responses, activity, commands, paths, commit IDs, and tool output, plus pre-pagination facets. Related bounded queries can be sent to `POST /api/v1/search/batch`. Timestamps use ISO 8601. When more results exist, pass the returned `next_cursor` value as the `cursor` query parameter. Search responses contain plain-text snippets and relative links to the matching turn.
 
 Every hit also includes repository provenance stored with the session and a `links.turn` URL for retrieving the complete normalized prompt, response, commands, patches, and optional activity context through the API.
 

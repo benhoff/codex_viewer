@@ -47,6 +47,9 @@ Use `--data-urlencode` (or an equivalent URL encoder) for every query parameter.
 | --- | --- | --- |
 | `q` | Yes | Search text, from 1 to 500 characters after URL decoding. Whitespace-only queries are rejected. |
 | `project_id` | No | Exact, stable project ID. This is not the project's display label or grouping key. |
+| `repository_id` | No | Exact canonical repository ID returned by a hit or `GET /api/v1/projects`. Multiple project histories may share this ID without sharing ACLs. |
+| `remote` | No | Git remote URL or normalized `host/path`. SSH and HTTPS forms resolve to the same non-local repository identity. |
+| `root` | No | Exact normalized session working directory. Until repository-root ingestion is implemented, this is a working-directory filter rather than a guaranteed Git root. |
 | `host` | No | Exact source-host name. |
 | `from` | No | Inclusive lower timestamp bound in ISO 8601 format. A timestamp without an offset is treated as UTC. |
 | `to` | No | Inclusive upper timestamp bound in ISO 8601 format. A timestamp without an offset is treated as UTC. |
@@ -123,7 +126,7 @@ What was resolved in the hws repo?
 
 For these questions, the service can resolve a project reference, relax the keyword match, or return recent project history as evidence. Inspect the response's `retrieval` object to see which behavior was used. Because this is lexical retrieval rather than an answer-generation API, the client is responsible for interpreting or summarizing the returned hits.
 
-For deterministic project scoping, use `project_id`. A hit's `project.id` value can be reused in later requests.
+For deterministic project scoping, use `project_id`. To search the same repository across imported project identities or machines, use `repository_id` or `remote`. A hit's `project.id` and `repository.id` values can be reused in later requests. Repository identity never broadens project permissions: the token owner's project ACL is still applied to every matching session.
 
 ### Lexical modes and fields
 
@@ -157,6 +160,9 @@ A successful request returns HTTP `200` with JSON. This representative response 
   "query": "authentication failure",
   "filters": {
     "project_id": null,
+    "repository_id": null,
+    "remote": null,
+    "root": null,
     "host": null,
     "from": null,
     "to": null,
@@ -203,6 +209,7 @@ A successful request returns HTTP `200` with JSON. This representative response 
     "projects_searched": [
       {
         "id": "01JPROJECTID",
+        "repository_id": "01JREPOSITORYID",
         "key": "acme/viewer",
         "label": "Agent Operations Viewer",
         "session_count": 12,
@@ -244,6 +251,7 @@ A successful request returns HTTP `200` with JSON. This representative response 
         "host": "workstation-01"
       },
       "repository": {
+        "id": "01JREPOSITORYID",
         "remote": "https://github.com/acme/viewer.git",
         "root": "/workspace/viewer",
         "branch": "feature/search-api",
@@ -299,7 +307,7 @@ Important response fields:
 - `coverage` describes the visible, structurally filtered turn corpus that was eligible to be searched. It is independent of whether the query text produced a hit.
 - `facets` contains only the requested facet families. Counts cover the complete matching result set after ACL and structural filters but before pagination.
 - `next_cursor` is `null` on the final page.
-- `repository` records the remote, working directory, branch, and commit stored with the session. The current `root` value is the session working directory and may be below the actual repository root. `dirty` is currently `null` because ingestion does not yet capture dirty state.
+- `repository.id` is the canonical repository identity. `remote`, `root`, `branch`, and `head` remain the provenance stored with that particular session. The current `root` value is the session working directory and may be below the actual repository root. `dirty` is currently `null` because ingestion does not yet capture dirty state.
 - `snippet`, `prompt_excerpt`, and `response_excerpt` are plain text, not HTML.
 - `score` is a relative lexical relevance score. Treat it as meaningful within a result set, not as a calibrated probability.
 - `match_source` identifies a compact turn match (`turn`), full-content match (`chunk`), or project-history fallback (`history`).
@@ -346,7 +354,7 @@ When `fields` is present, `all` remains strict and the natural-language relaxati
 
 ## Coverage and Freshness
 
-Coverage uses the same personal-token ACL, `project_id`, `host`, `from`, and `to` restrictions as the search itself, but does not apply the text query. Private projects that the token owner cannot access are absent from every range, count, and `projects_searched` entry.
+Coverage uses the same personal-token ACL, `project_id`, `repository_id`, `remote`, `root`, `host`, `from`, and `to` restrictions as the search itself, but does not apply the text query. Private projects that the token owner cannot access are absent from every range, count, and `projects_searched` entry.
 
 The counts have deliberately distinct meanings:
 
@@ -366,6 +374,65 @@ The counts have deliberately distinct meanings:
 - `unresolved_scope`: a natural-language project reference was inaccessible, unmatched, or ambiguous, so the service intentionally searched no broader corpus.
 
 For legacy installations, the schema migration adds a nullable `search_indexed_at` field. Existing values remain unknown until a real indexing operation completes; deployment does not manufacture historical completion times.
+
+## Project and Repository Discovery
+
+Use `GET /api/v1/projects` to discover stable project and repository IDs under the token owner's ACL:
+
+```bash
+curl --get "https://codex.home.benhoff.net/api/v1/projects" \
+  --header "Accept: application/json" \
+  --header "Authorization: Bearer $CODEX_SEARCH_TOKEN" \
+  --data-urlencode "remote=git@github.com:acme/viewer.git" \
+  --data-urlencode "limit=50"
+```
+
+The optional filters are `repository_id`, `remote`, `root`, and `host`. Filters are combined. `limit` ranges from 1 to 100 and defaults to 50; follow `next_cursor` to retrieve another page.
+
+Each project contains its project ID, label, visibility, canonical `repository_id`, time range, session count, source histories, and repository aliases. A repository discovered through SSH and HTTPS remotes uses one normalized remote identity. Histories without a non-local remote fall back to `(source host, normalized working directory)` and are never merged solely because they share a basename.
+
+```json
+{
+  "projects": [
+    {
+      "id": "01JPROJECTID",
+      "key": "github:acme/viewer",
+      "label": "acme/viewer",
+      "repository_id": "01JREPOSITORYID",
+      "repository_ids": ["01JREPOSITORYID"],
+      "repository": {
+        "id": "01JREPOSITORYID",
+        "kind": "remote",
+        "host": "github.com",
+        "path": "acme/viewer",
+        "remote": "https://github.com/acme/viewer",
+        "aliases": [
+          {"type": "remote", "value": "github.com/acme/viewer"},
+          {"type": "location", "host": "workstation-01", "root": "/workspace/viewer"}
+        ]
+      },
+      "sources": [
+        {
+          "project_key": "github:acme/viewer",
+          "host": "workstation-01",
+          "root": "/workspace/viewer",
+          "session_count": 12
+        }
+      ],
+      "session_count": 12,
+      "first_session_at": "2026-08-01T09:00:00Z",
+      "last_session_at": "2026-08-23T13:00:00Z"
+    }
+  ],
+  "total_count": 1,
+  "limit": 50,
+  "next_cursor": null
+}
+```
+
+`repository_ids` contains every repository represented by the project's sessions. Normally it contains one value and `repository` contains the corresponding canonical record. If a manually grouped project contains conflicting repository evidence, `repository_id` and `repository` are `null` while `repository_ids` preserves the ambiguity.
+
+Repository records that later gain stronger remote evidence are merged through a durable redirect. Clients may continue passing the older ID; the service resolves it to the current canonical ID.
 
 ## Batch Search
 
@@ -466,7 +533,7 @@ curl --get "https://codex.home.benhoff.net/api/v1/search" \
   --data-urlencode "cursor=PASTE_NEXT_CURSOR_HERE"
 ```
 
-A cursor is bound to the original `q`, filters, `mode`, `fields`, `facets`, `sort`, `group_by`, `max_hits_per_session`, and `limit`. Repeat those parameters exactly on every page. Changing one of them while reusing the cursor returns HTTP `400`. Cursors are opaque implementation details; do not decode or construct them.
+A search cursor is bound to the original `q`, filters, `mode`, `fields`, `facets`, `sort`, `group_by`, `max_hits_per_session`, and `limit`. A project-discovery cursor is bound to its repository, remote, root, host, and limit filters. Repeat the applicable parameters exactly on every page. Changing one of them while reusing the cursor returns HTTP `400`. Cursors are opaque implementation details; do not decode or construct them.
 
 For flat requests, each page contains up to `limit` items in `hits`. For grouped requests, each page contains up to `limit` items in `groups`, and each group contains up to `max_hits_per_session` hits. Follow `next_cursor` in the same way for either response shape.
 
@@ -514,12 +581,12 @@ Errors are JSON objects with a `detail` field when the client sends `Accept: app
 | `400` | The cursor is malformed or does not belong to this query. | Start again without a cursor, or repeat the original query, filters, and limit. |
 | `401` | Authentication failed. | Confirm the bearer header uses an active personal search token. Sync/daemon tokens are not accepted. |
 | `403` | The server is not ready for normal authenticated use. | An administrator may need to complete initial setup. |
-| `422` | A parameter or batch budget failed validation. | Check `q`, timestamps, the date range, `mode`, `fields`, `facets`, `sort`, `group_by`, limits, and `max_total_hits`. |
+| `422` | A parameter or batch budget failed validation. | Check `q`, repository filters, timestamps, the date range, `mode`, `fields`, `facets`, `sort`, `group_by`, limits, and `max_total_hits`. |
 
 Common problems:
 
 - **A request opens the sign-in page:** add `Accept: application/json` and verify the bearer token header. Browser session cookies are not a substitute for a programmatic search token.
-- **A known session is missing:** confirm that the token owner can view the project, then verify `project_id`, `host`, and date filters.
+- **A known session is missing:** confirm that the token owner can view the project, then verify project, repository, host, root, and date filters.
 - **A project-history question returns no hits:** use an unambiguous project name or pass its exact `project_id`.
 - **Only an excerpt is returned:** search returns evidence snippets by design. Pass the hit's `session_id` and `turn_number` to the complete-turn endpoint, or follow `links.conversation` in a browser.
 

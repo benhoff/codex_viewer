@@ -17,6 +17,7 @@ from agent_operations_viewer.config import Settings
 from agent_operations_viewer.db import connect, write_transaction
 from agent_operations_viewer.local_auth import create_initial_admin, create_local_user
 from agent_operations_viewer.projects import upsert_project_acl_member
+from agent_operations_viewer.repositories import sync_repository_registry
 from agent_operations_viewer.search_api_tokens import create_search_api_token
 from agent_operations_viewer.turn_index import replace_session_search_chunks
 from agent_operations_viewer.web.app import create_app
@@ -397,6 +398,12 @@ class SearchApiTests(unittest.TestCase):
                     prompt="shared api needle",
                     response="classified private evidence",
                 )
+                # Canonical repository identity must not weaken the private
+                # project's independent ACL even when it shares a remote.
+                connection.execute(
+                    "UPDATE sessions SET git_repository_url = ? WHERE id = ?",
+                    ("git@github.com:acme/public-hws.git", "private-one"),
+                )
                 self.long_marker = "api-full-content-marker-mercury"
                 insert_search_turn(
                     connection,
@@ -430,6 +437,7 @@ class SearchApiTests(unittest.TestCase):
                         ),
                     ],
                 )
+                sync_repository_registry(connection)
         self.viewer_token = str(viewer_token["token"])
         self.sync_token = str(sync_token["token"])
         self.base_url = f"http://127.0.0.1:{self.port}"
@@ -490,9 +498,107 @@ class SearchApiTests(unittest.TestCase):
             timeout=2,
         )
 
+    def _projects(self, *, token: str | None = None, **params: object) -> requests.Response:
+        headers = {"accept": "application/json"}
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        return requests.get(
+            f"{self.base_url}/api/v1/projects",
+            params=params,
+            headers=headers,
+            timeout=2,
+        )
+
     def test_read_token_is_required_and_sync_token_is_not_accepted(self) -> None:
         self.assertEqual(self._search().status_code, 401)
         self.assertEqual(self._search(token=self.sync_token).status_code, 401)
+        self.assertEqual(self._projects().status_code, 401)
+        self.assertEqual(self._projects(token=self.sync_token).status_code, 401)
+
+    def test_projects_api_and_repository_filters_preserve_project_acls(self) -> None:
+        response = self._projects(token=self.viewer_token)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total_count"], 3)
+        self.assertNotIn("private-project", response.text)
+        public_project = next(
+            project for project in payload["projects"] if project["id"] == "public-project"
+        )
+        repository_id = public_project["repository_id"]
+        self.assertIsNotNone(repository_id)
+        self.assertEqual(public_project["repository"]["host"], "github.com")
+        self.assertEqual(public_project["repository"]["path"], "acme/public-hws")
+        self.assertEqual(public_project["session_count"], 2)
+        self.assertEqual(len(public_project["sources"]), 2)
+
+        remote_response = self._projects(
+            token=self.viewer_token,
+            remote="git@github.com:acme/public-hws.git",
+        )
+        self.assertEqual(remote_response.status_code, 200, remote_response.text)
+        self.assertEqual(
+            [project["id"] for project in remote_response.json()["projects"]],
+            ["public-project"],
+        )
+
+        remote_search = self._search(
+            token=self.viewer_token,
+            remote="https://github.com/acme/public-hws.git",
+        )
+        self.assertEqual(remote_search.status_code, 200, remote_search.text)
+        self.assertEqual(remote_search.json()["total_count"], 2)
+        self.assertEqual(
+            remote_search.json()["filters"]["remote"],
+            "github.com/acme/public-hws",
+        )
+
+        repository_search = self._search(
+            token=self.viewer_token,
+            repository_id=repository_id,
+        )
+        self.assertEqual(repository_search.status_code, 200, repository_search.text)
+        self.assertEqual(repository_search.json()["total_count"], 2)
+        self.assertEqual(
+            {hit["repository"]["id"] for hit in repository_search.json()["hits"]},
+            {repository_id},
+        )
+
+        root_search = self._search(
+            token=self.viewer_token,
+            root="/workspace/acme/public-hws/",
+        )
+        self.assertEqual(root_search.status_code, 200, root_search.text)
+        self.assertEqual(root_search.json()["total_count"], 2)
+
+        first_page = self._projects(token=self.viewer_token, limit=1)
+        self.assertEqual(first_page.status_code, 200, first_page.text)
+        first_payload = first_page.json()
+        self.assertEqual(first_payload["total_count"], 3)
+        self.assertIsNotNone(first_payload["next_cursor"])
+        second_page = self._projects(
+            token=self.viewer_token,
+            limit=1,
+            cursor=first_payload["next_cursor"],
+        )
+        self.assertEqual(second_page.status_code, 200, second_page.text)
+        self.assertNotEqual(
+            first_payload["projects"][0]["id"],
+            second_page.json()["projects"][0]["id"],
+        )
+        mismatched_cursor = self._projects(
+            token=self.viewer_token,
+            limit=1,
+            remote="https://github.com/acme/public-hws.git",
+            cursor=first_payload["next_cursor"],
+        )
+        self.assertEqual(mismatched_cursor.status_code, 400)
+
+        invalid_remote = self._projects(
+            token=self.viewer_token,
+            remote="not-a-remote",
+        )
+        self.assertEqual(invalid_remote.status_code, 422)
 
     def test_signed_in_user_can_create_a_personal_search_token(self) -> None:
         session = requests.Session()
@@ -730,6 +836,7 @@ class SearchApiTests(unittest.TestCase):
                     "mode": "phrase",
                     "fields": ["response"],
                     "facets": ["project"],
+                    "remote": "git@github.com:acme/public-hws.git",
                     "limit": 2,
                 },
             ],
@@ -745,6 +852,10 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(payload["query_count"], 2)
         self.assertEqual([result["id"] for result in payload["results"]], ["command", "responses"])
         self.assertEqual(payload["results"][0]["hits"][0]["matched_field"], "commands")
+        self.assertEqual(
+            payload["results"][1]["filters"]["remote"],
+            "github.com/acme/public-hws",
+        )
         self.assertNotIn("classified private evidence", response.text)
         self.assertEqual(response.headers["cache-control"], "private, no-store")
 

@@ -73,6 +73,7 @@ GROUP_ROW_SELECT = f"""
     s.github_org,
     s.github_repo,
     s.github_slug,
+    s.repository_id,
     s.forked_from_id,
     s.agent_nickname,
     s.agent_role,
@@ -124,6 +125,7 @@ TURN_STREAM_SELECT = f"""
     s.github_org,
     s.github_repo,
     s.github_slug,
+    s.repository_id,
     s.inferred_project_kind,
     s.inferred_project_key,
     s.inferred_project_label,
@@ -1273,6 +1275,13 @@ def sync_project_registry(connection: sqlite3.Connection) -> None:
         )
         """
     )
+
+    # Repository identity is deliberately separate from project grouping and
+    # ACLs. Refresh it after project/source mappings settle so multiple visible
+    # project histories can point at one canonical repository safely.
+    from .repositories import sync_repository_registry
+
+    sync_repository_registry(connection)
 
 
 def fetch_session_stream_summaries(

@@ -17,6 +17,12 @@ from .projects import (
     trimmed,
     visible_session_where,
 )
+from .repositories import (
+    normalize_repository_remote_filter,
+    normalize_repository_root,
+    repository_root_sql,
+    resolve_repository_id,
+)
 from .search_query import SEARCH_MODES, SearchQueryPlan, plan_search_query
 from .turn_index import SEARCH_CHUNK_VERSION, TURN_INDEX_VERSION, TURN_SEARCH_VERSION
 
@@ -440,6 +446,9 @@ def _resolve_project_scope(
 def _base_search_conditions(
     *,
     project_id: str | None,
+    repository_id: str | None,
+    remote: str | None,
+    root: str | None,
     host: str | None,
     from_timestamp: str | None,
     to_timestamp: str | None,
@@ -450,6 +459,25 @@ def _base_search_conditions(
     if project_id:
         conditions.append("p.id = ?")
         params.append(project_id)
+    if repository_id:
+        conditions.append("COALESCE(s.repository_id, p.repository_id) = ?")
+        params.append(repository_id)
+    if remote:
+        conditions.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM repository_aliases AS search_remote_alias
+                WHERE search_remote_alias.repository_id = COALESCE(s.repository_id, p.repository_id)
+                  AND search_remote_alias.alias_type = 'remote'
+                  AND search_remote_alias.alias_value = ?
+            )
+            """
+        )
+        params.append(remote)
+    if root:
+        conditions.append(f"{repository_root_sql('s.cwd')} = ?")
+        params.append(root)
     if host:
         conditions.append("s.source_host = ?")
         params.append(host)
@@ -498,6 +526,10 @@ def _search_coverage(
         f"""
         SELECT
             p.id AS project_id,
+            CASE
+                WHEN COUNT(DISTINCT COALESCE(s.repository_id, p.repository_id)) = 1
+                THEN MIN(COALESCE(s.repository_id, p.repository_id))
+            END AS repository_id,
             {project_key_sql} AS project_key,
             {project_label_sql} AS project_label,
             strftime(
@@ -586,6 +618,9 @@ def _search_coverage(
         projects.append(
             {
                 "id": str(row["project_id"]) if row["project_id"] else None,
+                "repository_id": (
+                    str(row["repository_id"]) if row["repository_id"] else None
+                ),
                 "key": trimmed(row["project_key"]),
                 "label": trimmed(row["project_label"]),
                 "session_count": project_sessions_total,
@@ -1269,6 +1304,7 @@ def _run_search_stage(
                 "project_label": project["display_label"],
                 "host": project["source_host"],
                 "repository": {
+                    "id": trimmed(row["repository_id"]),
                     "remote": trimmed(row["git_repository_url"])
                     or trimmed(row["github_remote_url"]),
                     "root": project["cwd"],
@@ -1332,6 +1368,9 @@ def search_turn_hits_raw(
     page: int = 1,
     page_size: int = 20,
     project_id: str | None = None,
+    repository_id: str | None = None,
+    remote: str | None = None,
+    root: str | None = None,
     host: str | None = None,
     from_timestamp: str | None = None,
     to_timestamp: str | None = None,
@@ -1388,8 +1427,19 @@ def search_turn_hits_raw(
             group_by=normalized_group_by,
             coverage=_empty_search_coverage(state="unresolved_scope"),
         )
+    normalized_repository_id = trimmed(repository_id)
+    if normalized_repository_id:
+        normalized_repository_id = (
+            resolve_repository_id(connection, normalized_repository_id)
+            or normalized_repository_id
+        )
+    normalized_remote = normalize_repository_remote_filter(remote)
+    normalized_root = normalize_repository_root(root)
     base_conditions, base_params = _base_search_conditions(
         project_id=effective_project_id,
+        repository_id=normalized_repository_id,
+        remote=normalized_remote,
+        root=normalized_root,
         host=trimmed(host),
         from_timestamp=trimmed(from_timestamp),
         to_timestamp=trimmed(to_timestamp),
