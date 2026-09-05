@@ -857,6 +857,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_turn_search USING fts5(
     prompt_text,
     response_text,
     event_text,
+    command_text,
+    path_text,
+    commit_id_text,
+    tool_output_text,
     session_id UNINDEXED,
     turn_number UNINDEXED
 );
@@ -865,7 +869,9 @@ CREATE TABLE IF NOT EXISTS session_search_chunks (
     chunk_id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     turn_number INTEGER NOT NULL,
-    field TEXT NOT NULL CHECK(field IN ('prompt', 'response', 'activity')),
+    field TEXT NOT NULL CHECK(
+        field IN ('prompt', 'response', 'activity', 'commands', 'tool_output')
+    ),
     chunk_index INTEGER NOT NULL,
     start_offset INTEGER NOT NULL,
     end_offset INTEGER NOT NULL,
@@ -1572,6 +1578,94 @@ def ensure_session_turn_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def ensure_search_index_schema(connection: sqlite3.Connection) -> None:
+    """Recreate derived FTS tables when their field schema changes."""
+
+    required_turn_columns = {
+        "project_text",
+        "prompt_text",
+        "response_text",
+        "event_text",
+        "command_text",
+        "path_text",
+        "commit_id_text",
+        "tool_output_text",
+        "session_id",
+        "turn_number",
+    }
+    if not required_turn_columns <= table_columns(connection, "session_turn_search"):
+        connection.execute("DROP TABLE IF EXISTS session_turn_search")
+        connection.execute(
+            """
+            CREATE VIRTUAL TABLE session_turn_search USING fts5(
+                project_text,
+                prompt_text,
+                response_text,
+                event_text,
+                command_text,
+                path_text,
+                commit_id_text,
+                tool_output_text,
+                session_id UNINDEXED,
+                turn_number UNINDEXED
+            )
+            """
+        )
+        connection.execute(
+            "UPDATE sessions SET turn_search_version = 0, search_indexed_at = NULL"
+        )
+
+    chunk_schema_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'session_search_chunks'"
+    ).fetchone()
+    chunk_schema = str(chunk_schema_row["sql"] or "") if chunk_schema_row else ""
+    if "'commands'" not in chunk_schema or "'tool_output'" not in chunk_schema:
+        connection.execute("DROP TRIGGER IF EXISTS session_search_chunks_delete_fts")
+        connection.execute("DROP TABLE IF EXISTS session_search_chunk_fts")
+        connection.execute("DROP TABLE IF EXISTS session_search_chunks")
+        connection.executescript(
+            """
+            CREATE TABLE session_search_chunks (
+                chunk_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                turn_number INTEGER NOT NULL,
+                field TEXT NOT NULL CHECK(
+                    field IN ('prompt', 'response', 'activity', 'commands', 'tool_output')
+                ),
+                chunk_index INTEGER NOT NULL,
+                start_offset INTEGER NOT NULL,
+                end_offset INTEGER NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                index_version INTEGER NOT NULL,
+                UNIQUE(session_id, turn_number, field, chunk_index),
+                FOREIGN KEY(session_id, turn_number)
+                    REFERENCES session_turns(session_id, turn_number)
+                    ON DELETE CASCADE
+            );
+
+            CREATE VIRTUAL TABLE session_search_chunk_fts USING fts5(
+                content,
+                project_text,
+                chunk_id UNINDEXED,
+                session_id UNINDEXED,
+                turn_number UNINDEXED,
+                field UNINDEXED
+            );
+
+            CREATE TRIGGER session_search_chunks_delete_fts
+            AFTER DELETE ON session_search_chunks
+            BEGIN
+                DELETE FROM session_search_chunk_fts
+                WHERE rowid = OLD.rowid
+                  AND chunk_id = OLD.chunk_id;
+            END;
+            """
+        )
+        connection.execute(
+            "UPDATE sessions SET search_chunk_version = 0, search_indexed_at = NULL"
+        )
+
+
 def ensure_auth_state_row(connection: sqlite3.Connection) -> None:
     row = connection.execute(
         "SELECT 1 FROM auth_state WHERE singleton = 1"
@@ -1650,6 +1744,7 @@ def init_db(database_path: Path, *, defer_backfills: bool = False) -> None:
                 rebuilt_sessions = True
             if rebuilt_sessions or events_need_rebuild(connection):
                 rebuild_events_table(connection)
+            ensure_search_index_schema(connection)
             ensure_auth_state_row(connection)
             ensure_onboarding_state_row(connection)
             connection.executescript(INDEX_SQL)

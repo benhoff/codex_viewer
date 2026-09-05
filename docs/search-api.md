@@ -50,6 +50,9 @@ Use `--data-urlencode` (or an equivalent URL encoder) for every query parameter.
 | `host` | No | Exact source-host name. |
 | `from` | No | Inclusive lower timestamp bound in ISO 8601 format. A timestamp without an offset is treated as UTC. |
 | `to` | No | Inclusive upper timestamp bound in ISO 8601 format. A timestamp without an offset is treated as UTC. |
+| `mode` | No | `all` (default), `any`, `phrase`, or `exact`. See [Lexical modes and fields](#lexical-modes-and-fields). |
+| `fields` | No | Comma-separated fields to search: `prompt`, `response`, `activity`, `commands`, `paths`, `commit_ids`, and `tool_output`. Omit this parameter to search every indexed field plus project metadata. |
+| `facets` | No | Comma-separated result counts to return: `project`, `session`, `date`, `branch`, and `matched_field`. Facets are computed before pagination. |
 | `sort` | No | `relevance` (default), `time_asc` (oldest first), or `time_desc` (newest first). |
 | `group_by` | No | `none` (default) returns flat hits. `session` returns session groups. |
 | `max_hits_per_session` | No | Maximum hits returned in each session group, from 1 to 100. Defaults to 3 and is ignored when `group_by=none`. |
@@ -122,6 +125,29 @@ For these questions, the service can resolve a project reference, relax the keyw
 
 For deterministic project scoping, use `project_id`. A hit's `project.id` value can be reused in later requests.
 
+### Lexical modes and fields
+
+The non-default modes and all field-filtered searches are deterministic. Unfiltered `all` searches retain the compatibility fallback described below:
+
+- `all` first requires every normalized query term. Terms use prefix matching, preserving the original API behavior; an unfiltered unsuccessful search may use the existing relaxed retrieval stage.
+- `any` requires at least one normalized query term.
+- `phrase` requires the terms to be adjacent and ordered; the final term may be a prefix.
+- `exact` requires an adjacent, ordered sequence of complete indexed tokens. Matching remains case-insensitive and punctuation-neutral because it uses the lexical index; it is not a byte-for-byte raw substring comparison.
+
+For example, search exact hardware values only in commands and tool output:
+
+```bash
+curl --get "https://codex.home.benhoff.net/api/v1/search" \
+  --header "Accept: application/json" \
+  --header "Authorization: Bearer $CODEX_SEARCH_TOKEN" \
+  --data-urlencode "q=VDONE 2073600" \
+  --data-urlencode "mode=all" \
+  --data-urlencode "fields=commands,tool_output" \
+  --data-urlencode "facets=project,branch,matched_field"
+```
+
+The `commands` and `tool_output` fields have separate full-content chunk indexes. `paths` comes from parsed file changes, and `commit_ids` comes from repository state captured with the session. A turn found through both its compact row and overlapping full-content chunks is returned only once.
+
 ## Response
 
 A successful request returns HTTP `200` with JSON. This representative response is shortened to one hit:
@@ -133,13 +159,16 @@ A successful request returns HTTP `200` with JSON. This representative response 
     "project_id": null,
     "host": null,
     "from": null,
-    "to": null
+    "to": null,
+    "fields": ["prompt", "response"]
   },
+  "mode": "all",
   "sort": "relevance",
   "group_by": "none",
   "max_hits_per_session": 3,
   "retrieval": {
     "strategy": "strict",
+    "mode": "all",
     "intent": "keyword",
     "time_focus": "any",
     "status_focus": null,
@@ -159,7 +188,7 @@ A successful request returns HTTP `200` with JSON. This representative response 
     },
     "index": {
       "mode": "hybrid_lexical",
-      "chunk_version": 1
+      "chunk_version": 2
     }
   },
   "coverage": {
@@ -184,14 +213,27 @@ A successful request returns HTTP `200` with JSON. This representative response 
     ],
     "index_versions": {
       "turn": 6,
-      "turn_search": 2,
-      "search_chunk": 1
+      "turn_search": 3,
+      "search_chunk": 2
     },
     "freshness": {
       "state": "current",
       "indexed_at_known_sessions": 12,
       "indexed_at_unknown_sessions": 0
     }
+  },
+  "facets": {
+    "project": [
+      {
+        "value": "acme/viewer",
+        "label": "Agent Operations Viewer",
+        "project_id": "01JPROJECTID",
+        "count": 3
+      }
+    ],
+    "matched_field": [
+      {"value": "response", "label": "response", "count": 3}
+    ]
   },
   "hits": [
     {
@@ -248,12 +290,14 @@ A successful request returns HTTP `200` with JSON. This representative response 
 
 Important response fields:
 
+- `mode` and `filters.fields` echo the normalized lexical contract. An empty `filters.fields` array means all indexed content fields plus project metadata were searched.
 - `hits` contains the evidence returned for the current page.
 - `groups` is empty for the default flat response. With `group_by=session`, `hits` is empty and `groups` contains the page of sessions. Each group includes `session_id`, the session's full `match_count`, `returned_hit_count`, and its capped `hits` list.
 - `total_count` always counts all matching turns for the selected retrieval strategy and filters, before the per-session cap.
 - `session_count` counts distinct sessions containing those matches.
 - `pagination.unit` is `hit` for flat results and `session` for grouped results. `pagination.total_count` is the count in that unit, while `pagination.returned_count` describes the current page.
 - `coverage` describes the visible, structurally filtered turn corpus that was eligible to be searched. It is independent of whether the query text produced a hit.
+- `facets` contains only the requested facet families. Counts cover the complete matching result set after ACL and structural filters but before pagination.
 - `next_cursor` is `null` on the final page.
 - `repository` records the remote, working directory, branch, and commit stored with the session. The current `root` value is the session working directory and may be below the actual repository root. `dirty` is currently `null` because ingestion does not yet capture dirty state.
 - `snippet`, `prompt_excerpt`, and `response_excerpt` are plain text, not HTML.
@@ -298,6 +342,8 @@ The `retrieval.strategy` value is one of:
 - `project_history`: the service returned recent turns from a resolved project as evidence.
 - `no_match`: no usable match or unambiguous accessible project was found.
 
+When `fields` is present, `all` remains strict and the natural-language relaxation stage is disabled. This prevents a field-specific evidence query from silently broadening from all terms to any term.
+
 ## Coverage and Freshness
 
 Coverage uses the same personal-token ACL, `project_id`, `host`, `from`, and `to` restrictions as the search itself, but does not apply the text query. Private projects that the token owner cannot access are absent from every range, count, and `projects_searched` entry.
@@ -320,6 +366,61 @@ The counts have deliberately distinct meanings:
 - `unresolved_scope`: a natural-language project reference was inaccessible, unmatched, or ambiguous, so the service intentionally searched no broader corpus.
 
 For legacy installations, the schema migration adds a nullable `search_indexed_at` field. Existing values remain unknown until a real indexing operation completes; deployment does not manufacture historical completion times.
+
+## Batch Search
+
+Use `POST /api/v1/search/batch` to run related searches under one authentication and ACL snapshot. The endpoint accepts 1 to 20 query objects. Each object supports the same query, filters, mode, fields, facets, ordering, grouping, and limit options as the GET endpoint, except cursors. Batch results contain the first page of each query and set `next_cursor` to `null`; use GET for subsequent pages.
+
+```bash
+curl "https://codex.home.benhoff.net/api/v1/search/batch" \
+  --header "Accept: application/json" \
+  --header "Content-Type: application/json" \
+  --header "Authorization: Bearer $CODEX_SEARCH_TOKEN" \
+  --data '{
+    "queries": [
+      {
+        "id": "done-register",
+        "q": "VDONE",
+        "mode": "exact",
+        "fields": ["commands", "tool_output"],
+        "facets": ["branch", "matched_field"],
+        "limit": 20
+      },
+      {
+        "id": "frame-size",
+        "q": "2072576 2073600",
+        "mode": "any",
+        "fields": ["prompt", "response", "tool_output"],
+        "sort": "time_asc",
+        "limit": 20
+      }
+    ],
+    "max_total_hits": 40
+  }'
+```
+
+The response preserves each optional `id` and embeds the normal search response under each item in `results`:
+
+```json
+{
+  "query_count": 2,
+  "returned_hit_count": 7,
+  "max_total_hits": 40,
+  "results": [
+    {
+      "id": "done-register",
+      "query": "VDONE",
+      "mode": "exact",
+      "hits": [],
+      "groups": [],
+      "total_count": 0,
+      "next_cursor": null
+    }
+  ]
+}
+```
+
+`max_total_hits` ranges from 1 to 500 and limits the sum of potential returned hits. For grouped queries, the budget cost is `limit × max_hits_per_session`; otherwise it is `limit`. A request exceeding its declared budget returns `422` before any query runs.
 
 ## Retrieve a Complete Turn
 
@@ -365,7 +466,7 @@ curl --get "https://codex.home.benhoff.net/api/v1/search" \
   --data-urlencode "cursor=PASTE_NEXT_CURSOR_HERE"
 ```
 
-A cursor is bound to the original `q`, filters, `sort`, `group_by`, `max_hits_per_session`, and `limit`. Repeat those parameters exactly on every page. Changing one of them while reusing the cursor returns HTTP `400`. Cursors are opaque implementation details; do not decode or construct them.
+A cursor is bound to the original `q`, filters, `mode`, `fields`, `facets`, `sort`, `group_by`, `max_hits_per_session`, and `limit`. Repeat those parameters exactly on every page. Changing one of them while reusing the cursor returns HTTP `400`. Cursors are opaque implementation details; do not decode or construct them.
 
 For flat requests, each page contains up to `limit` items in `hits`. For grouped requests, each page contains up to `limit` items in `groups`, and each group contains up to `max_hits_per_session` hits. Follow `next_cursor` in the same way for either response shape.
 
@@ -413,7 +514,7 @@ Errors are JSON objects with a `detail` field when the client sends `Accept: app
 | `400` | The cursor is malformed or does not belong to this query. | Start again without a cursor, or repeat the original query, filters, and limit. |
 | `401` | Authentication failed. | Confirm the bearer header uses an active personal search token. Sync/daemon tokens are not accepted. |
 | `403` | The server is not ready for normal authenticated use. | An administrator may need to complete initial setup. |
-| `422` | A parameter failed validation. | Check `q`, timestamps, the date range, `sort`, `group_by`, `limit`, and `max_hits_per_session`. |
+| `422` | A parameter or batch budget failed validation. | Check `q`, timestamps, the date range, `mode`, `fields`, `facets`, `sort`, `group_by`, limits, and `max_total_hits`. |
 
 Common problems:
 

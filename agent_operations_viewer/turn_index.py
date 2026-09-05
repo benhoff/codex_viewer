@@ -22,8 +22,8 @@ from .text_utils import shorten, strip_codex_wrappers
 
 
 TURN_INDEX_VERSION = 6
-TURN_SEARCH_VERSION = 2
-SEARCH_CHUNK_VERSION = 1
+TURN_SEARCH_VERSION = 3
+SEARCH_CHUNK_VERSION = 2
 
 MAX_PROMPT_SEARCH_CHARS = 8_000
 MAX_RESPONSE_SEARCH_CHARS = 12_000
@@ -343,6 +343,45 @@ def _event_search_text_full(event: dict[str, Any]) -> str:
     return "\n".join(fragments)
 
 
+def _command_search_text_full(event: dict[str, Any]) -> str:
+    kind = str(event.get("kind") or "")
+    tool_name = _full_search_text(event.get("tool_name"))
+    command_text = _full_search_text(event.get("command_text"))
+    if (
+        not command_text
+        and kind != "command"
+        and not (kind == "tool_call" and tool_name in {"exec_command", "write_stdin"})
+    ):
+        return ""
+    fragments = [tool_name, command_text]
+    if not command_text and kind == "tool_call":
+        fragments.extend(
+            [
+                _full_search_text(event.get("display_text")),
+                _full_search_text(event.get("detail_text")),
+            ]
+        )
+    return "\n".join(fragment for fragment in fragments if fragment)
+
+
+def _tool_output_search_text_full(event: dict[str, Any]) -> str:
+    kind = str(event.get("kind") or "")
+    payload_type = str(event.get("payload_type") or "")
+    if kind not in {"command", "tool_result"} and payload_type not in {
+        "exec_command_end",
+        "function_call_output",
+        "patch_apply_end",
+    }:
+        return ""
+    display_text = _full_search_text(event.get("display_text"))
+    detail_text = _full_search_text(event.get("detail_text"))
+    return "\n".join(
+        fragment
+        for fragment in (display_text, detail_text if detail_text != display_text else "")
+        if fragment
+    )
+
+
 def split_search_text_chunks(
     value: object,
     *,
@@ -460,6 +499,16 @@ def compute_session_turn_index(
             if event is not final_response_event and event is not completion_event
             if (fragment := _event_search_text_full(event))
         )
+        full_command_text = "\n".join(
+            fragment
+            for event in all_events
+            if (fragment := _command_search_text_full(event))
+        )
+        full_tool_output_text = "\n".join(
+            fragment
+            for event in all_events
+            if (fragment := _tool_output_search_text_full(event))
+        )
         prompt_text = _compact_search_text(full_prompt_text, MAX_PROMPT_SEARCH_CHARS)
         response_text = _compact_search_text(full_response_text, MAX_RESPONSE_SEARCH_CHARS)
         event_text = _combine_search_fragments(
@@ -498,6 +547,11 @@ def compute_session_turn_index(
             for event in all_events
             for change in _parse_patch_file_changes(event)
         ]
+        full_path_text = "\n".join(
+            str(change.get("path") or "").strip()
+            for change in file_changes
+            if str(change.get("path") or "").strip()
+        )
         usage_rollup = compute_usage_rollup(all_events)
         latest_timestamp = _latest_timestamp(
             [response_timestamp, turn.get("prompt_timestamp")] + [event.get("timestamp") for event in all_events]
@@ -538,6 +592,14 @@ def compute_session_turn_index(
             "latest_rate_limit_reached_type": usage_rollup["latest_rate_limit_reached_type"],
             "event_text": event_text,
             "full_event_text": full_event_text,
+            "command_text": _compact_search_text(full_command_text, MAX_EVENT_SEARCH_CHARS),
+            "full_command_text": full_command_text,
+            "tool_output_text": _compact_search_text(
+                full_tool_output_text,
+                MAX_EVENT_SEARCH_CHARS,
+            ),
+            "full_tool_output_text": full_tool_output_text,
+            "path_text": _compact_search_text(full_path_text, MAX_EVENT_SEARCH_CHARS),
         }
 
     for event in compact_events:
@@ -957,6 +1019,7 @@ def _fetch_session_turn_search_metadata(
             s.cwd_name,
             s.source_host,
             s.git_repository_url,
+            s.git_commit_hash,
             s.github_remote_url,
             s.github_org,
             s.github_repo,
@@ -1018,6 +1081,8 @@ def _session_turn_search_inserts(
     session_id: str,
     project_text: str,
     turns: Sequence[dict[str, Any]],
+    *,
+    commit_id_text: str = "",
 ) -> list[tuple[Any, ...]]:
     return [
         (
@@ -1025,6 +1090,10 @@ def _session_turn_search_inserts(
             str(row["prompt_text"] or ""),
             str(row["response_text"] or ""),
             str(row["event_text"] or ""),
+            str(row.get("command_text") or ""),
+            str(row.get("path_text") or ""),
+            commit_id_text,
+            str(row.get("tool_output_text") or ""),
             session_id,
             int(row["turn_number"]),
         )
@@ -1044,6 +1113,8 @@ def _session_search_chunk_records(
             ("prompt", turn.get("full_prompt_text")),
             ("response", turn.get("full_response_text")),
             ("activity", turn.get("full_event_text")),
+            ("commands", turn.get("full_command_text")),
+            ("tool_output", turn.get("full_tool_output_text")),
         ):
             for chunk in split_search_text_chunks(value):
                 content_sha256 = str(chunk["content_sha256"])
@@ -1254,14 +1325,20 @@ def replace_session_turn_search(
     turns = compute_session_turn_index(
         events if events is not None else _fetch_turn_search_events(connection, [normalized_session_id]).get(normalized_session_id, [])
     )
-    project_text = _session_turn_search_project_text(
-        _fetch_session_turn_search_metadata(connection, [normalized_session_id]).get(normalized_session_id)
+    metadata = _fetch_session_turn_search_metadata(connection, [normalized_session_id]).get(
+        normalized_session_id
     )
+    project_text = _session_turn_search_project_text(metadata)
     connection.execute(
         "DELETE FROM session_turn_search WHERE session_id = ?",
         (normalized_session_id,),
     )
-    inserts = _session_turn_search_inserts(normalized_session_id, project_text, turns)
+    inserts = _session_turn_search_inserts(
+        normalized_session_id,
+        project_text,
+        turns,
+        commit_id_text=_trimmed(_event_value(metadata, "git_commit_hash")),
+    )
     if inserts:
         connection.executemany(
             """
@@ -1270,9 +1347,13 @@ def replace_session_turn_search(
                 prompt_text,
                 response_text,
                 event_text,
+                command_text,
+                path_text,
+                commit_id_text,
+                tool_output_text,
                 session_id,
                 turn_number
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             inserts,
         )
@@ -1326,6 +1407,7 @@ def replace_session_turn_suffix(
         normalized_session_id,
         project_text,
         rows,
+        commit_id_text=_trimmed(_event_value(metadata, "git_commit_hash")),
     )
     if turn_search_inserts:
         connection.executemany(
@@ -1335,9 +1417,13 @@ def replace_session_turn_suffix(
                 prompt_text,
                 response_text,
                 event_text,
+                command_text,
+                path_text,
+                commit_id_text,
+                tool_output_text,
                 session_id,
                 turn_number
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             turn_search_inserts,
         )
@@ -1398,9 +1484,17 @@ def backfill_session_turn_search(connection: sqlite3.Connection) -> int:
 
     inserts: list[tuple[Any, ...]] = []
     for session_id in session_ids:
-        project_text = _session_turn_search_project_text(metadata_by_session.get(session_id))
+        metadata = metadata_by_session.get(session_id)
+        project_text = _session_turn_search_project_text(metadata)
         turns = compute_session_turn_index(rows_by_session.get(session_id, []))
-        inserts.extend(_session_turn_search_inserts(session_id, project_text, turns))
+        inserts.extend(
+            _session_turn_search_inserts(
+                session_id,
+                project_text,
+                turns,
+                commit_id_text=_trimmed(_event_value(metadata, "git_commit_hash")),
+            )
+        )
 
     if inserts:
         connection.executemany(
@@ -1410,9 +1504,13 @@ def backfill_session_turn_search(connection: sqlite3.Connection) -> int:
                 prompt_text,
                 response_text,
                 event_text,
+                command_text,
+                path_text,
+                commit_id_text,
+                tool_output_text,
                 session_id,
                 turn_number
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             inserts,
         )
@@ -1456,6 +1554,9 @@ def reindex_session_turn_search_for_project_keys(
             session_id,
             project_text,
             turns,
+            commit_id_text=_trimmed(
+                _event_value(metadata_by_session.get(session_id), "git_commit_hash")
+            ),
         )
         if inserts:
             connection.executemany(
@@ -1465,9 +1566,13 @@ def reindex_session_turn_search_for_project_keys(
                     prompt_text,
                     response_text,
                     event_text,
+                    command_text,
+                    path_text,
+                    commit_id_text,
+                    tool_output_text,
                     session_id,
                     turn_number
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 inserts,
             )

@@ -10,6 +10,7 @@ SEARCH_INTENT_KEYWORD = "keyword"
 SEARCH_INTENT_LATEST_NEXT_STEP = "latest_next_step"
 SEARCH_INTENT_REMAINING_ISSUES = "remaining_issues"
 SEARCH_INTENT_RESOLVED_ISSUES = "resolved_issues"
+SEARCH_MODES = frozenset({"all", "any", "phrase", "exact"})
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_]+")
 _PROJECT_REFERENCE_PATTERNS = (
@@ -175,6 +176,13 @@ def _query_tokens(query: str | None) -> tuple[str, ...]:
     )
 
 
+def _ordered_query_tokens(query: str | None) -> tuple[str, ...]:
+    return tuple(
+        match.group(0).lower()
+        for match in list(_TOKEN_PATTERN.finditer(str(query or "")))[:32]
+    )
+
+
 def _project_hint(query: str) -> str | None:
     for pattern in _PROJECT_REFERENCE_PATTERNS:
         match = pattern.search(query)
@@ -202,9 +210,31 @@ def _fts_or_expression(terms: tuple[str, ...]) -> str | None:
     )
 
 
+def build_lexical_match_expression(query: str | None, *, mode: str = "all") -> str | None:
+    normalized_mode = str(mode or "all").strip().lower()
+    if normalized_mode not in SEARCH_MODES:
+        raise ValueError(f"Unsupported search mode: {mode}")
+    tokens = (
+        _ordered_query_tokens(query)
+        if normalized_mode in {"phrase", "exact"}
+        else _query_tokens(query)
+    )
+    if not tokens:
+        return None
+    if normalized_mode == "all":
+        return build_turn_search_match_expression(query)
+    if normalized_mode == "any":
+        return _fts_or_expression(tokens)
+    phrase = " ".join(tokens)
+    if normalized_mode == "phrase":
+        return f'"{phrase}"*'
+    return f'"{phrase}"'
+
+
 @dataclass(frozen=True)
 class SearchQueryPlan:
     query: str
+    mode: str
     intent: str
     time_focus: str
     status_focus: str | None
@@ -228,10 +258,18 @@ class SearchQueryPlan:
         return self.is_abstract or self.natural_language
 
 
-def plan_search_query(query: str | None) -> SearchQueryPlan:
+def plan_search_query(query: str | None, *, mode: str = "all") -> SearchQueryPlan:
     normalized_query = str(query or "").strip()
-    intent = _intent(normalized_query)
-    natural_language = bool(_NATURAL_LANGUAGE_PATTERN.search(normalized_query))
+    normalized_mode = str(mode or "all").strip().lower()
+    if normalized_mode not in SEARCH_MODES:
+        raise ValueError(f"Unsupported search mode: {mode}")
+    deterministic_mode = normalized_mode != "all"
+    intent = SEARCH_INTENT_KEYWORD if deterministic_mode else _intent(normalized_query)
+    natural_language = (
+        False
+        if deterministic_mode
+        else bool(_NATURAL_LANGUAGE_PATTERN.search(normalized_query))
+    )
     project_hint = (
         _project_hint(normalized_query)
         if intent != SEARCH_INTENT_KEYWORD or natural_language
@@ -265,6 +303,7 @@ def plan_search_query(query: str | None) -> SearchQueryPlan:
 
     return SearchQueryPlan(
         query=normalized_query,
+        mode=normalized_mode,
         intent=intent,
         time_focus=time_focus,
         status_focus=status_focus,
@@ -272,6 +311,11 @@ def plan_search_query(query: str | None) -> SearchQueryPlan:
         project_hint=project_hint,
         content_terms=content_terms,
         relaxed_terms=relaxed_terms,
-        strict_expression=build_turn_search_match_expression(normalized_query),
-        relaxed_expression=_fts_or_expression(relaxed_terms),
+        strict_expression=build_lexical_match_expression(
+            normalized_query,
+            mode=normalized_mode,
+        ),
+        relaxed_expression=(
+            None if deterministic_mode else _fts_or_expression(relaxed_terms)
+        ),
     )

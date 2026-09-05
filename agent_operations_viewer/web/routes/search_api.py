@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from ...db import connect
 from ...projects import (
@@ -18,14 +19,56 @@ from ...projects import (
     fetch_session_with_project,
     row_is_visible_to_project_access,
 )
-from ...search import search_turn_hits_raw
+from ...search import (
+    SEARCH_FACETS,
+    SEARCH_FIELDS,
+    normalize_search_values,
+    search_turn_hits_raw,
+)
 from ...session_view import build_turns
 from ..auth import require_authenticated_user
 from ..context import get_app_context
 
 
 router = APIRouter()
-CURSOR_VERSION = 2
+CURSOR_VERSION = 3
+
+SearchMode = Literal["all", "any", "phrase", "exact"]
+SearchField = Literal[
+    "prompt",
+    "response",
+    "activity",
+    "commands",
+    "paths",
+    "commit_ids",
+    "tool_output",
+]
+SearchFacet = Literal["project", "session", "date", "branch", "matched_field"]
+
+
+class BatchSearchQuery(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    id: str | None = Field(default=None, max_length=128)
+    q: str = Field(min_length=1, max_length=500)
+    project_id: str | None = Field(default=None, max_length=128)
+    host: str | None = Field(default=None, max_length=255)
+    from_date: datetime | None = Field(default=None, alias="from")
+    to_date: datetime | None = Field(default=None, alias="to")
+    mode: SearchMode = "all"
+    fields: list[SearchField] = Field(default_factory=list, max_length=7)
+    facets: list[SearchFacet] = Field(default_factory=list, max_length=5)
+    sort: Literal["relevance", "time_asc", "time_desc"] = "relevance"
+    group_by: Literal["none", "session"] = "none"
+    max_hits_per_session: int = Field(default=3, ge=1, le=100)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class BatchSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    queries: list[BatchSearchQuery] = Field(min_length=1, max_length=20)
+    max_total_hits: int = Field(default=200, ge=1, le=500)
 
 
 def _timestamp_param(value: datetime | None) -> str | None:
@@ -46,6 +89,9 @@ def _cursor_fingerprint(
     sort: str,
     group_by: str,
     max_hits_per_session: int,
+    mode: str,
+    fields: tuple[str, ...],
+    facets: tuple[str, ...],
 ) -> str:
     payload = json.dumps(
         [
@@ -58,6 +104,9 @@ def _cursor_fingerprint(
             sort,
             group_by,
             max_hits_per_session,
+            mode,
+            fields,
+            facets,
         ],
         ensure_ascii=True,
         separators=(",", ":"),
@@ -128,6 +177,112 @@ def _serialize_hit(item: dict[str, object]) -> dict[str, object]:
             "conversation": f"/sessions/{encoded_session_id}?turn={turn_number}",
             "audit": f"/sessions/{encoded_session_id}?view=audit&turn={turn_number}&focus=1",
         },
+    }
+
+
+def _normalize_api_values(
+    value: str | list[str] | tuple[str, ...] | None,
+    *,
+    supported: frozenset[str],
+    label: str,
+) -> tuple[str, ...]:
+    try:
+        return normalize_search_values(value, supported=supported, label=label)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _validate_date_range(
+    from_date: datetime | None,
+    to_date: datetime | None,
+) -> tuple[str | None, str | None]:
+    if from_date is not None and to_date is not None:
+        normalized_from = (
+            from_date.replace(tzinfo=UTC)
+            if from_date.tzinfo is None
+            else from_date.astimezone(UTC)
+        )
+        normalized_to = (
+            to_date.replace(tzinfo=UTC)
+            if to_date.tzinfo is None
+            else to_date.astimezone(UTC)
+        )
+        if normalized_from > normalized_to:
+            raise HTTPException(
+                status_code=422,
+                detail="from must be earlier than or equal to to",
+            )
+    return _timestamp_param(from_date), _timestamp_param(to_date)
+
+
+def _serialize_search_page(
+    search_page: dict[str, object],
+    *,
+    query: str,
+    project_id: str | None,
+    host: str | None,
+    from_timestamp: str | None,
+    to_timestamp: str | None,
+    mode: str,
+    fields: tuple[str, ...],
+    requested_facets: tuple[str, ...],
+    sort: str,
+    group_by: str,
+    max_hits_per_session: int,
+    fingerprint: str | None = None,
+) -> dict[str, object]:
+    next_cursor = (
+        _encode_cursor(int(search_page["page"]) + 1, fingerprint)
+        if fingerprint and bool(search_page["has_next"])
+        else None
+    )
+    groups = search_page.get("groups") or []
+    items = search_page.get("items") or []
+    serialized_groups = [
+        {
+            "session_id": group["session_id"],
+            "match_count": int(group["match_count"]),
+            "returned_hit_count": len(group["items"]),
+            "hits": [_serialize_hit(item) for item in group["items"]],
+        }
+        for group in groups
+    ]
+    serialized_hits = (
+        [] if group_by == "session" else [_serialize_hit(item) for item in items]
+    )
+    return {
+        "query": query,
+        "filters": {
+            "project_id": project_id,
+            "host": host,
+            "from": from_timestamp,
+            "to": to_timestamp,
+            "fields": list(fields),
+        },
+        "mode": mode,
+        "retrieval": search_page["retrieval"],
+        "coverage": search_page["coverage"],
+        "facets": search_page.get("facets") or {
+            facet: [] for facet in requested_facets
+        },
+        "sort": sort,
+        "group_by": group_by,
+        "max_hits_per_session": max_hits_per_session,
+        "hits": serialized_hits,
+        "groups": serialized_groups,
+        "total_count": int(search_page["total_count"]),
+        "session_count": int(search_page["session_count"]),
+        "pagination": {
+            "unit": search_page["pagination_unit"],
+            "total_count": int(search_page["pagination_total"]),
+            "returned_count": (
+                len(serialized_groups)
+                if group_by == "session"
+                else len(serialized_hits)
+            ),
+        },
+        "limit": int(search_page["page_size"]),
+        "next_cursor": next_cursor,
     }
 
 
@@ -283,6 +438,9 @@ def search_api(
     host: str | None = Query(default=None, max_length=255),
     from_date: datetime | None = Query(default=None, alias="from"),
     to_date: datetime | None = Query(default=None, alias="to"),
+    mode: SearchMode = Query(default="all"),
+    fields: str | None = Query(default=None, max_length=200),
+    facets: str | None = Query(default=None, max_length=200),
     sort: Literal["relevance", "time_asc", "time_desc"] = Query(default="relevance"),
     group_by: Literal["none", "session"] = Query(default="none"),
     max_hits_per_session: int = Query(default=3, ge=1, le=100),
@@ -298,13 +456,17 @@ def search_api(
         raise HTTPException(status_code=422, detail="Search query cannot be empty")
     normalized_project_id = str(project_id or "").strip() or None
     normalized_host = str(host or "").strip() or None
-    from_timestamp = _timestamp_param(from_date)
-    to_timestamp = _timestamp_param(to_date)
-    if from_date is not None and to_date is not None:
-        normalized_from = from_date.replace(tzinfo=UTC) if from_date.tzinfo is None else from_date.astimezone(UTC)
-        normalized_to = to_date.replace(tzinfo=UTC) if to_date.tzinfo is None else to_date.astimezone(UTC)
-        if normalized_from > normalized_to:
-            raise HTTPException(status_code=422, detail="from must be earlier than or equal to to")
+    from_timestamp, to_timestamp = _validate_date_range(from_date, to_date)
+    normalized_fields = _normalize_api_values(
+        fields,
+        supported=SEARCH_FIELDS,
+        label="field",
+    )
+    normalized_facets = _normalize_api_values(
+        facets,
+        supported=SEARCH_FACETS,
+        label="facet",
+    )
 
     fingerprint = _cursor_fingerprint(
         q=search_query,
@@ -316,6 +478,9 @@ def search_api(
         sort=sort,
         group_by=group_by,
         max_hits_per_session=max_hits_per_session,
+        mode=mode,
+        fields=normalized_fields,
+        facets=normalized_facets,
     )
     page = _decode_cursor(cursor, fingerprint)
 
@@ -337,57 +502,126 @@ def search_api(
             sort=sort,
             group_by=group_by,
             max_hits_per_session=max_hits_per_session,
+            mode=mode,
+            fields=normalized_fields,
+            facets=normalized_facets,
             project_access=project_access,
         )
+    return JSONResponse(
+        _serialize_search_page(
+            search_page,
+            query=search_query,
+            project_id=normalized_project_id,
+            host=normalized_host,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
+            mode=mode,
+            fields=normalized_fields,
+            requested_facets=normalized_facets,
+            sort=sort,
+            group_by=group_by,
+            max_hits_per_session=max_hits_per_session,
+            fingerprint=fingerprint,
+        ),
+        headers={"Cache-Control": "private, no-store"},
+    )
 
-    next_cursor = (
-        _encode_cursor(int(search_page["page"]) + 1, fingerprint)
-        if bool(search_page["has_next"])
-        else None
+
+@router.post("/api/v1/search/batch", response_class=JSONResponse)
+def search_batch_api(
+    request: Request,
+    body: BatchSearchRequest,
+) -> JSONResponse:
+    context = get_app_context(request)
+    if bool(getattr(request.state, "auth_enabled", False)):
+        require_authenticated_user(request)
+
+    requested_hit_budget = sum(
+        query.limit
+        * (query.max_hits_per_session if query.group_by == "session" else 1)
+        for query in body.queries
     )
-    serialized_groups = [
-        {
-            "session_id": group["session_id"],
-            "match_count": int(group["match_count"]),
-            "returned_hit_count": len(group["items"]),
-            "hits": [_serialize_hit(item) for item in group["items"]],
-        }
-        for group in search_page["groups"]
-    ]
-    serialized_hits = (
-        []
-        if group_by == "session"
-        else [_serialize_hit(item) for item in search_page["items"]]
-    )
+    if requested_hit_budget > body.max_total_hits:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Batch hit budget exceeded: reduce per-query limits or increase "
+                "max_total_hits"
+            ),
+        )
+
+    results: list[dict[str, object]] = []
+    returned_hit_count = 0
+    with connect(context.settings.database_path) as connection:
+        project_access = build_project_access_context(
+            connection,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        )
+        for query in body.queries:
+            search_query = query.q.strip()
+            if not search_query:
+                raise HTTPException(status_code=422, detail="Search query cannot be empty")
+            normalized_project_id = str(query.project_id or "").strip() or None
+            normalized_host = str(query.host or "").strip() or None
+            from_timestamp, to_timestamp = _validate_date_range(
+                query.from_date,
+                query.to_date,
+            )
+            normalized_fields = _normalize_api_values(
+                query.fields,
+                supported=SEARCH_FIELDS,
+                label="field",
+            )
+            normalized_facets = _normalize_api_values(
+                query.facets,
+                supported=SEARCH_FACETS,
+                label="facet",
+            )
+            search_page = search_turn_hits_raw(
+                connection,
+                search_query,
+                page=1,
+                page_size=query.limit,
+                project_id=normalized_project_id,
+                host=normalized_host,
+                from_timestamp=from_timestamp,
+                to_timestamp=to_timestamp,
+                sort=query.sort,
+                group_by=query.group_by,
+                max_hits_per_session=query.max_hits_per_session,
+                mode=query.mode,
+                fields=normalized_fields,
+                facets=normalized_facets,
+                project_access=project_access,
+            )
+            payload = _serialize_search_page(
+                search_page,
+                query=search_query,
+                project_id=normalized_project_id,
+                host=normalized_host,
+                from_timestamp=from_timestamp,
+                to_timestamp=to_timestamp,
+                mode=query.mode,
+                fields=normalized_fields,
+                requested_facets=normalized_facets,
+                sort=query.sort,
+                group_by=query.group_by,
+                max_hits_per_session=query.max_hits_per_session,
+            )
+            result: dict[str, object] = {"id": query.id, **payload}
+            results.append(result)
+            returned_hit_count += sum(
+                len(group["hits"])
+                for group in payload["groups"]
+            ) if query.group_by == "session" else len(payload["hits"])
+
     return JSONResponse(
         {
-            "query": search_query,
-            "filters": {
-                "project_id": normalized_project_id,
-                "host": normalized_host,
-                "from": from_timestamp,
-                "to": to_timestamp,
-            },
-            "retrieval": search_page["retrieval"],
-            "coverage": search_page["coverage"],
-            "sort": sort,
-            "group_by": group_by,
-            "max_hits_per_session": max_hits_per_session,
-            "hits": serialized_hits,
-            "groups": serialized_groups,
-            "total_count": int(search_page["total_count"]),
-            "session_count": int(search_page["session_count"]),
-            "pagination": {
-                "unit": search_page["pagination_unit"],
-                "total_count": int(search_page["pagination_total"]),
-                "returned_count": (
-                    len(serialized_groups)
-                    if group_by == "session"
-                    else len(serialized_hits)
-                ),
-            },
-            "limit": int(search_page["page_size"]),
-            "next_cursor": next_cursor,
+            "query_count": len(results),
+            "returned_hit_count": returned_hit_count,
+            "max_total_hits": body.max_total_hits,
+            "results": results,
         },
         headers={"Cache-Control": "private, no-store"},
     )

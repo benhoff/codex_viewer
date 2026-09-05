@@ -11,6 +11,7 @@ from agent_operations_viewer.projects import ProjectAccessContext, query_group_r
 from agent_operations_viewer.search import search_turn_hits_raw
 from agent_operations_viewer.turn_index import (
     SEARCH_CHUNK_VERSION,
+    TURN_SEARCH_VERSION,
     backfill_session_search_chunks,
     replace_session_search_chunks,
     split_search_text_chunks,
@@ -71,6 +72,105 @@ class SearchChunkIndexTests(unittest.TestCase):
             )
             if index:
                 self.assertLess(chunk["start_offset"], first[index - 1]["end_offset"])
+
+    def test_legacy_search_tables_are_rebuilt_as_derived_data(self) -> None:
+        with connect(self.db_path) as connection:
+            insert_search_turn(
+                connection,
+                session_id="legacy-index-session",
+                project_id="legacy-index-project",
+                project_key="acme/legacy-index",
+                project_label="acme/legacy-index",
+                prompt="legacy indexed prompt",
+            )
+            connection.execute(
+                """
+                UPDATE sessions
+                SET turn_search_version = ?, search_chunk_version = ?, search_indexed_at = ?
+                WHERE id = 'legacy-index-session'
+                """,
+                (
+                    TURN_SEARCH_VERSION,
+                    SEARCH_CHUNK_VERSION,
+                    "2026-08-23T12:05:00+00:00",
+                ),
+            )
+            connection.execute("DROP TABLE session_turn_search")
+            connection.execute(
+                """
+                CREATE VIRTUAL TABLE session_turn_search USING fts5(
+                    project_text,
+                    prompt_text,
+                    response_text,
+                    event_text,
+                    session_id UNINDEXED,
+                    turn_number UNINDEXED
+                )
+                """
+            )
+            connection.execute("DROP TRIGGER session_search_chunks_delete_fts")
+            connection.execute("DROP TABLE session_search_chunk_fts")
+            connection.execute("DROP TABLE session_search_chunks")
+            connection.execute(
+                """
+                CREATE TABLE session_search_chunks (
+                    chunk_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    turn_number INTEGER NOT NULL,
+                    field TEXT NOT NULL CHECK(field IN ('prompt', 'response', 'activity')),
+                    chunk_index INTEGER NOT NULL,
+                    start_offset INTEGER NOT NULL,
+                    end_offset INTEGER NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    index_version INTEGER NOT NULL,
+                    UNIQUE(session_id, turn_number, field, chunk_index)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE VIRTUAL TABLE session_search_chunk_fts USING fts5(
+                    content,
+                    project_text,
+                    chunk_id UNINDEXED,
+                    session_id UNINDEXED,
+                    turn_number UNINDEXED,
+                    field UNINDEXED
+                )
+                """
+            )
+
+        init_db(self.db_path, defer_backfills=True)
+
+        with connect(self.db_path) as connection:
+            turn_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(session_turn_search)"
+                ).fetchall()
+            }
+            chunk_schema = str(
+                connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE name = 'session_search_chunks'"
+                ).fetchone()["sql"]
+            )
+            session = connection.execute(
+                """
+                SELECT turn_search_version, search_chunk_version, search_indexed_at
+                FROM sessions
+                WHERE id = 'legacy-index-session'
+                """
+            ).fetchone()
+
+        self.assertTrue(
+            {"command_text", "path_text", "commit_id_text", "tool_output_text"}
+            <= turn_columns
+        )
+        self.assertIn("'commands'", chunk_schema)
+        self.assertIn("'tool_output'", chunk_schema)
+        self.assertEqual(int(session["turn_search_version"]), 0)
+        self.assertEqual(int(session["search_chunk_version"]), 0)
+        self.assertIsNone(session["search_indexed_at"])
 
     def test_hybrid_search_finds_text_beyond_all_legacy_turn_caps(self) -> None:
         prompt_marker = "prompt-tail-marker-neptune"

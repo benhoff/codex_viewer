@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from .projects import (
@@ -15,7 +17,7 @@ from .projects import (
     trimmed,
     visible_session_where,
 )
-from .search_query import SearchQueryPlan, plan_search_query
+from .search_query import SEARCH_MODES, SearchQueryPlan, plan_search_query
 from .turn_index import SEARCH_CHUNK_VERSION, TURN_INDEX_VERSION, TURN_SEARCH_VERSION
 
 
@@ -41,6 +43,79 @@ SESSION_TIMESTAMP_SQL = """
 
 SEARCH_SORT_MODES = frozenset({"relevance", "time_asc", "time_desc"})
 SEARCH_GROUP_MODES = frozenset({"none", "session"})
+SEARCH_FIELDS = frozenset(
+    {"prompt", "response", "activity", "commands", "paths", "commit_ids", "tool_output"}
+)
+SEARCH_FACETS = frozenset({"project", "session", "date", "branch", "matched_field"})
+SEARCH_FIELD_COLUMNS = {
+    "prompt": "prompt_text",
+    "response": "response_text",
+    "activity": "event_text",
+    "commands": "command_text",
+    "paths": "path_text",
+    "commit_ids": "commit_id_text",
+    "tool_output": "tool_output_text",
+}
+SEARCH_CHUNK_FIELDS = frozenset(
+    {"prompt", "response", "activity", "commands", "tool_output"}
+)
+
+
+@dataclass(frozen=True)
+class SearchMatchSpec:
+    turn_expression: str | None
+    chunk_expression: str | None
+    chunk_fields: tuple[str, ...]
+
+    @property
+    def params(self) -> list[Any]:
+        params: list[Any] = []
+        if self.turn_expression:
+            params.append(self.turn_expression)
+        if self.chunk_expression:
+            params.append(self.chunk_expression)
+            params.extend(self.chunk_fields)
+        return params
+
+
+def normalize_search_values(
+    values: str | Sequence[str] | None,
+    *,
+    supported: frozenset[str],
+    label: str,
+) -> tuple[str, ...]:
+    if values is None:
+        return ()
+    raw_values = values.split(",") if isinstance(values, str) else values
+    normalized: list[str] = []
+    for raw_value in raw_values:
+        value = str(raw_value or "").strip().lower()
+        if not value:
+            continue
+        if value not in supported:
+            raise ValueError(f"Unsupported search {label}: {value}")
+        if value not in normalized:
+            normalized.append(value)
+    return tuple(normalized)
+
+
+def _search_match_spec(
+    expression: str | None,
+    fields: tuple[str, ...],
+) -> SearchMatchSpec | None:
+    if not expression:
+        return None
+    selected_fields = fields or tuple(SEARCH_FIELD_COLUMNS)
+    turn_columns = [SEARCH_FIELD_COLUMNS[field] for field in selected_fields]
+    if not fields:
+        turn_columns.insert(0, "project_text")
+    turn_expression = f"{{{' '.join(turn_columns)}}} : ({expression})"
+    chunk_fields = tuple(field for field in selected_fields if field in SEARCH_CHUNK_FIELDS)
+    return SearchMatchSpec(
+        turn_expression=turn_expression,
+        chunk_expression=expression if chunk_fields else None,
+        chunk_fields=chunk_fields,
+    )
 
 
 def _empty_search_coverage(*, state: str = "empty") -> dict[str, Any]:
@@ -82,7 +157,11 @@ def _normalize_search_options(
     return normalized_sort, normalized_group_by, normalized_max_hits
 
 
-def _matched_candidate_ctes(*, include_evidence: bool = True) -> str:
+def _matched_candidate_ctes(
+    match: SearchMatchSpec,
+    *,
+    include_evidence: bool = True,
+) -> str:
     if include_evidence:
         highlight_args = (
             f"'{TURN_SEARCH_HIGHLIGHT_START}', "
@@ -92,6 +171,10 @@ def _matched_candidate_ctes(*, include_evidence: bool = True) -> str:
         turn_prompt = f"snippet(session_turn_search, 1, {highlight_args}, 18)"
         turn_response = f"snippet(session_turn_search, 2, {highlight_args}, 18)"
         turn_event = f"snippet(session_turn_search, 3, {highlight_args}, 18)"
+        turn_command = f"snippet(session_turn_search, 4, {highlight_args}, 18)"
+        turn_path = f"snippet(session_turn_search, 5, {highlight_args}, 18)"
+        turn_commit = f"snippet(session_turn_search, 6, {highlight_args}, 18)"
+        turn_tool_output = f"snippet(session_turn_search, 7, {highlight_args}, 18)"
         chunk_project = f"snippet(session_search_chunk_fts, 1, {highlight_args}, 10)"
         chunk_snippet = f"snippet(session_search_chunk_fts, 0, {highlight_args}, 24)"
     else:
@@ -99,19 +182,29 @@ def _matched_candidate_ctes(*, include_evidence: bool = True) -> str:
         turn_prompt = "NULL"
         turn_response = "NULL"
         turn_event = "NULL"
+        turn_command = "NULL"
+        turn_path = "NULL"
+        turn_commit = "NULL"
+        turn_tool_output = "NULL"
         chunk_project = "NULL"
         chunk_snippet = "NULL"
-    return f"""
-        raw_candidates AS (
+    candidate_queries: list[str] = []
+    if match.turn_expression:
+        candidate_queries.append(
+            f"""
             SELECT
                 session_id,
                 turn_number,
                 'turn' AS match_source,
-                bm25(session_turn_search, 1.0, 5.0, 4.0, 2.0) AS search_rank,
+                bm25(session_turn_search, 1.0, 5.0, 4.0, 2.0, 4.0, 5.0, 5.0, 3.0) AS search_rank,
                 {turn_project} AS project_snippet,
                 {turn_prompt} AS prompt_snippet,
                 {turn_response} AS response_snippet,
                 {turn_event} AS event_snippet,
+                {turn_command} AS command_snippet,
+                {turn_path} AS path_snippet,
+                {turn_commit} AS commit_snippet,
+                {turn_tool_output} AS tool_output_snippet,
                 NULL AS chunk_snippet,
                 NULL AS chunk_id,
                 NULL AS chunk_field,
@@ -120,9 +213,12 @@ def _matched_candidate_ctes(*, include_evidence: bool = True) -> str:
                 NULL AS chunk_end_offset
             FROM session_turn_search
             WHERE session_turn_search MATCH ?
-
-            UNION ALL
-
+            """
+        )
+    if match.chunk_expression:
+        placeholders = ", ".join("?" for _field in match.chunk_fields)
+        candidate_queries.append(
+            f"""
             SELECT
                 session_search_chunk_fts.session_id,
                 session_search_chunk_fts.turn_number,
@@ -132,6 +228,10 @@ def _matched_candidate_ctes(*, include_evidence: bool = True) -> str:
                 NULL AS prompt_snippet,
                 NULL AS response_snippet,
                 NULL AS event_snippet,
+                NULL AS command_snippet,
+                NULL AS path_snippet,
+                NULL AS commit_snippet,
+                NULL AS tool_output_snippet,
                 {chunk_snippet} AS chunk_snippet,
                 chunks.chunk_id,
                 chunks.field AS chunk_field,
@@ -142,6 +242,13 @@ def _matched_candidate_ctes(*, include_evidence: bool = True) -> str:
             JOIN session_search_chunks AS chunks
                 ON chunks.chunk_id = session_search_chunk_fts.chunk_id
             WHERE session_search_chunk_fts MATCH ?
+              AND chunks.field IN ({placeholders})
+            """
+        )
+    raw_query = "\nUNION ALL\n".join(candidate_queries)
+    return f"""
+        raw_candidates AS (
+            {raw_query}
         ),
         ranked_candidates AS (
             SELECT
@@ -164,6 +271,7 @@ def _empty_search_page(
     retrieval: dict[str, Any] | None = None,
     group_by: str = "none",
     coverage: dict[str, Any] | None = None,
+    facets: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     return {
         "items": [],
@@ -181,6 +289,7 @@ def _empty_search_page(
         "showing_to": 0,
         "retrieval": retrieval or {},
         "coverage": coverage or _empty_search_coverage(),
+        "facets": facets or {},
     }
 
 
@@ -205,6 +314,10 @@ def _matched_snippet(
     snippets = [
         ("prompt", row["prompt_snippet"]),
         ("response", row["response_snippet"]),
+        ("commands", row["command_snippet"]),
+        ("paths", row["path_snippet"]),
+        ("commit_ids", row["commit_snippet"]),
+        ("tool_output", row["tool_output_snippet"]),
         ("activity", row["event_snippet"]),
         ("project", row["project_snippet"]),
     ]
@@ -526,17 +639,12 @@ def _turn_search_from_clause(conditions: list[str]) -> str:
     """
 
 
-def _matched_search_from_clause(conditions: list[str]) -> str:
+def _matched_search_from_clause(
+    match: SearchMatchSpec,
+    conditions: list[str],
+) -> str:
     return f"""
-        FROM (
-            SELECT session_id, turn_number
-            FROM session_turn_search
-            WHERE session_turn_search MATCH ?
-            UNION
-            SELECT session_id, turn_number
-            FROM session_search_chunk_fts
-            WHERE session_search_chunk_fts MATCH ?
-        ) AS search_candidates
+        FROM ranked_candidates AS search_candidates
         JOIN session_turns AS st
             ON st.session_id = search_candidates.session_id
            AND st.turn_number = search_candidates.turn_number
@@ -548,7 +656,7 @@ def _matched_search_from_clause(conditions: list[str]) -> str:
             ON ps.match_project_key = s.inferred_project_key
         LEFT JOIN projects AS p
             ON p.id = ps.project_id
-        {visible_session_where(conditions)}
+        {visible_session_where(["search_candidates.candidate_rank = 1", *conditions])}
     """
 
 
@@ -557,16 +665,19 @@ def _search_stage_counts(
     *,
     base_conditions: list[str],
     base_params: list[Any],
-    match_expression: str | None,
+    match: SearchMatchSpec | None,
 ) -> tuple[int, int]:
-    if match_expression:
-        from_clause = _matched_search_from_clause(base_conditions)
-        params = [match_expression, match_expression, *base_params]
+    with_clause = ""
+    if match:
+        with_clause = f"WITH {_matched_candidate_ctes(match, include_evidence=False)}"
+        from_clause = _matched_search_from_clause(match, base_conditions)
+        params = [*match.params, *base_params]
     else:
         from_clause = _turn_search_from_clause(base_conditions)
         params = list(base_params)
     row = connection.execute(
         f"""
+        {with_clause}
         SELECT
             COUNT(*) AS match_count,
             COUNT(DISTINCT st.session_id) AS session_count
@@ -588,6 +699,7 @@ def _retrieval_metadata(
 ) -> dict[str, Any]:
     return {
         "strategy": strategy,
+        "mode": plan.mode,
         "intent": plan.intent,
         "time_focus": plan.time_focus,
         "status_focus": plan.status_focus,
@@ -600,6 +712,154 @@ def _retrieval_metadata(
             "chunk_version": SEARCH_CHUNK_VERSION,
         },
     }
+
+
+def _search_facets(
+    connection: sqlite3.Connection,
+    *,
+    base_conditions: list[str],
+    base_params: list[Any],
+    match: SearchMatchSpec | None,
+    requested: tuple[str, ...],
+) -> dict[str, list[dict[str, Any]]]:
+    if not requested:
+        return {}
+    if match:
+        with_prefix = (
+            f"WITH {_matched_candidate_ctes(match, include_evidence='matched_field' in requested)},"
+        )
+        source = "ranked_candidates AS search_candidates"
+        source_join = """
+            JOIN session_turns AS st
+                ON st.session_id = search_candidates.session_id
+               AND st.turn_number = search_candidates.turn_number
+        """
+        conditions = ["search_candidates.candidate_rank = 1", *base_conditions]
+        matched_field_sql = f"""
+            CASE
+                WHEN search_candidates.match_source = 'chunk'
+                    THEN COALESCE(search_candidates.chunk_field, 'activity')
+                WHEN INSTR(COALESCE(search_candidates.prompt_snippet, ''), '{TURN_SEARCH_HIGHLIGHT_START}') > 0 THEN 'prompt'
+                WHEN INSTR(COALESCE(search_candidates.response_snippet, ''), '{TURN_SEARCH_HIGHLIGHT_START}') > 0 THEN 'response'
+                WHEN INSTR(COALESCE(search_candidates.command_snippet, ''), '{TURN_SEARCH_HIGHLIGHT_START}') > 0 THEN 'commands'
+                WHEN INSTR(COALESCE(search_candidates.path_snippet, ''), '{TURN_SEARCH_HIGHLIGHT_START}') > 0 THEN 'paths'
+                WHEN INSTR(COALESCE(search_candidates.commit_snippet, ''), '{TURN_SEARCH_HIGHLIGHT_START}') > 0 THEN 'commit_ids'
+                WHEN INSTR(COALESCE(search_candidates.tool_output_snippet, ''), '{TURN_SEARCH_HIGHLIGHT_START}') > 0 THEN 'tool_output'
+                WHEN INSTR(COALESCE(search_candidates.event_snippet, ''), '{TURN_SEARCH_HIGHLIGHT_START}') > 0 THEN 'activity'
+                ELSE 'project'
+            END
+        """
+        params = [*match.params, *base_params]
+    else:
+        with_prefix = "WITH"
+        source = "session_turn_search"
+        source_join = """
+            JOIN session_turns AS st
+                ON st.session_id = session_turn_search.session_id
+               AND st.turn_number = session_turn_search.turn_number
+        """
+        conditions = base_conditions
+        matched_field_sql = "'history'"
+        params = list(base_params)
+
+    project_key_sql = """
+        COALESCE(
+            NULLIF(TRIM(o.override_group_key), ''),
+            NULLIF(TRIM(p.current_group_key), ''),
+            NULLIF(TRIM(s.inferred_project_key), ''),
+            ''
+        )
+    """
+    project_label_sql = f"""
+        COALESCE(
+            NULLIF(TRIM(o.override_display_label), ''),
+            NULLIF(TRIM(p.display_label), ''),
+            NULLIF(TRIM(s.inferred_project_label), ''),
+            {project_key_sql}
+        )
+    """
+    aggregate_ctes: list[str] = []
+    selects: list[str] = []
+    if "project" in requested:
+        aggregate_ctes.append(
+            """
+            project_facet AS (
+                SELECT project_id, project_key, project_label, COUNT(*) AS match_count
+                FROM matched_rows
+                GROUP BY project_id, project_key, project_label
+                ORDER BY match_count DESC, project_label ASC
+                LIMIT 100
+            )
+            """
+        )
+        selects.append(
+            "SELECT 'project' AS facet, project_key AS value, project_label AS label, project_id, match_count FROM project_facet"
+        )
+    for facet, column in (
+        ("session", "session_id"),
+        ("date", "match_date"),
+        ("branch", "branch"),
+        ("matched_field", "matched_field"),
+    ):
+        if facet not in requested:
+            continue
+        cte_name = f"{facet}_facet"
+        aggregate_ctes.append(
+            f"""
+            {cte_name} AS (
+                SELECT {column} AS value, COUNT(*) AS match_count
+                FROM matched_rows
+                WHERE NULLIF(TRIM({column}), '') IS NOT NULL
+                GROUP BY {column}
+                ORDER BY match_count DESC, value ASC
+                LIMIT 100
+            )
+            """
+        )
+        selects.append(
+            f"SELECT '{facet}' AS facet, value, value AS label, NULL AS project_id, match_count FROM {cte_name}"
+        )
+
+    rows = connection.execute(
+        f"""
+        {with_prefix}
+        matched_rows AS (
+            SELECT
+                st.session_id,
+                strftime('%Y-%m-%d', julianday({TURN_TIMESTAMP_SQL})) AS match_date,
+                COALESCE(NULLIF(TRIM(s.git_branch), ''), '') AS branch,
+                p.id AS project_id,
+                {project_key_sql} AS project_key,
+                {project_label_sql} AS project_label,
+                {matched_field_sql} AS matched_field
+            FROM {source}
+            {source_join}
+            JOIN sessions AS s ON s.id = st.session_id
+            LEFT JOIN project_overrides AS o
+                ON o.match_project_key = s.inferred_project_key
+            LEFT JOIN project_sources AS ps
+                ON ps.match_project_key = s.inferred_project_key
+            LEFT JOIN projects AS p
+                ON p.id = ps.project_id
+            {visible_session_where(conditions)}
+        ),
+        {','.join(aggregate_ctes)}
+        {' UNION ALL '.join(selects)}
+        """,
+        params,
+    ).fetchall()
+    result = {facet: [] for facet in requested}
+    for row in rows:
+        item: dict[str, Any] = {
+            "value": str(row["value"] or ""),
+            "count": int(row["match_count"] or 0),
+        }
+        if row["label"]:
+            item["label"] = str(row["label"])
+        if row["project_id"]:
+            item["project_id"] = str(row["project_id"])
+        result[str(row["facet"])].append(item)
+    return result
 
 
 def _turn_order_expression(
@@ -639,18 +899,18 @@ def _select_grouped_sessions(
     *,
     base_conditions: list[str],
     base_params: list[Any],
-    match_expression: str | None,
+    match: SearchMatchSpec | None,
     page_size: int,
     offset: int,
     sort: str,
     prefer_recent: bool,
 ) -> list[sqlite3.Row]:
     session_order = _session_order_expression(sort=sort, prefer_recent=prefer_recent)
-    if match_expression:
+    if match:
         ranked_conditions = ["search_candidates.candidate_rank = 1", *base_conditions]
         return connection.execute(
             f"""
-            WITH {_matched_candidate_ctes(include_evidence=False)}
+            WITH {_matched_candidate_ctes(match, include_evidence=False)}
             SELECT
                 st.session_id AS group_session_id,
                 COUNT(*) AS match_count,
@@ -674,7 +934,7 @@ def _select_grouped_sessions(
             ORDER BY {session_order}
             LIMIT ? OFFSET ?
             """,
-            [match_expression, match_expression, *base_params, page_size, offset],
+            [*match.params, *base_params, page_size, offset],
         ).fetchall()
 
     return connection.execute(
@@ -716,7 +976,7 @@ def _run_search_stage(
     *,
     base_conditions: list[str],
     base_params: list[Any],
-    match_expression: str | None,
+    match: SearchMatchSpec | None,
     total_count: int,
     session_count: int,
     page: int,
@@ -727,6 +987,7 @@ def _run_search_stage(
     max_hits_per_session: int,
     retrieval: dict[str, Any],
     coverage: dict[str, Any],
+    facets: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     normalized_page = max(int(page or 1), 1)
     pagination_total = session_count if group_by == "session" else total_count
@@ -740,7 +1001,7 @@ def _run_search_stage(
             connection,
             base_conditions=base_conditions,
             base_params=base_params,
-            match_expression=match_expression,
+            match=match,
             page_size=page_size,
             offset=offset,
             sort=sort,
@@ -749,7 +1010,7 @@ def _run_search_stage(
 
     if group_by == "session" and not selected_session_rows:
         rows = []
-    elif match_expression and group_by == "none":
+    elif match and group_by == "none":
         matched_order = _turn_order_expression(
             sort=sort,
             prefer_recent=prefer_recent,
@@ -758,7 +1019,7 @@ def _run_search_stage(
         ranked_conditions = ["search_candidates.candidate_rank = 1", *base_conditions]
         rows = connection.execute(
             f"""
-            WITH {_matched_candidate_ctes()}
+            WITH {_matched_candidate_ctes(match)}
             SELECT
                 {TURN_STREAM_SELECT},
                 search_candidates.search_rank,
@@ -766,6 +1027,10 @@ def _run_search_stage(
                 search_candidates.prompt_snippet,
                 search_candidates.response_snippet,
                 search_candidates.event_snippet,
+                search_candidates.command_snippet,
+                search_candidates.path_snippet,
+                search_candidates.commit_snippet,
+                search_candidates.tool_output_snippet,
                 search_candidates.chunk_snippet,
                 search_candidates.match_source,
                 search_candidates.chunk_id,
@@ -789,9 +1054,9 @@ def _run_search_stage(
             ORDER BY {matched_order}
             LIMIT ? OFFSET ?
             """,
-            [match_expression, match_expression, *base_params, page_size, offset],
+            [*match.params, *base_params, page_size, offset],
         ).fetchall()
-    elif match_expression:
+    elif match:
         selected_cte, selected_params = _selected_sessions_cte(selected_session_rows)
         grouped_order = _turn_order_expression(
             sort=sort,
@@ -801,7 +1066,7 @@ def _run_search_stage(
         ranked_conditions = ["search_candidates.candidate_rank = 1", *base_conditions]
         rows = connection.execute(
             f"""
-            WITH {_matched_candidate_ctes()},
+            WITH {_matched_candidate_ctes(match)},
             {selected_cte},
             ranked_hits AS (
                 SELECT
@@ -811,6 +1076,10 @@ def _run_search_stage(
                     search_candidates.prompt_snippet,
                     search_candidates.response_snippet,
                     search_candidates.event_snippet,
+                    search_candidates.command_snippet,
+                    search_candidates.path_snippet,
+                    search_candidates.commit_snippet,
+                    search_candidates.tool_output_snippet,
                     search_candidates.chunk_snippet,
                     search_candidates.match_source,
                     search_candidates.chunk_id,
@@ -846,8 +1115,7 @@ def _run_search_stage(
             ORDER BY group_order ASC, session_hit_rank ASC
             """,
             [
-                match_expression,
-                match_expression,
+                *match.params,
                 *selected_params,
                 *base_params,
                 max_hits_per_session,
@@ -860,6 +1128,10 @@ def _run_search_stage(
             NULL AS prompt_snippet,
             NULL AS response_snippet,
             NULL AS event_snippet,
+            NULL AS command_snippet,
+            NULL AS path_snippet,
+            NULL AS commit_snippet,
+            NULL AS tool_output_snippet,
             NULL AS chunk_snippet,
             'history' AS match_source,
             NULL AS chunk_id,
@@ -902,6 +1174,10 @@ def _run_search_stage(
                     NULL AS prompt_snippet,
                     NULL AS response_snippet,
                     NULL AS event_snippet,
+                    NULL AS command_snippet,
+                    NULL AS path_snippet,
+                    NULL AS commit_snippet,
+                    NULL AS tool_output_snippet,
                     NULL AS chunk_snippet,
                     'history' AS match_source,
                     NULL AS chunk_id,
@@ -954,7 +1230,7 @@ def _run_search_stage(
         )
         matched_field, marked_snippet = _matched_snippet(
             row,
-            has_match_expression=bool(match_expression),
+            has_match_expression=bool(match),
         )
         failure_count = int(row["failure_count"] or 0)
         search_rank = float(row["search_rank"] or 0.0)
@@ -1045,6 +1321,7 @@ def _run_search_stage(
         "showing_to": offset + returned_units,
         "retrieval": retrieval,
         "coverage": coverage,
+        "facets": facets,
     }
 
 
@@ -1061,6 +1338,9 @@ def search_turn_hits_raw(
     sort: str = "relevance",
     group_by: str = "none",
     max_hits_per_session: int = 3,
+    mode: str = "all",
+    fields: str | Sequence[str] | None = None,
+    facets: str | Sequence[str] | None = None,
     project_access: ProjectAccessContext | None = None,
 ) -> dict[str, Any]:
     """Return search-domain data without HTML or route-specific links."""
@@ -1071,7 +1351,20 @@ def search_turn_hits_raw(
         group_by,
         max_hits_per_session,
     )
-    plan = plan_search_query(q)
+    normalized_mode = str(mode or "all").strip().lower()
+    if normalized_mode not in SEARCH_MODES:
+        raise ValueError(f"Unsupported search mode: {mode}")
+    normalized_fields = normalize_search_values(
+        fields,
+        supported=SEARCH_FIELDS,
+        label="field",
+    )
+    normalized_facets = normalize_search_values(
+        facets,
+        supported=SEARCH_FACETS,
+        label="facet",
+    )
+    plan = plan_search_query(q, mode=normalized_mode)
     effective_project_id, project_resolution = _resolve_project_scope(
         connection,
         plan=plan,
@@ -1126,20 +1419,23 @@ def search_turn_hits_raw(
             coverage=coverage,
         )
 
+    strict_match = _search_match_spec(plan.strict_expression, normalized_fields)
     strict_count, strict_session_count = _search_stage_counts(
         connection,
         base_conditions=base_conditions,
         base_params=base_params,
-        match_expression=plan.strict_expression,
+        match=strict_match,
     )
     stage_counts["strict"] = strict_count
     selected_strategy = "strict" if strict_count else "no_match"
-    selected_expression = plan.strict_expression if strict_count else None
+    selected_match = strict_match if strict_count else None
     selected_count = strict_count
     selected_session_count = strict_session_count
 
     should_try_relaxed = bool(
-        plan.relaxed_expression
+        not normalized_fields
+        and normalized_mode == "all"
+        and plan.relaxed_expression
         and plan.relaxed_expression != plan.strict_expression
         and (
             strict_count == 0
@@ -1147,21 +1443,23 @@ def search_turn_hits_raw(
         )
     )
     if should_try_relaxed:
+        relaxed_match = _search_match_spec(plan.relaxed_expression, normalized_fields)
         relaxed_count, relaxed_session_count = _search_stage_counts(
             connection,
             base_conditions=base_conditions,
             base_params=base_params,
-            match_expression=plan.relaxed_expression,
+            match=relaxed_match,
         )
         stage_counts["relaxed"] = relaxed_count
         if relaxed_count and (not strict_count or relaxed_count > strict_count):
             selected_strategy = "relaxed"
-            selected_expression = plan.relaxed_expression
+            selected_match = relaxed_match
             selected_count = relaxed_count
             selected_session_count = relaxed_session_count
 
     if (
         selected_count == 0
+        and not normalized_fields
         and plan.allows_history_fallback
         and effective_project_id
     ):
@@ -1169,12 +1467,12 @@ def search_turn_hits_raw(
             connection,
             base_conditions=base_conditions,
             base_params=base_params,
-            match_expression=None,
+            match=None,
         )
         stage_counts["project_history"] = history_count
         if history_count:
             selected_strategy = "project_history"
-            selected_expression = None
+            selected_match = None
             selected_count = history_count
             selected_session_count = history_session_count
 
@@ -1191,11 +1489,18 @@ def search_turn_hits_raw(
             group_by=normalized_group_by,
             coverage=coverage,
         )
+    facet_values = _search_facets(
+        connection,
+        base_conditions=base_conditions,
+        base_params=base_params,
+        match=selected_match,
+        requested=normalized_facets,
+    )
     return _run_search_stage(
         connection,
         base_conditions=base_conditions,
         base_params=base_params,
-        match_expression=selected_expression,
+        match=selected_match,
         total_count=selected_count,
         session_count=selected_session_count,
         page=page,
@@ -1206,4 +1511,5 @@ def search_turn_hits_raw(
         max_hits_per_session=normalized_max_hits,
         retrieval=retrieval,
         coverage=coverage,
+        facets=facet_values,
     )

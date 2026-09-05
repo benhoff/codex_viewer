@@ -17,6 +17,7 @@ from agent_operations_viewer.search_query import (
     SEARCH_INTENT_LATEST_NEXT_STEP,
     SEARCH_INTENT_REMAINING_ISSUES,
     SEARCH_INTENT_RESOLVED_ISSUES,
+    build_lexical_match_expression,
     plan_search_query,
 )
 from agent_operations_viewer.turn_index import (
@@ -44,6 +45,10 @@ def insert_search_turn(
     prompt: str = "",
     response: str = "",
     activity: str = "",
+    commands: str = "",
+    paths: str = "",
+    commit_ids: str = "",
+    tool_output: str = "",
     import_warning: str | None = None,
 ) -> None:
     connection.execute(
@@ -128,10 +133,30 @@ def insert_search_turn(
     connection.execute(
         """
         INSERT INTO session_turn_search (
-            project_text, prompt_text, response_text, event_text, session_id, turn_number
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            project_text,
+            prompt_text,
+            response_text,
+            event_text,
+            command_text,
+            path_text,
+            commit_id_text,
+            tool_output_text,
+            session_id,
+            turn_number
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (f"{project_key}\n{project_label}", prompt, response, activity, session_id, turn_number),
+        (
+            f"{project_key}\n{project_label}",
+            prompt,
+            response,
+            activity,
+            commands,
+            paths,
+            commit_ids,
+            tool_output,
+            session_id,
+            turn_number,
+        ),
     )
 
 
@@ -176,6 +201,122 @@ class SearchServiceTests(unittest.TestCase):
         self.assertEqual(
             build_turn_search_match_expression("HWS authentication authentication API"),
             '"hws"* AND "authentication"* AND "api"*',
+        )
+        self.assertEqual(
+            build_lexical_match_expression("alpha beta", mode="any"),
+            '"alpha"* OR "beta"*',
+        )
+        self.assertEqual(
+            build_lexical_match_expression("alpha beta", mode="phrase"),
+            '"alpha beta"*',
+        )
+        self.assertEqual(
+            build_lexical_match_expression("alpha beta", mode="exact"),
+            '"alpha beta"',
+        )
+
+    def test_lexical_modes_and_field_filters_are_deterministic(self) -> None:
+        with connect(self.db_path) as connection:
+            insert_search_turn(
+                connection,
+                session_id="lexical-one",
+                project_id="lexical-project",
+                project_key="acme/lexical",
+                project_label="acme/lexical",
+                prompt="alpha beta gamma prompt-only-marker",
+                commands="python3 verify_hardware.py --register VDONE",
+                paths="src/device/register_map.py",
+                commit_ids="2d48e17abc123",
+                tool_output="VDONE reached value 2073600",
+            )
+            insert_search_turn(
+                connection,
+                session_id="lexical-two",
+                project_id="lexical-project",
+                project_key="acme/lexical",
+                project_label="acme/lexical",
+                prompt="alpha intervening beta",
+                response="response-only-marker",
+            )
+
+            all_page = search_turn_hits_raw(connection, "alpha beta", mode="all")
+            any_page = search_turn_hits_raw(connection, "gamma missing", mode="any")
+            phrase_page = search_turn_hits_raw(connection, "alpha bet", mode="phrase")
+            exact_page = search_turn_hits_raw(connection, "alpha bet", mode="exact")
+            command_page = search_turn_hits_raw(
+                connection,
+                "verify_hardware",
+                fields=["commands"],
+            )
+            output_page = search_turn_hits_raw(
+                connection,
+                "2073600",
+                fields=["tool_output"],
+            )
+            path_page = search_turn_hits_raw(
+                connection,
+                "register_map.py",
+                fields=["paths"],
+            )
+            commit_page = search_turn_hits_raw(
+                connection,
+                "2d48e17abc123",
+                fields=["commit_ids"],
+            )
+            excluded_page = search_turn_hits_raw(
+                connection,
+                "prompt-only-marker",
+                fields=["response"],
+            )
+
+        self.assertEqual(all_page["total_count"], 2)
+        self.assertEqual({item["session_id"] for item in any_page["items"]}, {"lexical-one"})
+        self.assertEqual([item["session_id"] for item in phrase_page["items"]], ["lexical-one"])
+        self.assertEqual(exact_page["total_count"], 0)
+        self.assertEqual(command_page["items"][0]["matched_field"], "commands")
+        self.assertEqual(output_page["items"][0]["matched_field"], "tool_output")
+        self.assertEqual(path_page["items"][0]["matched_field"], "paths")
+        self.assertEqual(commit_page["items"][0]["matched_field"], "commit_ids")
+        self.assertEqual(excluded_page["total_count"], 0)
+
+    def test_facets_are_computed_before_pagination(self) -> None:
+        with connect(self.db_path) as connection:
+            insert_search_turn(
+                connection,
+                session_id="facet-one",
+                project_id="facet-project",
+                project_key="acme/facet",
+                project_label="acme/facet",
+                timestamp="2026-08-20T12:00:00+00:00",
+                prompt="facet needle",
+            )
+            insert_search_turn(
+                connection,
+                session_id="facet-two",
+                project_id="facet-project",
+                project_key="acme/facet",
+                project_label="acme/facet",
+                timestamp="2026-08-21T12:00:00+00:00",
+                response="facet needle",
+            )
+            connection.execute(
+                "UPDATE sessions SET git_branch = 'feature/facets' WHERE id = 'facet-one'"
+            )
+            page = search_turn_hits_raw(
+                connection,
+                "facet needle",
+                page_size=1,
+                facets=["project", "session", "date", "branch", "matched_field"],
+            )
+
+        self.assertEqual(len(page["items"]), 1)
+        self.assertEqual(page["facets"]["project"][0]["count"], 2)
+        self.assertEqual(len(page["facets"]["session"]), 2)
+        self.assertEqual(len(page["facets"]["date"]), 2)
+        self.assertEqual(page["facets"]["branch"][0]["value"], "feature/facets")
+        self.assertEqual(
+            {item["value"] for item in page["facets"]["matched_field"]},
+            {"prompt", "response"},
         )
 
     def test_query_planner_detects_abstract_intent_and_project_hint(self) -> None:

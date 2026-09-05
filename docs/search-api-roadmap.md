@@ -105,28 +105,25 @@ Add `GET /api/v1/projects` with filters such as `repository_id`, `remote`, `root
 
 Migration work needs special care: the existing project registry can merge or remove project rows as source mappings change, so stable repository IDs must be created independently of display/group keys.
 
-## Slice 6: Search Modes, Fields, Batch Requests, and Facets
+## Slice 6: Search Modes, Fields, Batch Requests, and Facets (Implemented)
 
 Goal: support exact experimental evidence without weakening deterministic lexical retrieval.
 
-Proposed parameters:
+Implemented parameters:
 
 ```text
 mode=all|any|phrase|exact
-fields=prompt,response,commands,paths,commit_ids,tool_output
+fields=prompt,response,activity,commands,paths,commit_ids,tool_output
 facets=project,session,date,branch,matched_field
 ```
 
-Implementation approach:
+`all` remains the compatibility default. `any`, `phrase`, and `exact` generate escaped FTS expressions; `exact` means an exact sequence of complete lexical tokens, not a byte-for-byte substring. Explicit field filters disable automatic query relaxation. The derived turn index now separates prompt, response, generic activity, commands, parsed paths, captured commit IDs, and tool output, with full-content chunks for potentially long command and tool-output fields.
 
-- Keep `all` as the compatibility default.
-- Implement `any` and `phrase` with escaped FTS expressions.
-- Define `exact` carefully: exact token/phrase matching belongs in FTS, while exact raw substring matching may require a slower chunk-content path or an additional n-gram index.
-- Map prompt, response, and activity filters to FTS columns.
-- Search paths, branch, and commit IDs through their structured columns/tables rather than flattening them into generic event text.
-- Compute facets after ACL/filter application and before pagination.
+Facets are ACL- and filter-aware, computed across the deduplicated matching turns before pagination, and capped at 100 values per requested family. Turn/chunk and overlapping-chunk results remain deduplicated to one hit per turn.
 
-Add `POST /api/v1/search/batch` after the single-query modes stabilize. Its body should contain bounded query objects using the same schema as `GET /api/v1/search`. Enforce per-query and total-hit limits so a batch cannot multiply an unbounded workload.
+`POST /api/v1/search/batch` accepts 1 to 20 bounded query objects using the GET schema without cursors. `max_total_hits` is capped at 500 and accounts for grouped per-session hit caps before any query executes. All batch queries run under the same search-token identity and project ACL snapshot.
+
+A true raw-substring mode remains a possible future addition. It would need a deliberately slower scan or a separate n-gram index so punctuation and case can be preserved without changing the deterministic lexical contract.
 
 Numeric values, SHAs, register names, filenames, and exact messages are strong reasons to keep lexical modes available even if semantic reranking is added later.
 

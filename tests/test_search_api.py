@@ -106,6 +106,10 @@ class SearchApiTests(unittest.TestCase):
                     project_label="acme/public-hws",
                     prompt="shared api needle grouping",
                     response="public response one",
+                    commands="pytest -q",
+                    paths="app.py",
+                    commit_ids="2d48e17abc123",
+                    tool_output="1 passed",
                 )
                 connection.execute(
                     """
@@ -475,6 +479,17 @@ class SearchApiTests(unittest.TestCase):
             timeout=2,
         )
 
+    def _batch(self, *, token: str | None = None, **body: object) -> requests.Response:
+        headers = {"accept": "application/json"}
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        return requests.post(
+            f"{self.base_url}/api/v1/search/batch",
+            json=body,
+            headers=headers,
+            timeout=2,
+        )
+
     def test_read_token_is_required_and_sync_token_is_not_accepted(self) -> None:
         self.assertEqual(self._search().status_code, 401)
         self.assertEqual(self._search(token=self.sync_token).status_code, 401)
@@ -657,6 +672,89 @@ class SearchApiTests(unittest.TestCase):
         self.assertGreater(hit["chunk"]["start_offset"], 12_000)
         self.assertIn("marker", hit["snippet"])
 
+    def test_search_modes_fields_and_facets_are_exposed(self) -> None:
+        response = self._search(
+            token=self.viewer_token,
+            q="shared missing-term",
+            mode="any",
+            fields="prompt",
+            facets="project,branch,matched_field",
+            limit=1,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["mode"], "any")
+        self.assertEqual(payload["filters"]["fields"], ["prompt"])
+        self.assertEqual(payload["total_count"], 2)
+        self.assertEqual(payload["facets"]["project"][0]["count"], 2)
+        self.assertEqual(payload["facets"]["branch"][0]["value"], "feature/search-api")
+        self.assertEqual(
+            payload["facets"]["matched_field"][0]["value"],
+            "prompt",
+        )
+
+        command_response = self._search(
+            token=self.viewer_token,
+            q="pytest",
+            fields="commands",
+        )
+        self.assertEqual(command_response.status_code, 200, command_response.text)
+        self.assertEqual(command_response.json()["total_count"], 2)
+        self.assertEqual(
+            command_response.json()["hits"][0]["matched_field"],
+            "commands",
+        )
+
+        exact_response = self._search(
+            token=self.viewer_token,
+            q="shared api need",
+            mode="exact",
+            fields="prompt",
+        )
+        self.assertEqual(exact_response.status_code, 200, exact_response.text)
+        self.assertEqual(exact_response.json()["total_count"], 0)
+
+    def test_batch_search_is_bounded_and_uses_search_token_acl(self) -> None:
+        body = {
+            "queries": [
+                {
+                    "id": "command",
+                    "q": "pytest",
+                    "fields": ["commands"],
+                    "limit": 2,
+                },
+                {
+                    "id": "responses",
+                    "q": "public response",
+                    "mode": "phrase",
+                    "fields": ["response"],
+                    "facets": ["project"],
+                    "limit": 2,
+                },
+            ],
+            "max_total_hits": 4,
+        }
+        self.assertEqual(self._batch(**body).status_code, 401)
+        self.assertEqual(self._batch(token=self.sync_token, **body).status_code, 401)
+
+        response = self._batch(token=self.viewer_token, **body)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["query_count"], 2)
+        self.assertEqual([result["id"] for result in payload["results"]], ["command", "responses"])
+        self.assertEqual(payload["results"][0]["hits"][0]["matched_field"], "commands")
+        self.assertNotIn("classified private evidence", response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+
+        over_budget = self._batch(
+            token=self.viewer_token,
+            queries=[{"q": "shared", "limit": 3}],
+            max_total_hits=2,
+        )
+        self.assertEqual(over_budget.status_code, 422)
+
     def test_cursor_is_bound_to_query_and_advances_results(self) -> None:
         first_response = self._search(token=self.viewer_token, limit=1)
         self.assertEqual(first_response.status_code, 200, first_response.text)
@@ -692,6 +790,16 @@ class SearchApiTests(unittest.TestCase):
             timeout=2,
         )
         self.assertEqual(mismatched_response.status_code, 400)
+
+        mismatched_options = self._search(
+            token=self.viewer_token,
+            limit=1,
+            cursor=first_payload["next_cursor"],
+            mode="any",
+            fields="prompt",
+            facets="project",
+        )
+        self.assertEqual(mismatched_options.status_code, 400)
 
     def test_chronological_sorting_is_explicit_and_stable(self) -> None:
         ascending_response = self._search(
@@ -791,10 +899,16 @@ class SearchApiTests(unittest.TestCase):
             group_by="session",
             max_hits_per_session=0,
         )
+        invalid_mode = self._search(token=self.viewer_token, mode="semantic")
+        invalid_fields = self._search(token=self.viewer_token, fields="prompt,secrets")
+        invalid_facets = self._search(token=self.viewer_token, facets="project,owner")
 
         self.assertEqual(invalid_sort.status_code, 422)
         self.assertEqual(invalid_group.status_code, 422)
         self.assertEqual(invalid_cap.status_code, 422)
+        self.assertEqual(invalid_mode.status_code, 422)
+        self.assertEqual(invalid_fields.status_code, 422)
+        self.assertEqual(invalid_facets.status_code, 422)
 
 
 if __name__ == "__main__":
