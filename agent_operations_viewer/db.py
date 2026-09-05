@@ -924,7 +924,7 @@ CREATE TABLE IF NOT EXISTS session_search_chunks (
     session_id TEXT NOT NULL,
     turn_number INTEGER NOT NULL,
     field TEXT NOT NULL CHECK(
-        field IN ('prompt', 'response', 'activity', 'commands', 'tool_output')
+        field IN ('prompt', 'response', 'activity', 'commands', 'tool_output', 'patches')
     ),
     chunk_index INTEGER NOT NULL,
     start_offset INTEGER NOT NULL,
@@ -1709,7 +1709,7 @@ def ensure_search_index_schema(connection: sqlite3.Connection) -> None:
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'session_search_chunks'"
     ).fetchone()
     chunk_schema = str(chunk_schema_row["sql"] or "") if chunk_schema_row else ""
-    if "'commands'" not in chunk_schema or "'tool_output'" not in chunk_schema:
+    if any(f"'{field}'" not in chunk_schema for field in ("commands", "tool_output", "patches")):
         connection.execute("DROP TRIGGER IF EXISTS session_search_chunks_delete_fts")
         connection.execute("DROP TABLE IF EXISTS session_search_chunk_fts")
         connection.execute("DROP TABLE IF EXISTS session_search_chunks")
@@ -1720,7 +1720,7 @@ def ensure_search_index_schema(connection: sqlite3.Connection) -> None:
                 session_id TEXT NOT NULL,
                 turn_number INTEGER NOT NULL,
                 field TEXT NOT NULL CHECK(
-                    field IN ('prompt', 'response', 'activity', 'commands', 'tool_output')
+                    field IN ('prompt', 'response', 'activity', 'commands', 'tool_output', 'patches')
                 ),
                 chunk_index INTEGER NOT NULL,
                 start_offset INTEGER NOT NULL,

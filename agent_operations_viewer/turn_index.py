@@ -23,7 +23,7 @@ from .text_utils import shorten, strip_codex_wrappers
 
 TURN_INDEX_VERSION = 6
 TURN_SEARCH_VERSION = 3
-SEARCH_CHUNK_VERSION = 2
+SEARCH_CHUNK_VERSION = 3
 
 MAX_PROMPT_SEARCH_CHARS = 8_000
 MAX_RESPONSE_SEARCH_CHARS = 12_000
@@ -382,6 +382,51 @@ def _tool_output_search_text_full(event: dict[str, Any]) -> str:
     )
 
 
+def _patch_search_text_full(event: dict[str, Any]) -> str:
+    """Submitted patch bodies and structured applied diffs, excluding status output."""
+    tool = str(event.get("tool_name") or "").split(".")[-1]
+    if event.get("kind") == "tool_call" and (tool == "apply_patch" or _is_apply_patch_exec_tool_call(event)):
+        candidates = [str(event.get(key) or "") for key in ("display_text", "command_text", "detail_text")]
+        text = next((value for value in candidates if "*** Begin Patch" in value), candidates[0])
+        try:
+            decoded = json.loads(text)
+            if isinstance(decoded, dict):
+                text = str(decoded.get("patch") or decoded.get("input") or decoded.get("cmd") or "")
+            elif isinstance(decoded, str):
+                text = decoded
+        except (ValueError, TypeError):
+            pass
+        start, end = text.find("*** Begin Patch"), text.find("*** End Patch")
+        if start >= 0 and end >= start:
+            return text[start:end + len("*** End Patch")]
+        if tool == "apply_patch":
+            return text
+    if event.get("payload_type") in {"patch_apply_begin", "patch_apply_end"}:
+        try:
+            record = json.loads(str(event.get("record_json") or "{}"))
+            changes = (record.get("payload") or {}).get("changes")
+            if not isinstance(changes, dict):
+                changes = json.loads(str(event.get("detail_text") or "{}"))
+            if not isinstance(changes, dict):
+                return ""
+            return "\n".join(str(change.get("unified_diff") or "") for _, change in sorted(changes.items()) if isinstance(change, dict))
+        except (ValueError, AttributeError):
+            return ""
+    return ""
+
+
+def patch_line_ranges(text: str, *, start_offset: int = 0) -> list[dict[str, Any]]:
+    lines = []
+    offset = start_offset
+    for line in text.splitlines(keepends=True):
+        kind = "header" if line.startswith(("***", "@@", "---", "+++", "diff ", "index ")) else (
+            "addition" if line.startswith("+") else "deletion" if line.startswith("-") else "context"
+        )
+        lines.append({"kind": kind, "start_offset": offset, "end_offset": offset + len(line)})
+        offset += len(line)
+    return lines
+
+
 def split_search_text_chunks(
     value: object,
     *,
@@ -592,6 +637,7 @@ def compute_session_turn_index(
             "latest_rate_limit_reached_type": usage_rollup["latest_rate_limit_reached_type"],
             "event_text": event_text,
             "full_event_text": full_event_text,
+            "full_patch_text": "\n".join(text for event in all_events if (text := _patch_search_text_full(event))),
             "command_text": _compact_search_text(full_command_text, MAX_EVENT_SEARCH_CHARS),
             "full_command_text": full_command_text,
             "tool_output_text": _compact_search_text(
@@ -1127,6 +1173,7 @@ def _session_search_chunk_records(
             ("activity", turn.get("full_event_text")),
             ("commands", turn.get("full_command_text")),
             ("tool_output", turn.get("full_tool_output_text")),
+            ("patches", turn.get("full_patch_text")),
         ):
             for chunk in split_search_text_chunks(value):
                 content_sha256 = str(chunk["content_sha256"])

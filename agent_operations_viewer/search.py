@@ -50,7 +50,7 @@ SESSION_TIMESTAMP_SQL = """
 SEARCH_SORT_MODES = frozenset({"relevance", "time_asc", "time_desc"})
 SEARCH_GROUP_MODES = frozenset({"none", "session"})
 SEARCH_FIELDS = frozenset(
-    {"prompt", "response", "activity", "commands", "paths", "commit_ids", "tool_output"}
+    {"prompt", "response", "activity", "commands", "paths", "commit_ids", "tool_output", "patches"}
 )
 SEARCH_FACETS = frozenset({"project", "session", "date", "branch", "matched_field"})
 SEARCH_FIELD_COLUMNS = {
@@ -63,7 +63,7 @@ SEARCH_FIELD_COLUMNS = {
     "tool_output": "tool_output_text",
 }
 SEARCH_CHUNK_FIELDS = frozenset(
-    {"prompt", "response", "activity", "commands", "tool_output"}
+    {"prompt", "response", "activity", "commands", "tool_output", "patches"}
 )
 
 
@@ -111,11 +111,11 @@ def _search_match_spec(
 ) -> SearchMatchSpec | None:
     if not expression:
         return None
-    selected_fields = fields or tuple(SEARCH_FIELD_COLUMNS)
-    turn_columns = [SEARCH_FIELD_COLUMNS[field] for field in selected_fields]
+    selected_fields = fields or tuple(sorted(SEARCH_FIELDS))
+    turn_columns = [SEARCH_FIELD_COLUMNS[field] for field in selected_fields if field in SEARCH_FIELD_COLUMNS]
     if not fields:
         turn_columns.insert(0, "project_text")
-    turn_expression = f"{{{' '.join(turn_columns)}}} : ({expression})"
+    turn_expression = f"{{{' '.join(turn_columns)}}} : ({expression})" if turn_columns else None
     chunk_fields = tuple(field for field in selected_fields if field in SEARCH_CHUNK_FIELDS)
     return SearchMatchSpec(
         turn_expression=turn_expression,

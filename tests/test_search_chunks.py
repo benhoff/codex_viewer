@@ -15,6 +15,7 @@ from agent_operations_viewer.turn_index import (
     backfill_session_search_chunks,
     replace_session_search_chunks,
     split_search_text_chunks,
+    _patch_search_text_full,
 )
 from tests.test_search import insert_search_turn
 
@@ -50,6 +51,15 @@ def search_event(
 
 
 class SearchChunkIndexTests(unittest.TestCase):
+    def test_patch_normalization_extracts_bodies_and_excludes_status(self) -> None:
+        submitted = "*** Begin Patch\n*** Update File: app.py\n@@\n-old\n+new\n*** End Patch"
+        self.assertEqual(_patch_search_text_full({"kind": "tool_call", "tool_name": "apply_patch", "display_text": submitted}), submitted)
+        self.assertEqual(_patch_search_text_full({"kind": "tool_call", "tool_name": "exec_command", "display_text": "Run command", "command_text": "apply_patch <<'PATCH'\n" + submitted + "\nPATCH\necho ignored"}), submitted)
+        self.assertEqual(_patch_search_text_full({"kind": "tool_call", "tool_name": "functions.apply_patch", "display_text": json.dumps({"patch": submitted})}), submitted)
+        applied = {"payload_type": "patch_apply_end", "display_text": "Status: completed", "detail_text": json.dumps({"app.py": {"unified_diff": "@@\n-old\n+new"}})}
+        self.assertEqual(_patch_search_text_full(applied), "@@\n-old\n+new")
+        self.assertEqual(_patch_search_text_full({"kind": "tool_result", "tool_name": "apply_patch", "display_text": "Status: completed"}), "")
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "viewer.sqlite3"
