@@ -514,6 +514,15 @@ def _run_search_stage(
                 "project_key": project["effective_group_key"],
                 "project_label": project["display_label"],
                 "host": project["source_host"],
+                "repository": {
+                    "remote": trimmed(row["git_repository_url"])
+                    or trimmed(row["github_remote_url"]),
+                    "root": project["cwd"],
+                    "branch": trimmed(row["git_branch"]),
+                    "head": trimmed(row["git_commit_hash"]),
+                    # Dirty state is not captured by the current ingestion schema.
+                    "dirty": None,
+                },
                 "matched_field": matched_field,
                 "marked_snippet": marked_snippet,
                 "snippet": plain_search_snippet(marked_snippet),

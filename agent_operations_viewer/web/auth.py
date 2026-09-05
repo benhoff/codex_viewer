@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -53,6 +54,11 @@ BOOTSTRAP_PUBLIC_PATHS = {
     "/setup/status",
 }
 SEARCH_API_PATHS = {"/api/v1/search"}
+SEARCH_API_TURN_PATH = re.compile(r"^/api/v1/sessions/[^/]+/turns/[0-9]+$")
+
+
+def is_search_api_path(path: str) -> bool:
+    return path in SEARCH_API_PATHS or SEARCH_API_TURN_PATH.fullmatch(path) is not None
 
 
 def request_bearer_token(request: Request) -> str | None:
@@ -275,7 +281,7 @@ def search_api_token_user(
     request: Request,
     connection: Any,
 ) -> tuple[dict[str, object], str] | None:
-    if request.url.path not in SEARCH_API_PATHS:
+    if not is_search_api_path(request.url.path):
         return None
     bearer_token = request_bearer_token(request)
     if not bearer_token:

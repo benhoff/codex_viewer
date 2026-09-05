@@ -107,6 +107,243 @@ class SearchApiTests(unittest.TestCase):
                     prompt="shared api needle",
                     response="public response one",
                 )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET
+                        git_repository_url = ?,
+                        git_branch = ?,
+                        git_commit_hash = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        "https://github.com/acme/public-hws.git",
+                        "feature/search-api",
+                        "2d48e17abc123",
+                        "public-one",
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO session_turns (
+                        session_id,
+                        turn_number,
+                        start_event_index,
+                        end_event_index,
+                        prompt_excerpt,
+                        prompt_timestamp,
+                        response_excerpt,
+                        response_timestamp,
+                        response_state,
+                        latest_timestamp
+                    ) VALUES (?, 2, 2, 9, ?, ?, ?, ?, 'final', ?)
+                    """,
+                    (
+                        "public-one",
+                        "neighboring prompt",
+                        "2026-08-23T12:02:00+00:00",
+                        "neighboring response",
+                        "2026-08-23T12:03:00+00:00",
+                        "2026-08-23T12:03:00+00:00",
+                    ),
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO events (
+                        session_id,
+                        event_index,
+                        timestamp,
+                        record_type,
+                        payload_type,
+                        kind,
+                        role,
+                        title,
+                        display_text,
+                        detail_text,
+                        tool_name,
+                        call_id,
+                        command_text,
+                        exit_code,
+                        record_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "public-one",
+                            0,
+                            "2026-08-23T12:00:00+00:00",
+                            "event_msg",
+                            "user_message",
+                            "message",
+                            "user",
+                            "User",
+                            "shared api needle",
+                            "",
+                            None,
+                            None,
+                            None,
+                            None,
+                            '{"payload":{"type":"user_message"}}',
+                        ),
+                        (
+                            "public-one",
+                            1,
+                            "2026-08-23T12:01:00+00:00",
+                            "response_item",
+                            "message",
+                            "message",
+                            "assistant",
+                            "Assistant",
+                            "public response one with complete turn detail",
+                            "",
+                            None,
+                            None,
+                            None,
+                            None,
+                            '{"payload":{"type":"message","role":"assistant","phase":"final_answer"}}',
+                        ),
+                        (
+                            "public-one",
+                            2,
+                            "2026-08-23T12:02:00+00:00",
+                            "event_msg",
+                            "user_message",
+                            "message",
+                            "user",
+                            "User",
+                            "neighboring prompt",
+                            "",
+                            None,
+                            None,
+                            None,
+                            None,
+                            '{"payload":{"type":"user_message"}}',
+                        ),
+                        (
+                            "public-one",
+                            3,
+                            "2026-08-23T12:02:10+00:00",
+                            "response_item",
+                            "function_call",
+                            "tool_call",
+                            None,
+                            "Shell",
+                            '{"cmd":"pytest -q","workdir":"/workspace/acme/public-hws"}',
+                            '{"cmd":"pytest -q","workdir":"/workspace/acme/public-hws"}',
+                            "exec_command",
+                            "call-command",
+                            "pytest -q",
+                            None,
+                            '{"payload":{"type":"function_call"}}',
+                        ),
+                        (
+                            "public-one",
+                            4,
+                            "2026-08-23T12:02:20+00:00",
+                            "event_msg",
+                            "exec_command_end",
+                            "command",
+                            None,
+                            "Command",
+                            "pytest -q",
+                            "1 passed",
+                            "exec_command",
+                            "call-command",
+                            "pytest -q",
+                            0,
+                            (
+                                '{"payload":{"cwd":"/workspace/acme/public-hws",'
+                                '"status":"completed","duration":"1.2s",'
+                                '"parsed_cmd":[{"type":"test"}]}}'
+                            ),
+                        ),
+                        (
+                            "public-one",
+                            5,
+                            "2026-08-23T12:02:20+00:00",
+                            "response_item",
+                            "function_call_output",
+                            "tool_result",
+                            None,
+                            "Tool result",
+                            "1 passed",
+                            "1 passed",
+                            "exec_command",
+                            "call-command",
+                            None,
+                            0,
+                            '{"payload":{"type":"function_call_output"}}',
+                        ),
+                        (
+                            "public-one",
+                            6,
+                            "2026-08-23T12:02:30+00:00",
+                            "response_item",
+                            "function_call",
+                            "tool_call",
+                            None,
+                            "Patch",
+                            "*** Begin Patch\n*** Update File: app.py\n@@\n-old\n+new\n*** End Patch",
+                            "",
+                            "apply_patch",
+                            "call-patch",
+                            None,
+                            None,
+                            '{"payload":{"type":"function_call"}}',
+                        ),
+                        (
+                            "public-one",
+                            7,
+                            "2026-08-23T12:02:40+00:00",
+                            "event_msg",
+                            "patch_apply_end",
+                            "system",
+                            None,
+                            "Patch applied",
+                            "Status: completed",
+                            '{"app.py":{"type":"update","unified_diff":"@@ -1 +1 @@\\n-old\\n+new\\n"}}',
+                            "apply_patch",
+                            "call-patch",
+                            None,
+                            None,
+                            '{"payload":{"success":true,"status":"completed"}}',
+                        ),
+                        (
+                            "public-one",
+                            8,
+                            "2026-08-23T12:02:40+00:00",
+                            "response_item",
+                            "function_call_output",
+                            "tool_result",
+                            None,
+                            "Tool result",
+                            "Updated app.py",
+                            "Updated app.py",
+                            "apply_patch",
+                            "call-patch",
+                            None,
+                            None,
+                            '{"payload":{"type":"function_call_output"}}',
+                        ),
+                        (
+                            "public-one",
+                            9,
+                            "2026-08-23T12:03:00+00:00",
+                            "response_item",
+                            "message",
+                            "message",
+                            "assistant",
+                            "Assistant",
+                            "neighboring response",
+                            "",
+                            None,
+                            None,
+                            None,
+                            None,
+                            '{"payload":{"type":"message","role":"assistant","phase":"final_answer"}}',
+                        ),
+                    ],
+                )
                 insert_search_turn(
                     connection,
                     session_id="public-two",
@@ -198,6 +435,17 @@ class SearchApiTests(unittest.TestCase):
             timeout=2,
         )
 
+    def _turn(self, *, token: str | None = None, **params: object) -> requests.Response:
+        headers = {"accept": "application/json"}
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        return requests.get(
+            f"{self.base_url}/api/v1/sessions/public-one/turns/1",
+            params=params,
+            headers=headers,
+            timeout=2,
+        )
+
     def test_read_token_is_required_and_sync_token_is_not_accepted(self) -> None:
         self.assertEqual(self._search().status_code, 401)
         self.assertEqual(self._search(token=self.sync_token).status_code, 401)
@@ -239,6 +487,20 @@ class SearchApiTests(unittest.TestCase):
         self.assertNotIn("<mark>", response.text)
         self.assertNotIn("[[", response.text)
         self.assertEqual(response.headers["cache-control"], "private, no-store")
+        repository = next(
+            hit["repository"]
+            for hit in payload["hits"]
+            if hit["session_id"] == "public-one"
+        )
+        self.assertEqual(repository["remote"], "https://github.com/acme/public-hws.git")
+        self.assertEqual(repository["branch"], "feature/search-api")
+        self.assertEqual(repository["head"], "2d48e17abc123")
+        self.assertIsNone(repository["dirty"])
+        public_hit = next(hit for hit in payload["hits"] if hit["session_id"] == "public-one")
+        self.assertEqual(
+            public_hit["links"]["turn"],
+            "/api/v1/sessions/public-one/turns/1",
+        )
 
         with connect(self.settings.database_path) as connection:
             with write_transaction(connection):
@@ -254,6 +516,55 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(granted_response.status_code, 200, granted_response.text)
         self.assertEqual(granted_response.json()["total_count"], 1)
         self.assertEqual(granted_response.json()["hits"][0]["session_id"], "private-one")
+
+    def test_turn_context_api_returns_complete_turn_and_repository(self) -> None:
+        self.assertEqual(self._turn().status_code, 401)
+        self.assertEqual(self._turn(token=self.sync_token).status_code, 401)
+
+        response = self._turn(token=self.viewer_token, context=2, include="activity")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["requested_turn"], 1)
+        self.assertEqual(payload["context"]["first_turn"], 1)
+        self.assertEqual(payload["context"]["last_turn"], 2)
+        self.assertEqual(
+            payload["repository"]["remote"],
+            "https://github.com/acme/public-hws.git",
+        )
+        self.assertEqual(payload["repository"]["branch"], "feature/search-api")
+        self.assertEqual(payload["repository"]["head"], "2d48e17abc123")
+        self.assertEqual(len(payload["turns"]), 2)
+        turn = payload["turns"][0]
+        self.assertTrue(turn["is_target"])
+        self.assertEqual(turn["prompt"]["text"], "shared api needle")
+        self.assertEqual(
+            turn["response"]["text"],
+            "public response one with complete turn detail",
+        )
+        self.assertIn("activity", turn)
+        self.assertFalse(payload["turns"][1]["is_target"])
+        self.assertEqual(payload["turns"][1]["prompt"]["text"], "neighboring prompt")
+        self.assertEqual(payload["turns"][1]["commands"][0]["command"], "pytest -q")
+        self.assertEqual(payload["turns"][1]["commands"][0]["output"], "1 passed")
+        self.assertEqual(payload["turns"][1]["patches"][0]["status"], "completed")
+        self.assertIn("*** Begin Patch", payload["turns"][1]["patches"][0]["patch"])
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+
+        invalid_include = self._turn(token=self.viewer_token, include="raw")
+        self.assertEqual(invalid_include.status_code, 422)
+
+    def test_turn_context_api_hides_inaccessible_sessions(self) -> None:
+        response = requests.get(
+            f"{self.base_url}/api/v1/sessions/private-one/turns/1",
+            headers={
+                "accept": "application/json",
+                "authorization": f"Bearer {self.viewer_token}",
+            },
+            timeout=2,
+        )
+
+        self.assertEqual(response.status_code, 404)
 
     def test_abstract_query_uses_acl_safe_project_history_fallback(self) -> None:
         response = self._search(

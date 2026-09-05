@@ -15,6 +15,8 @@ Design notes:
 
 - [Action queue scoring](docs/action-queue-scoring.md)
 - [Agent daemon on macOS and Windows](docs/agent-daemon-windows-macos.md)
+- [Search API guide](docs/search-api.md)
+- [Search API implementation roadmap](docs/search-api-roadmap.md)
 - [Self-hosted launch priorities](docs/selfhosted-launch-priorities.md)
 
 ## Fastest Path To Value
@@ -261,16 +263,21 @@ If auth is enabled and no admin exists yet, the first visit will route through `
 
 Signed-in users can create personal, read-scoped search tokens from **Settings → Search API**. These tokens inherit the user's project ACLs and cannot upload sessions or perform administrative actions. Daemon sync tokens are intentionally not accepted by the search API.
 
+See the [Search API guide](docs/search-api.md) for the hosted endpoint, token setup, complete request and response reference, pagination examples, and troubleshooting.
+
 Search imported turns:
 
 ```bash
 curl --get http://127.0.0.1:8000/api/v1/search \
+  --header "Accept: application/json" \
   --header "Authorization: Bearer csvr_read_REPLACE_ME" \
   --data-urlencode "q=authentication failure" \
   --data-urlencode "limit=20"
 ```
 
 Optional filters are `project_id`, `host`, `from`, and `to`. Timestamps use ISO 8601. When more results exist, pass the returned `next_cursor` value as the `cursor` query parameter. Search responses contain plain-text snippets and relative links to the matching turn.
+
+Every hit also includes repository provenance stored with the session and a `links.turn` URL for retrieving the complete normalized prompt, response, commands, patches, and optional activity context through the API.
 
 Natural project-history questions are also accepted, for example `q=what was the last thing we were going to do on the hws project` or `q=what issues remain on the hws project`. The response's `retrieval` object reports the detected intent, resolved project, and whether results came from strict matching, relaxed matching, or the recent project-history fallback. This stage returns evidence candidates; it does not yet reconcile them into a synthesized answer.
 

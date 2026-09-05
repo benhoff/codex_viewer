@@ -1,0 +1,170 @@
+# Search API Implementation Roadmap
+
+This roadmap breaks the search API improvements into independently deployable slices. The ordering prioritizes evidence reconstruction and trustworthy negative results before adding broader retrieval techniques.
+
+## Current Slice: Complete Evidence and Provenance
+
+The first slice is implemented without a database migration:
+
+- `GET /api/v1/sessions/{session_id}/turns/{turn_number}` returns the complete normalized prompt and response, structured commands, patches, files, execution context, and up to ten neighboring turns on each side.
+- `include=activity` adds normalized chronological detail events.
+- Every search hit and complete-turn response includes `repository.remote`, `root`, `branch`, `head`, and `dirty`.
+- The existing `search:read` token and project ACL checks protect both endpoints.
+- Inaccessible sessions return `404`, and successful responses use `Cache-Control: private, no-store`.
+
+The current schema does not capture repository dirty state or a distinct repository-root field. Therefore `repository.dirty` is deliberately `null`, and `repository.root` currently contains the stored session working directory. Neither value should be inferred from the repository's later state.
+
+## Slice 2: Ingestion-Time Repository State
+
+Goal: make provenance complete and explicitly distinguish captured values from unavailable ones.
+
+Schema and ingestion work:
+
+1. Add nullable `sessions.git_root`, `sessions.git_dirty`, and `sessions.git_state_captured_at` columns.
+2. Accept dirty state from native session metadata when the producer supplies it.
+3. For local imports only, optionally probe `git status --porcelain` while importing and record when the probe occurred.
+4. Carry the fields through raw sync payloads and session upserts.
+5. Backfill existing rows as unknown, not clean.
+
+API behavior:
+
+- Return a distinct repository root rather than treating the session working directory as the root.
+- Return `dirty: true|false` only for a captured value.
+- Keep `dirty: null` for historical or unreachable repositories.
+- Consider adding `captured_at` and `source` (`session_metadata` or `import_probe`) so clients can judge provenance quality.
+
+## Slice 3: Result Ordering, Grouping, and Deduplication
+
+Goal: make the final state of an experiment easy to distinguish from superseded intermediate work.
+
+Proposed request parameters:
+
+```text
+sort=relevance|time_asc|time_desc
+group_by=none|session
+max_hits_per_session=3
+```
+
+Implementation steps:
+
+1. Add and validate the parameters at the route boundary.
+2. Pass them into `search_turn_hits_raw` and include them in the cursor fingerprint.
+3. Add explicit SQL order clauses for relevance and chronological modes.
+4. For session grouping, rank hits with `ROW_NUMBER() OVER (PARTITION BY session_id ...)` and filter by `max_hits_per_session` before page limiting.
+5. Decide whether `total_count` means raw matching turns or returned grouped hits; preferably return both as `match_count` and `grouped_count`.
+6. Move from page-number cursors to keyset cursors containing the last timestamp/rank, session ID, and turn number. This prevents duplicate or skipped results if new sessions arrive between pages.
+
+Turn/chunk overlap is already deduplicated to one result per `(session_id, turn_number)` by the current candidate-ranking query. This slice should retain that behavior and add grouping across turns in the same session.
+
+## Slice 4: Coverage and Freshness
+
+Goal: let clients distinguish “no indexed evidence” from “the indexed corpus shows no match.”
+
+Add an ACL- and filter-aware `coverage` object to every search response:
+
+```json
+{
+  "coverage": {
+    "first_session_at": "2026-01-03T10:20:00Z",
+    "last_session_at": "2026-09-05T07:10:00Z",
+    "last_indexed_at": "2026-09-05T07:11:12Z",
+    "sessions_indexed": 123,
+    "turns_indexed": 2840,
+    "pending_reindex_sessions": 0,
+    "projects_searched": [
+      {"id": "...", "label": "benhoff/hws"}
+    ]
+  }
+}
+```
+
+Implementation steps:
+
+1. Build the coverage query from the same project ACL, `project_id`, `host`, and date conditions as search, but without the text-match condition.
+2. Compute session and turn ranges/counts from visible rows.
+3. Compare each session's turn and chunk index versions with the current application versions to count pending reindexes.
+4. Define `last_indexed_at` from a persisted index-completion timestamp. Do not substitute request time or session import time.
+5. Add tests proving private projects never appear in counts, ranges, or `projects_searched`.
+
+This slice should precede facets because both need the same ACL-safe aggregate-query layer.
+
+## Slice 5: Canonical Repository Identity and Project Discovery
+
+Goal: link histories such as `my-laptop/hws` and `github:benhoff/hws` without collapsing unrelated repositories that share a basename.
+
+Recommended model:
+
+- Keep `projects.id` as the access-control and presentation identity.
+- Add a stable `repositories` table for repository identity.
+- Add `repository_aliases` for normalized remotes, `(host, root)` pairs, and manually confirmed aliases.
+- Link projects and sessions to a nullable `repository_id`.
+
+Identity rules:
+
+1. Prefer a normalized non-local Git remote (`host` plus remote path).
+2. Treat SSH and HTTPS forms of the same remote as aliases.
+3. Use `(source_host, normalized_root)` only as a local fallback.
+4. Never merge solely on repository basename.
+5. Require an explicit manual merge when evidence is ambiguous.
+6. Preserve per-project ACL enforcement even when multiple projects refer to one canonical repository.
+
+Add `GET /api/v1/projects` with filters such as `repository_id`, `remote`, `root`, and `host`. Each result should include its project ID, repository ID, known aliases, sources, time range, and session count. The search endpoint can then accept the same repository filters.
+
+Migration work needs special care: the existing project registry can merge or remove project rows as source mappings change, so stable repository IDs must be created independently of display/group keys.
+
+## Slice 6: Search Modes, Fields, Batch Requests, and Facets
+
+Goal: support exact experimental evidence without weakening deterministic lexical retrieval.
+
+Proposed parameters:
+
+```text
+mode=all|any|phrase|exact
+fields=prompt,response,commands,paths,commit_ids,tool_output
+facets=project,session,date,branch,matched_field
+```
+
+Implementation approach:
+
+- Keep `all` as the compatibility default.
+- Implement `any` and `phrase` with escaped FTS expressions.
+- Define `exact` carefully: exact token/phrase matching belongs in FTS, while exact raw substring matching may require a slower chunk-content path or an additional n-gram index.
+- Map prompt, response, and activity filters to FTS columns.
+- Search paths, branch, and commit IDs through their structured columns/tables rather than flattening them into generic event text.
+- Compute facets after ACL/filter application and before pagination.
+
+Add `POST /api/v1/search/batch` after the single-query modes stabilize. Its body should contain bounded query objects using the same schema as `GET /api/v1/search`. Enforce per-query and total-hit limits so a batch cannot multiply an unbounded workload.
+
+Numeric values, SHAs, register names, filenames, and exact messages are strong reasons to keep lexical modes available even if semantic reranking is added later.
+
+## Slice 7: Durable Evidence Export
+
+Goal: make an investigation reproducible without depending on mutable web pages.
+
+Add:
+
+- A JSONL search export with one complete hit per line.
+- An evidence bundle containing the original queries, filters, coverage snapshot, complete-turn payloads, and a manifest.
+- Durable citations such as `session:{session_id}:turn:{turn_number}:event:{event_index}`.
+- Content hashes for cited prompt, response, command output, and patch bodies.
+
+The existing per-session JSON and ZIP export builders can be reused, but the evidence bundle must apply search-token ACLs and include only the requested visible turns.
+
+## Slice 8: Optional Semantic Reranking
+
+Goal: improve discovery for conceptual queries while keeping exact evidence retrieval predictable.
+
+Semantic processing should rerank a bounded lexical candidate set rather than replace lexical retrieval. Responses should report both retrieval stages, the model/index version, and whether reranking was skipped. Exact, phrase, path, SHA, and numeric searches should be able to opt out explicitly.
+
+## Suggested Delivery Order
+
+| Order | Slice | Why |
+| --- | --- | --- |
+| 1 | Complete evidence and provenance | Removes the largest practical blocker with no migration. |
+| 2 | Ingestion-time dirty state | Completes the provenance contract honestly. |
+| 3 | Sorting and session grouping | Makes evolving experiments readable. |
+| 4 | Coverage and freshness | Makes negative search conclusions defensible. |
+| 5 | Canonical repository identity and projects API | Requires careful schema and ACL migration. |
+| 6 | Modes, fields, batch, and facets | Builds on stable identity and aggregate-query primitives. |
+| 7 | Durable evidence export | Packages the now-complete retrieval contracts. |
+| 8 | Semantic reranking | Adds recall without compromising deterministic search. |

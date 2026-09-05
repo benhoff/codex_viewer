@@ -161,7 +161,7 @@ The app does not grant admin from proxy headers alone. Admin elevation is an exp
 
 ### Search API tokens
 
-Personal search tokens are linked to a stable `user_id` and currently carry the `search:read` scope. They inherit the owner's global role and project ACLs, stop authenticating when the owner is disabled, and are accepted only by `/api/v1/search`. Sync API tokens and machine credentials are not accepted by the search API.
+Personal search tokens are linked to a stable `user_id` and currently carry the `search:read` scope. They inherit the owner's global role and project ACLs, stop authenticating when the owner is disabled, and are accepted only by `/api/v1/search` and `/api/v1/sessions/{session_id}/turns/{turn_number}`. Sync API tokens and machine credentials are not accepted by the search API.
 
 ### Auth disabled
 
