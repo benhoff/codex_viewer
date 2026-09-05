@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import socket
+import json
 from pathlib import Path
 import re
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 import requests
 import uvicorn
@@ -20,6 +22,7 @@ from agent_operations_viewer.projects import upsert_project_acl_member
 from agent_operations_viewer.repositories import sync_repository_registry
 from agent_operations_viewer.search_api_tokens import create_search_api_token
 from agent_operations_viewer.turn_index import replace_session_search_chunks
+from agent_operations_viewer.search_snapshots import digest, NORMALIZATION_VERSION
 from agent_operations_viewer.web.app import create_app
 from tests.test_search import insert_search_turn
 from tests.test_search_chunks import search_event
@@ -414,35 +417,85 @@ class SearchApiTests(unittest.TestCase):
                     prompt="legacy chunk prompt",
                     response="legacy chunk response",
                 )
+                chunk_events = [
+                    search_event(
+                        event_index=1,
+                        record_type="event_msg",
+                        payload_type="user_message",
+                        kind="message",
+                        role="user",
+                        display_text="Inspect the complete API response.",
+                    ),
+                    search_event(
+                        event_index=2,
+                        record_type="response_item",
+                        payload_type="message",
+                        kind="message",
+                        role="assistant",
+                        display_text=("full response filler " * 900) + self.long_marker,
+                        phase="final_answer",
+                    ),
+                ]
                 replace_session_search_chunks(
-                    connection,
-                    "chunk-api-session",
-                    [
-                        search_event(
-                            event_index=1,
-                            record_type="event_msg",
-                            payload_type="user_message",
-                            kind="message",
-                            role="user",
-                            display_text="Inspect the complete API response.",
-                        ),
-                        search_event(
-                            event_index=2,
-                            record_type="response_item",
-                            payload_type="message",
-                            kind="message",
-                            role="assistant",
-                            display_text=("full response filler " * 900) + self.long_marker,
-                            phase="final_answer",
-                        ),
-                    ],
+                    connection, "chunk-api-session", chunk_events
                 )
+                # Search hits now identify complete evidence, so indexed fixtures
+                # must retain their source events as a real import does.
+                for event in chunk_events:
+                    connection.execute(
+                        "INSERT INTO events (session_id, event_index, timestamp, record_type, payload_type, kind, role, display_text, record_json, title, detail_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')",
+                        (
+                            "chunk-api-session",
+                            event["event_index"],
+                            event["timestamp"],
+                            event["record_type"],
+                            event["payload_type"],
+                            event["kind"],
+                            event["role"],
+                            event["display_text"],
+                            event["record_json"],
+                        ),
+                    )
+                connection.execute(
+                    "UPDATE session_turns SET start_event_index = 1, end_event_index = 2 WHERE session_id = 'chunk-api-session'"
+                )
+                for sid in ("public-two", "grouping-newest", "private-one"):
+                    indexed = connection.execute(
+                        "SELECT * FROM session_turn_search WHERE session_id = ?", (sid,)
+                    ).fetchone()
+                    for index, role, field in (
+                        (0, "user", "prompt_text"),
+                        (1, "assistant", "response_text"),
+                    ):
+                        connection.execute(
+                            "INSERT INTO events (session_id, event_index, timestamp, record_type, payload_type, kind, role, display_text, record_json, title, detail_text) VALUES (?, ?, ?, 'response_item', 'message', 'message', ?, ?, ?, '', '')",
+                            (
+                                sid,
+                                index,
+                                "2026-08-23T12:00:00+00:00",
+                                role,
+                                indexed[field],
+                                json.dumps(
+                                    {
+                                        "payload": {
+                                            "type": "message",
+                                            "role": role,
+                                            "phase": "final_answer"
+                                            if role == "assistant"
+                                            else None,
+                                        }
+                                    }
+                                ),
+                            ),
+                        )
                 sync_repository_registry(connection)
         self.viewer_token = str(viewer_token["token"])
         self.sync_token = str(sync_token["token"])
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.server = uvicorn.Server(
-            uvicorn.Config(self.app, host="127.0.0.1", port=self.port, log_level="warning")
+            uvicorn.Config(
+                self.app, host="127.0.0.1", port=self.port, log_level="warning"
+            )
         )
         self.server_thread = threading.Thread(target=self.server.run, daemon=True)
         self.server_thread.start()
@@ -465,7 +518,9 @@ class SearchApiTests(unittest.TestCase):
             time.sleep(0.05)
         raise RuntimeError("Timed out waiting for search API test server")
 
-    def _search(self, *, token: str | None = None, **params: object) -> requests.Response:
+    def _search(
+        self, *, token: str | None = None, **params: object
+    ) -> requests.Response:
         headers = {"accept": "application/json"}
         if token:
             headers["authorization"] = f"Bearer {token}"
@@ -498,7 +553,9 @@ class SearchApiTests(unittest.TestCase):
             timeout=2,
         )
 
-    def _projects(self, *, token: str | None = None, **params: object) -> requests.Response:
+    def _projects(
+        self, *, token: str | None = None, **params: object
+    ) -> requests.Response:
         headers = {"accept": "application/json"}
         if token:
             headers["authorization"] = f"Bearer {token}"
@@ -523,7 +580,9 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(payload["total_count"], 3)
         self.assertNotIn("private-project", response.text)
         public_project = next(
-            project for project in payload["projects"] if project["id"] == "public-project"
+            project
+            for project in payload["projects"]
+            if project["id"] == "public-project"
         )
         repository_id = public_project["repository_id"]
         self.assertIsNotNone(repository_id)
@@ -604,7 +663,11 @@ class SearchApiTests(unittest.TestCase):
         session = requests.Session()
         login_response = session.post(
             f"{self.base_url}/login",
-            data={"username": "viewer", "password": "Password123!", "next": "/settings"},
+            data={
+                "username": "viewer",
+                "password": "Password123!",
+                "next": "/settings",
+            },
             allow_redirects=False,
             timeout=2,
         )
@@ -659,7 +722,9 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(repository["branch"], "feature/search-api")
         self.assertEqual(repository["head"], "2d48e17abc123")
         self.assertIsNone(repository["dirty"])
-        public_hit = next(hit for hit in payload["hits"] if hit["session_id"] == "public-one")
+        public_hit = next(
+            hit for hit in payload["hits"] if hit["session_id"] == "public-one"
+        )
         self.assertEqual(
             public_hit["links"]["turn"],
             "/api/v1/sessions/public-one/turns/1",
@@ -675,10 +740,14 @@ class SearchApiTests(unittest.TestCase):
                     granted_by_user_id=str(self.admin["id"]),
                 )
 
-        granted_response = self._search(token=self.viewer_token, project_id="private-project")
+        granted_response = self._search(
+            token=self.viewer_token, project_id="private-project"
+        )
         self.assertEqual(granted_response.status_code, 200, granted_response.text)
         self.assertEqual(granted_response.json()["total_count"], 1)
-        self.assertEqual(granted_response.json()["hits"][0]["session_id"], "private-one")
+        self.assertEqual(
+            granted_response.json()["hits"][0]["session_id"], "private-one"
+        )
         granted_coverage = granted_response.json()["coverage"]
         self.assertEqual(granted_coverage["sessions_total"], 1)
         self.assertEqual(granted_coverage["pending_reindex_sessions"], 0)
@@ -850,7 +919,9 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["query_count"], 2)
-        self.assertEqual([result["id"] for result in payload["results"]], ["command", "responses"])
+        self.assertEqual(
+            [result["id"] for result in payload["results"]], ["command", "responses"]
+        )
         self.assertEqual(payload["results"][0]["hits"][0]["matched_field"], "commands")
         self.assertEqual(
             payload["results"][1]["filters"]["remote"],
@@ -1001,6 +1072,478 @@ class SearchApiTests(unittest.TestCase):
             cursor=first["next_cursor"],
         )
         self.assertEqual(mismatched_cap_response.status_code, 400)
+
+    def test_followup_strict_parameters(self) -> None:
+        for response, name in (
+            (self._search(token=self.viewer_token, typo="x"), "typo"),
+            (self._projects(token=self.viewer_token, project_id="x"), "project_id"),
+            (self._turn(token=self.viewer_token, activity_limit=1), "activity_limit"),
+            (
+                self._batch(
+                    token=self.viewer_token, queries=[{"q": "needle", "typo": 1}]
+                ),
+                "typo",
+            ),
+            (
+                self._batch(token=self.viewer_token, queries=[{"q": "needle"}], typo=1),
+                "typo",
+            ),
+        ):
+            self.assertEqual(response.status_code, 422, response.text)
+            error = response.json()["detail"][0]
+            self.assertEqual(error["loc"][-1], name)
+            self.assertIn("allowed", error)
+            if "queries" in error["loc"]:
+                self.assertEqual(error["loc"], ["body", "queries", 0, "typo"])
+        self.assertEqual(
+            self._search(token=self.viewer_token, max_hits_per_session=1).status_code,
+            422,
+        )
+
+    def test_followup_exclusion_facets_coverage_batch_and_cursors(self) -> None:
+        base = self._search(
+            token=self.viewer_token,
+            q="shared api needle",
+            fields="prompt",
+            facets="session",
+            limit=1,
+        ).json()
+        snapshot = base["snapshot_id"]
+        excluded = self._search(
+            token=self.viewer_token,
+            q="shared api needle",
+            fields="prompt",
+            facets="session",
+            limit=1,
+            exclude_session_id=["public-one", "public-one"],
+            snapshot_id=snapshot,
+        )
+        self.assertEqual(excluded.status_code, 200, excluded.text)
+        result = excluded.json()
+        self.assertEqual([hit["session_id"] for hit in result["hits"]], ["public-two"])
+        self.assertEqual(
+            result["coverage"]["sessions_total"], base["coverage"]["sessions_total"] - 1
+        )
+        self.assertEqual(result["excluded_session_ids"], ["public-one"])
+        self.assertEqual(
+            result["normalized_query"]["exclude_session_id"], ["public-one"]
+        )
+        self.assertNotIn("public-one", str(result["facets"]))
+        mismatch = self._search(
+            token=self.viewer_token,
+            q="shared api needle",
+            fields="prompt",
+            facets="session",
+            limit=1,
+            exclude_session_id="public-one",
+            cursor=base["next_cursor"],
+        )
+        self.assertEqual(mismatch.status_code, 400)
+        batch = self._batch(
+            token=self.viewer_token,
+            snapshot_id=snapshot,
+            queries=[
+                {
+                    "q": "shared api needle",
+                    "fields": ["prompt"],
+                    "facets": ["session"],
+                    "limit": 1,
+                    "exclude_session_id": ["public-one"],
+                }
+            ],
+        ).json()
+        for key in ("hits", "facets", "coverage", "normalized_query", "next_cursor"):
+            self.assertEqual(batch["results"][0][key], result[key], key)
+        self.assertEqual(batch["results"][0]["snapshot_id"], snapshot)
+
+    def test_followup_snapshot_pins_content_and_discovery(self) -> None:
+        initial = self._search(
+            token=self.viewer_token,
+            q="shared api needle",
+            fields="prompt",
+            sort="time_asc",
+        ).json()
+        snapshot = initial["snapshot_id"]
+        old_turn = self._turn(token=self.viewer_token, snapshot_id=snapshot).json()
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                connection.execute(
+                    "UPDATE events SET display_text = 'Corrected response' WHERE session_id = 'public-one' AND event_index = 1"
+                )
+                connection.execute(
+                    "UPDATE session_turn_search SET prompt_text = 'replacement token' WHERE session_id = 'public-two'"
+                )
+                connection.execute(
+                    "DELETE FROM session_search_chunks WHERE session_id = 'public-two'"
+                )
+                connection.execute(
+                    "UPDATE sessions SET search_chunk_version = 0 WHERE id = 'public-two'"
+                )
+        pinned = self._search(
+            token=self.viewer_token,
+            q="shared api needle",
+            fields="prompt",
+            sort="time_asc",
+            snapshot_id=snapshot,
+        ).json()
+        self.assertEqual(pinned, initial)
+        self.assertEqual(
+            self._turn(token=self.viewer_token, snapshot_id=snapshot).json(), old_turn
+        )
+        live = self._search(
+            token=self.viewer_token,
+            q="shared api needle",
+            fields="prompt",
+            sort="time_asc",
+        ).json()
+        self.assertNotEqual(live["snapshot_id"], snapshot)
+        self.assertLess(live["total_count"], initial["total_count"])
+        self.assertNotEqual(
+            live["hits"][0]["content_digest"], initial["hits"][0]["content_digest"]
+        )
+        self.assertFalse(live["coverage"]["exhaustive_ready"])
+        self.assertEqual(
+            self._projects(token=self.viewer_token, snapshot_id=snapshot).json()[
+                "snapshot_id"
+            ],
+            snapshot,
+        )
+        batch = self._batch(
+            token=self.viewer_token,
+            snapshot_id=snapshot,
+            queries=[{"q": "needle"}, {"q": "response"}],
+        ).json()
+        self.assertEqual(
+            {result["snapshot_id"] for result in batch["results"]}, {snapshot}
+        )
+
+    def test_followup_snapshot_expiration_tampering_and_revocation(self) -> None:
+        initial = self._search(token=self.viewer_token, limit=1).json()
+        snapshot = initial["snapshot_id"]
+        self.assertEqual(
+            self._search(token=self.viewer_token, snapshot_id="bad-token").status_code,
+            409,
+        )
+        cursor = initial["next_cursor"]
+        self.assertEqual(
+            self._search(
+                token=self.viewer_token, limit=1, cursor=cursor[:-8] + "tampered"
+            ).status_code,
+            400,
+        )
+        with patch(
+            "agent_operations_viewer.search_snapshots.time.time",
+            return_value=time.time() + 1000,
+        ):
+            response = self._search(token=self.viewer_token, snapshot_id=snapshot)
+        self.assertEqual(response.status_code, 410, response.text)
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                connection.execute(
+                    "UPDATE projects SET visibility = 'private' WHERE id = 'public-project'"
+                )
+        response = self._search(token=self.viewer_token, snapshot_id=snapshot)
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "snapshot_access_revoked")
+        self.assertEqual(
+            self._turn(token=self.viewer_token, snapshot_id=snapshot).status_code, 403
+        )
+
+    def test_followup_digest_scope_and_conditional_retrieval(self) -> None:
+        search = self._search(
+            token=self.viewer_token,
+            q="shared api needle",
+            fields="prompt",
+            project_id="public-project",
+        ).json()
+        hit = next(hit for hit in search["hits"] if hit["session_id"] == "public-one")
+        response = self._turn(
+            token=self.viewer_token,
+            include="activity",
+            snapshot_id=search["snapshot_id"],
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        turn = payload["turns"][0]
+        canonical = {
+            key: value
+            for key, value in turn.items()
+            if key
+            not in {
+                "is_target",
+                "content_digest",
+                "content_version",
+                "normalization_version",
+                "activity_digest",
+            }
+        }
+        self.assertEqual(
+            digest({"normalization_version": NORMALIZATION_VERSION, "turn": canonical}),
+            hit["content_digest"],
+        )
+        self.assertEqual(payload["content_digest"], hit["content_digest"])
+        self.assertEqual(
+            self._turn(token=self.viewer_token, context=1).json()["content_digest"],
+            hit["content_digest"],
+        )
+        conditional = requests.get(
+            f"{self.base_url}/api/v1/sessions/public-one/turns/1",
+            params={"include": "activity", "snapshot_id": search["snapshot_id"]},
+            headers={
+                "Authorization": f"Bearer {self.viewer_token}",
+                "If-None-Match": response.headers["ETag"],
+            },
+            timeout=2,
+        )
+        self.assertEqual(conditional.status_code, 304)
+        different_projection = requests.get(
+            f"{self.base_url}/api/v1/sessions/public-one/turns/1",
+            params={"snapshot_id": search["snapshot_id"]},
+            headers={
+                "Authorization": f"Bearer {self.viewer_token}",
+                "If-None-Match": response.headers["ETag"],
+            },
+            timeout=2,
+        )
+        self.assertEqual(different_projection.status_code, 200)
+        self.assertNotEqual(
+            different_projection.headers["ETag"], response.headers["ETag"]
+        )
+
+    def _activity(self, turn=2, **params):
+        return requests.get(
+            f"{self.base_url}/api/v1/sessions/public-one/turns/{turn}/activity",
+            params=params,
+            headers={"Authorization": f"Bearer {self.viewer_token}"},
+            timeout=2,
+        )
+
+    def test_followup_activity_filters_and_cursor_binding(self) -> None:
+        first_response = self._activity(limit=1)
+        self.assertEqual(first_response.status_code, 200, first_response.text)
+        first = first_response.json()
+        self.assertEqual(first["returned_count"], 1)
+        self.assertIsNotNone(first["next_cursor"])
+        self.assertEqual(
+            self._activity(
+                limit=1, cursor=first["next_cursor"], tool_name="exec_command"
+            ).status_code,
+            400,
+        )
+        another = self._activity(limit=1).json()
+        self.assertEqual(
+            self._activity(
+                limit=1, cursor=first["next_cursor"], snapshot_id=another["snapshot_id"]
+            ).status_code,
+            400,
+        )
+        self.assertEqual(self._activity(unsupported=1).status_code, 422)
+        filtered = self._activity(
+            tool_name="apply_patch",
+            kind="tool_call",
+            event_type="function_call",
+            snapshot_id=first["snapshot_id"],
+        ).json()
+        self.assertGreater(filtered["total_count"], 0)
+        self.assertTrue(
+            all(
+                event["tool_name"] == "apply_patch"
+                and event["kind"] == "tool_call"
+                and event["payload_type"] == "function_call"
+                for event in filtered["activity"]
+            )
+        )
+        bounded = self._activity(
+            from_event_index=6, to_event_index=6, snapshot_id=first["snapshot_id"]
+        ).json()
+        self.assertTrue(all(event["event_index"] == 6 for event in bounded["activity"]))
+
+    def test_followup_activity_110_events_no_gaps(self) -> None:
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                connection.execute(
+                    "INSERT INTO session_turns (session_id, turn_number, start_event_index, end_event_index) VALUES ('public-one', 3, 10, 121)"
+                )
+                for index in range(10, 122):
+                    role = (
+                        "user" if index == 10 else "assistant" if index == 121 else None
+                    )
+                    kind = "message" if role else "tool_call"
+                    payload_type = "message" if role else "function_call"
+                    connection.execute(
+                        "INSERT INTO events (session_id, event_index, timestamp, record_type, payload_type, kind, role, title, display_text, tool_name, call_id, record_json) VALUES ('public-one', ?, ?, 'response_item', ?, ?, ?, 'Activity', ?, ?, ?, ?)",
+                        (
+                            index,
+                            "2026-08-23T15:00:00Z",
+                            payload_type,
+                            kind,
+                            role,
+                            "hello" if role else "tool argument",
+                            None if role else "test_tool",
+                            f"event-{index}",
+                            json.dumps(
+                                {
+                                    "payload": {
+                                        "type": payload_type,
+                                        "role": role,
+                                        "phase": "final_answer"
+                                        if role == "assistant"
+                                        else None,
+                                    }
+                                }
+                            ),
+                        ),
+                    )
+        first = self._activity(turn=3, limit=13).json()
+        self.assertEqual(first["total_count"], 110)
+        events = first["activity"]
+        page = first
+        while page["next_cursor"]:
+            response = self._activity(turn=3, limit=13, cursor=page["next_cursor"])
+            self.assertEqual(response.status_code, 200, response.text)
+            page = response.json()
+            self.assertEqual(page["snapshot_id"], first["snapshot_id"])
+            events.extend(page["activity"])
+        self.assertEqual(
+            [event["event_index"] for event in events], list(range(11, 121))
+        )
+        self.assertEqual(len({event["activity_id"] for event in events}), 110)
+
+    def test_followup_patch_search_modes_and_batch(self) -> None:
+        # Reindex a submitted patch with a token absent from paths and status output.
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                connection.execute(
+                    "UPDATE events SET display_text = ? WHERE session_id = 'public-one' AND event_index = 6",
+                    (
+                        "*** Begin Patch\n*** Update File: app.py\n@@\n-oldsentinel\n+patchsentinel alpha\n context\n*** End Patch",
+                    ),
+                )
+                events = connection.execute(
+                    "SELECT * FROM events WHERE session_id = 'public-one' ORDER BY event_index"
+                ).fetchall()
+                replace_session_search_chunks(connection, "public-one", events)
+        snapshot = None
+        for mode in ("exact", "phrase", "any", "all"):
+            response = self._search(
+                token=self.viewer_token,
+                q="patchsentinel alpha",
+                fields="patches",
+                mode=mode,
+                snapshot_id=snapshot,
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            snapshot = payload["snapshot_id"]
+            self.assertEqual(payload["total_count"], 1)
+            hit = payload["hits"][0]
+            self.assertEqual(hit["matched_field"], "patches")
+            self.assertEqual(
+                {line["kind"] for line in hit["chunk"]["lines"]},
+                {"header", "addition", "deletion", "context"},
+            )
+            batch = self._batch(
+                token=self.viewer_token,
+                snapshot_id=snapshot,
+                queries=[
+                    {"q": "patchsentinel alpha", "fields": ["patches"], "mode": mode}
+                ],
+            ).json()
+            self.assertEqual(batch["results"][0]["hits"], payload["hits"])
+        self.assertEqual(
+            self._search(
+                token=self.viewer_token,
+                q="patchsentinel",
+                fields="paths",
+                snapshot_id=snapshot,
+            ).json()["total_count"],
+            0,
+        )
+
+    def test_followup_patch_pagination_keeps_acl_and_batch_semantics(self) -> None:
+        patch_text = (
+            "*** Begin Patch\n*** Update File: app.py\n@@\n+patchpager\n*** End Patch"
+        )
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                connection.execute(
+                    "UPDATE events SET display_text = ? WHERE session_id = 'public-one' AND event_index = 6",
+                    (patch_text,),
+                )
+                for sid in ("public-two", "private-one"):
+                    connection.execute(
+                        "UPDATE events SET event_index = 2 WHERE session_id = ? AND event_index = 1",
+                        (sid,),
+                    )
+                    connection.execute(
+                        "UPDATE session_turns SET end_event_index = 2 WHERE session_id = ?",
+                        (sid,),
+                    )
+                    connection.execute(
+                        "INSERT INTO events (session_id, event_index, timestamp, record_type, payload_type, kind, title, display_text, tool_name, record_json) VALUES (?, 1, '2026-08-23T12:00:00Z', 'response_item', 'function_call', 'tool_call', 'Patch', ?, 'apply_patch', '{}')",
+                        (sid, patch_text),
+                    )
+                for sid in ("public-one", "public-two", "private-one"):
+                    replace_session_search_chunks(connection, sid)
+        query = {
+            "q": "patchpager",
+            "fields": "patches",
+            "facets": "session",
+            "sort": "time_asc",
+            "limit": 1,
+        }
+        first = self._search(token=self.viewer_token, **query).json()
+        self.assertEqual(first["total_count"], 2)
+        self.assertNotIn("private-one", str(first))
+        second = self._search(
+            token=self.viewer_token, **query, cursor=first["next_cursor"]
+        ).json()
+        self.assertEqual(
+            {first["hits"][0]["session_id"], second["hits"][0]["session_id"]},
+            {"public-one", "public-two"},
+        )
+        self.assertIsNone(second["next_cursor"])
+        batch = self._batch(
+            token=self.viewer_token,
+            snapshot_id=first["snapshot_id"],
+            queries=[{**query, "fields": ["patches"], "facets": ["session"]}],
+        ).json()["results"][0]
+        for key in ("hits", "next_cursor", "facets", "coverage"):
+            self.assertEqual(first[key], batch[key], key)
+
+    def test_followup_pending_session_counts_reconcile(self) -> None:
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                connection.execute(
+                    "DELETE FROM session_turns WHERE session_id = 'public-two'"
+                )
+                connection.execute(
+                    "DELETE FROM session_turn_search WHERE session_id = 'public-two'"
+                )
+                connection.execute(
+                    "UPDATE sessions SET turn_index_version = 0, turn_count = 4 WHERE id = 'public-two'"
+                )
+        projects = self._projects(token=self.viewer_token).json()
+        project = next(
+            project
+            for project in projects["projects"]
+            if project["id"] == "public-project"
+        )
+        coverage = self._search(
+            token=self.viewer_token,
+            project_id=project["id"],
+            snapshot_id=projects["snapshot_id"],
+        ).json()["coverage"]
+        self.assertEqual(project["session_count"], 2)
+        self.assertEqual(project["session_count"], coverage["sessions_total"])
+        self.assertEqual(
+            sum(source["session_count"] for source in project["sources"]),
+            project["session_count"],
+        )
+        self.assertEqual(project["first_session_at"], coverage["first_session_at"])
+        self.assertEqual(coverage["sessions_pending"], 1)
+        self.assertEqual(coverage["turns_pending"], 4)
+        self.assertFalse(coverage["exhaustive_ready"])
 
     def test_search_sort_and_group_parameters_are_validated(self) -> None:
         invalid_sort = self._search(token=self.viewer_token, sort="newest")

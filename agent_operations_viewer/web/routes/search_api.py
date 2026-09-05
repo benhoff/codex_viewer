@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
 import sqlite3
 from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...db import connect
 from ...projects import (
-    build_project_access_context,
     effective_project_fields,
     fetch_session_with_project,
     row_is_visible_to_project_access,
@@ -29,14 +26,74 @@ from ...search import (
     SEARCH_FIELDS,
     normalize_search_values,
     search_turn_hits_raw,
+    coverage_readiness,
 )
-from ...session_view import build_turns
+from ...search_snapshots import (
+    NORMALIZATION_VERSION,
+    api_error,
+    digest,
+    evidence_snapshot,
+    cursor_page,
+    encode_cursor,
+)
+from ...turn_index import patch_line_ranges
+from ...session_view import build_turns, parse_timestamp
 from ..auth import require_authenticated_user
 from ..context import get_app_context
 
 
-router = APIRouter()
-CURSOR_VERSION = 4
+class StrictSearchRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+        allowed = sorted(param.alias for param in self.dependant.query_params)
+
+        async def strict_handler(request):
+            errors = []
+            for name in request.query_params:
+                if name not in allowed:
+                    errors.append(
+                        {
+                            "type": "extra_forbidden",
+                            "loc": ["query", name],
+                            "msg": "Unsupported query parameter",
+                            "allowed": allowed,
+                        }
+                    )
+                elif (
+                    name != "exclude_session_id"
+                    and len(request.query_params.getlist(name)) > 1
+                ):
+                    errors.append(
+                        {
+                            "type": "duplicate_parameter",
+                            "loc": ["query", name],
+                            "msg": "Parameter may only be supplied once",
+                            "allowed": allowed,
+                        }
+                    )
+            if errors:
+                raise HTTPException(status_code=422, detail=errors)
+            try:
+                return await handler(request)
+            except RequestValidationError as exc:
+                errors = exc.errors()
+                for error in errors:
+                    if error["type"] == "extra_forbidden":
+                        model = (
+                            BatchSearchQuery
+                            if "queries" in error["loc"]
+                            else BatchSearchRequest
+                        )
+                        error["allowed"] = sorted(
+                            field.alias or name
+                            for name, field in model.model_fields.items()
+                        )
+                raise HTTPException(status_code=422, detail=errors) from exc
+
+        return strict_handler
+
+
+router = APIRouter(route_class=StrictSearchRoute)
 
 SearchMode = Literal["all", "any", "phrase", "exact"]
 SearchField = Literal[
@@ -47,6 +104,7 @@ SearchField = Literal[
     "paths",
     "commit_ids",
     "tool_output",
+    "patches",
 ]
 SearchFacet = Literal["project", "session", "date", "branch", "matched_field"]
 
@@ -61,10 +119,11 @@ class BatchSearchQuery(BaseModel):
     remote: str | None = Field(default=None, max_length=2048)
     root: str | None = Field(default=None, max_length=2048)
     host: str | None = Field(default=None, max_length=255)
+    exclude_session_id: list[str] = Field(default_factory=list, max_length=100)
     from_date: datetime | None = Field(default=None, alias="from")
     to_date: datetime | None = Field(default=None, alias="to")
     mode: SearchMode = "all"
-    fields: list[SearchField] = Field(default_factory=list, max_length=7)
+    fields: list[SearchField] = Field(default_factory=list, max_length=8)
     facets: list[SearchFacet] = Field(default_factory=list, max_length=5)
     sort: Literal["relevance", "time_asc", "time_desc"] = "relevance"
     group_by: Literal["none", "session"] = "none"
@@ -77,83 +136,16 @@ class BatchSearchRequest(BaseModel):
 
     queries: list[BatchSearchQuery] = Field(min_length=1, max_length=20)
     max_total_hits: int = Field(default=200, ge=1, le=500)
+    snapshot_id: str | None = Field(default=None, min_length=1, max_length=2048)
 
 
 def _timestamp_param(value: datetime | None) -> str | None:
     if value is None:
         return None
-    normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-    return normalized.isoformat()
-
-
-def _cursor_fingerprint(
-    *,
-    q: str,
-    project_id: str | None,
-    repository_id: str | None,
-    remote: str | None,
-    root: str | None,
-    host: str | None,
-    from_timestamp: str | None,
-    to_timestamp: str | None,
-    limit: int,
-    sort: str,
-    group_by: str,
-    max_hits_per_session: int,
-    mode: str,
-    fields: tuple[str, ...],
-    facets: tuple[str, ...],
-) -> str:
-    payload = json.dumps(
-        [
-            q,
-            project_id,
-            repository_id,
-            remote,
-            root,
-            host,
-            from_timestamp,
-            to_timestamp,
-            limit,
-            sort,
-            group_by,
-            max_hits_per_session,
-            mode,
-            fields,
-            facets,
-        ],
-        ensure_ascii=True,
-        separators=(",", ":"),
+    normalized = (
+        value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-
-
-def _encode_cursor(page: int, fingerprint: str) -> str:
-    raw = json.dumps(
-        {"v": CURSOR_VERSION, "page": page, "fingerprint": fingerprint},
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-
-def _decode_cursor(value: str | None, fingerprint: str) -> int:
-    candidate = str(value or "").strip()
-    if not candidate:
-        return 1
-    try:
-        padding = "=" * (-len(candidate) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(candidate + padding).decode("utf-8"))
-    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=400, detail="Invalid search cursor") from exc
-    if (
-        not isinstance(payload, dict)
-        or payload.get("v") != CURSOR_VERSION
-        or payload.get("fingerprint") != fingerprint
-        or not isinstance(payload.get("page"), int)
-        or int(payload["page"]) < 1
-    ):
-        raise HTTPException(status_code=400, detail="Search cursor does not match this query")
-    return int(payload["page"])
+    return normalized.isoformat()
 
 
 def _serialize_hit(item: dict[str, object]) -> dict[str, object]:
@@ -203,7 +195,9 @@ def _normalize_api_values(
     try:
         return normalize_search_values(value, supported=supported, label=label)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise api_error(
+            422, "invalid_input", str(exc), name=label, allowed=sorted(supported)
+        ) from exc
 
 
 def _validate_date_range(
@@ -222,9 +216,8 @@ def _validate_date_range(
             else to_date.astimezone(UTC)
         )
         if normalized_from > normalized_to:
-            raise HTTPException(
-                status_code=422,
-                detail="from must be earlier than or equal to to",
+            raise api_error(
+                422, "invalid_input", "from must be earlier than or equal to to"
             )
     return _timestamp_param(from_date), _timestamp_param(to_date)
 
@@ -236,7 +229,7 @@ def _normalize_repository_filters(
     try:
         normalized_remote = normalize_repository_remote_filter(remote)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise api_error(422, "invalid_input", str(exc), name="remote") from exc
     return normalized_remote, normalize_repository_root(root)
 
 
@@ -257,13 +250,7 @@ def _serialize_search_page(
     sort: str,
     group_by: str,
     max_hits_per_session: int,
-    fingerprint: str | None = None,
 ) -> dict[str, object]:
-    next_cursor = (
-        _encode_cursor(int(search_page["page"]) + 1, fingerprint)
-        if fingerprint and bool(search_page["has_next"])
-        else None
-    )
     groups = search_page.get("groups") or []
     items = search_page.get("items") or []
     serialized_groups = [
@@ -293,9 +280,8 @@ def _serialize_search_page(
         "mode": mode,
         "retrieval": search_page["retrieval"],
         "coverage": search_page["coverage"],
-        "facets": search_page.get("facets") or {
-            facet: [] for facet in requested_facets
-        },
+        "facets": search_page.get("facets")
+        or {facet: [] for facet in requested_facets},
         "sort": sort,
         "group_by": group_by,
         "max_hits_per_session": max_hits_per_session,
@@ -313,7 +299,7 @@ def _serialize_search_page(
             ),
         },
         "limit": int(search_page["page_size"]),
-        "next_cursor": next_cursor,
+        "next_cursor": None,
     }
 
 
@@ -448,17 +434,213 @@ def _serialize_turn(
 
 def _parse_turn_includes(value: str | None) -> set[str]:
     includes = {
-        item.strip().lower()
-        for item in str(value or "").split(",")
-        if item.strip()
+        item.strip().lower() for item in str(value or "").split(",") if item.strip()
     }
     unsupported = includes - {"activity"}
     if unsupported:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unsupported include value: {sorted(unsupported)[0]}",
+        raise api_error(
+            422,
+            "invalid_input",
+            f"Unsupported include value: {sorted(unsupported)[0]}",
+            name="include",
+            allowed=["activity"],
         )
     return includes
+
+
+def _snapshot(request, snapshot_id=None, cursor=None):
+    if bool(getattr(request.state, "auth_enabled", False)):
+        require_authenticated_user(request)
+    return evidence_snapshot(
+        get_app_context(request).settings,
+        auth_user=getattr(request.state, "auth_user", None),
+        auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+        snapshot_id=snapshot_id,
+        cursor=cursor,
+    )
+
+
+def _normalized_query(query):
+    search_query = query.q.strip()
+    if not search_query:
+        raise api_error(422, "invalid_input", "Search query cannot be empty")
+    if query.group_by == "none" and "max_hits_per_session" in query.model_fields_set:
+        raise api_error(
+            422,
+            "inapplicable_parameter",
+            "max_hits_per_session requires group_by=session",
+            name="max_hits_per_session",
+        )
+    excluded = sorted(set(value.strip() for value in query.exclude_session_id))
+    if any(not value or len(value) > 128 for value in excluded):
+        raise api_error(
+            422,
+            "invalid_input",
+            "exclude_session_id values must contain 1–128 characters",
+        )
+    remote, root = _normalize_repository_filters(query.remote, query.root)
+    start, end = _validate_date_range(query.from_date, query.to_date)
+    return {
+        "q": search_query,
+        "project_id": str(query.project_id or "").strip() or None,
+        "repository_id": str(query.repository_id or "").strip() or None,
+        "remote": remote,
+        "root": root,
+        "host": str(query.host or "").strip() or None,
+        "from": start,
+        "to": end,
+        "exclude_session_id": excluded,
+        "mode": query.mode,
+        "fields": sorted(set(query.fields)),
+        "effective_fields": sorted(set(query.fields)) or sorted(SEARCH_FIELDS),
+        "include_project_metadata": not query.fields,
+        "facets": sorted(set(query.facets)),
+        "sort": query.sort,
+        "group_by": query.group_by,
+        "max_hits_per_session": query.max_hits_per_session,
+        "limit": query.limit,
+    }
+
+
+def _load_turn(connection, session, row):
+    number = int(row["turn_number"])
+    events = _turn_events(
+        connection,
+        str(session["id"]),
+        int(row["start_event_index"]),
+        int(row["end_event_index"]),
+    )
+    turns = build_turns(
+        events,
+        cwd=str(session["cwd"] or "").strip() or None,
+        starting_turn_number=number,
+    )
+    if not turns:
+        raise api_error(
+            409, "incomplete_index", "Indexed turn has no reconstructable evidence"
+        )
+    payload = _serialize_turn(
+        turns[0], target_turn_number=number, include_activity=True
+    )
+    # Evidence identity is independent of selection/context and HTTP presentation.
+    canonical = {key: value for key, value in payload.items() if key != "is_target"}
+    identity = digest(
+        {"normalization_version": NORMALIZATION_VERSION, "turn": canonical}
+    )
+    payload.update(
+        {
+            "content_digest": identity,
+            "normalization_version": NORMALIZATION_VERSION,
+            "content_version": identity.removeprefix("sha256:"),
+            "activity_digest": digest(
+                {
+                    "normalization_version": NORMALIZATION_VERSION,
+                    "activity": payload["activity"],
+                }
+            ),
+        }
+    )
+    return payload
+
+
+def _hit_identity(connection, hit, cache):
+    key = (hit["session_id"], hit["turn_number"])
+    if key not in cache:
+        session = fetch_session_with_project(connection, key[0])
+        row = connection.execute(
+            "SELECT * FROM session_turns WHERE session_id = ? AND turn_number = ?",
+            key,
+        ).fetchone()
+        cache[key] = _load_turn(connection, session, row)
+    turn = cache[key]
+    for name in (
+        "content_digest",
+        "normalization_version",
+        "content_version",
+        "activity_digest",
+    ):
+        hit[name] = turn[name]
+    if hit.get("matched_field") == "patches" and hit.get("chunk"):
+        chunk = hit["chunk"]
+        record = connection.execute(
+            "SELECT content FROM session_search_chunk_fts WHERE chunk_id = ?",
+            (chunk["id"],),
+        ).fetchone()
+        if record:
+            chunk["lines"] = patch_line_ranges(
+                record["content"], start_offset=chunk["start_offset"]
+            )
+            if chunk["start_offset"] and chunk["lines"]:
+                chunk["lines"][0]["kind"] = "unknown"
+
+
+def _execute_query(connection, access, snapshot, signer, query, cursor=None):
+    normalized = _normalized_query(query)
+    fingerprint = digest(normalized)
+    page = cursor_page(cursor, fingerprint)
+    # Preserve the existing unscoped search planner when fields were omitted.
+    fields = tuple(sorted(set(query.fields)))
+    facets = tuple(normalized["facets"])
+    result = search_turn_hits_raw(
+        connection,
+        normalized["q"],
+        page=page,
+        page_size=query.limit,
+        project_id=normalized["project_id"],
+        repository_id=normalized["repository_id"],
+        remote=normalized["remote"],
+        root=normalized["root"],
+        host=normalized["host"],
+        from_timestamp=normalized["from"],
+        to_timestamp=normalized["to"],
+        sort=query.sort,
+        group_by=query.group_by,
+        max_hits_per_session=query.max_hits_per_session,
+        mode=query.mode,
+        fields=fields,
+        facets=facets,
+        project_access=access,
+        exclude_session_ids=normalized["exclude_session_id"],
+    )
+    payload = _serialize_search_page(
+        result,
+        query=normalized["q"],
+        project_id=normalized["project_id"],
+        repository_id=normalized["repository_id"],
+        remote=normalized["remote"],
+        root=normalized["root"],
+        host=normalized["host"],
+        from_timestamp=normalized["from"],
+        to_timestamp=normalized["to"],
+        mode=query.mode,
+        fields=fields,
+        requested_facets=facets,
+        sort=query.sort,
+        group_by=query.group_by,
+        max_hits_per_session=query.max_hits_per_session,
+    )
+    payload.update(
+        {
+            "snapshot_id": snapshot["snapshot_id"],
+            "snapshot": snapshot,
+            "normalized_query": normalized,
+            "excluded_session_ids": normalized["exclude_session_id"],
+            "coverage": coverage_readiness(result["coverage"]),
+            "next_cursor": encode_cursor(
+                signer, page + 1, fingerprint, snapshot["snapshot_id"]
+            )
+            if result["has_next"]
+            else None,
+        }
+    )
+    payload["filters"]["exclude_session_id"] = normalized["exclude_session_id"]
+    cache = {}
+    for hit in payload["hits"]:
+        _hit_identity(connection, hit, cache)
+    for group in payload["groups"]:
+        for hit in group["hits"]:
+            _hit_identity(connection, hit, cache)
+    return payload
 
 
 @router.get("/api/v1/search", response_class=JSONResponse)
@@ -472,6 +654,7 @@ def search_api(
     host: str | None = Query(default=None, max_length=255),
     from_date: datetime | None = Query(default=None, alias="from"),
     to_date: datetime | None = Query(default=None, alias="to"),
+    exclude_session_id: list[str] = Query(default=[], max_length=100),
     mode: SearchMode = Query(default="all"),
     fields: str | None = Query(default=None, max_length=200),
     facets: str | None = Query(default=None, max_length=200),
@@ -479,203 +662,93 @@ def search_api(
     group_by: Literal["none", "session"] = Query(default="none"),
     max_hits_per_session: int = Query(default=3, ge=1, le=100),
     limit: int = Query(default=20, ge=1, le=100),
-    cursor: str | None = Query(default=None, max_length=2048),
+    cursor: str | None = Query(default=None, min_length=1, max_length=2048),
+    snapshot_id: str | None = Query(default=None, min_length=1, max_length=2048),
 ) -> JSONResponse:
-    context = get_app_context(request)
-    if bool(getattr(request.state, "auth_enabled", False)):
-        require_authenticated_user(request)
-
-    search_query = q.strip()
-    if not search_query:
-        raise HTTPException(status_code=422, detail="Search query cannot be empty")
-    normalized_project_id = str(project_id or "").strip() or None
-    normalized_repository_id = str(repository_id or "").strip() or None
-    normalized_host = str(host or "").strip() or None
-    normalized_remote, normalized_root = _normalize_repository_filters(remote, root)
-    from_timestamp, to_timestamp = _validate_date_range(from_date, to_date)
-    normalized_fields = _normalize_api_values(
-        fields,
-        supported=SEARCH_FIELDS,
-        label="field",
-    )
-    normalized_facets = _normalize_api_values(
-        facets,
-        supported=SEARCH_FACETS,
-        label="facet",
-    )
-
-    fingerprint = _cursor_fingerprint(
-        q=search_query,
-        project_id=normalized_project_id,
-        repository_id=normalized_repository_id,
-        remote=normalized_remote,
-        root=normalized_root,
-        host=normalized_host,
-        from_timestamp=from_timestamp,
-        to_timestamp=to_timestamp,
-        limit=limit,
+    query = BatchSearchQuery(
+        q=q,
+        project_id=project_id,
+        repository_id=repository_id,
+        remote=remote,
+        root=root,
+        host=host,
+        from_date=from_date,
+        to_date=to_date,
+        exclude_session_id=exclude_session_id,
+        mode=mode,
+        fields=list(
+            _normalize_api_values(fields, supported=SEARCH_FIELDS, label="field")
+        ),
+        facets=list(
+            _normalize_api_values(facets, supported=SEARCH_FACETS, label="facet")
+        ),
         sort=sort,
         group_by=group_by,
         max_hits_per_session=max_hits_per_session,
-        mode=mode,
-        fields=normalized_fields,
-        facets=normalized_facets,
+        limit=limit,
     )
-    page = _decode_cursor(cursor, fingerprint)
-
-    with connect(context.settings.database_path) as connection:
-        project_access = build_project_access_context(
-            connection,
-            auth_user=getattr(request.state, "auth_user", None),
-            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+    if "max_hits_per_session" not in request.query_params:
+        query.model_fields_set.discard("max_hits_per_session")
+    _normalized_query(query)
+    with _snapshot(request, snapshot_id, cursor) as (
+        connection,
+        access,
+        snapshot,
+        signer,
+        cursor_data,
+    ):
+        payload = _execute_query(
+            connection, access, snapshot, signer, query, cursor_data
         )
-        search_page = search_turn_hits_raw(
-            connection,
-            search_query,
-            page=page,
-            page_size=limit,
-            project_id=normalized_project_id,
-            repository_id=normalized_repository_id,
-            remote=normalized_remote,
-            root=normalized_root,
-            host=normalized_host,
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-            sort=sort,
-            group_by=group_by,
-            max_hits_per_session=max_hits_per_session,
-            mode=mode,
-            fields=normalized_fields,
-            facets=normalized_facets,
-            project_access=project_access,
-        )
-    return JSONResponse(
-        _serialize_search_page(
-            search_page,
-            query=search_query,
-            project_id=normalized_project_id,
-            repository_id=normalized_repository_id,
-            remote=normalized_remote,
-            root=normalized_root,
-            host=normalized_host,
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-            mode=mode,
-            fields=normalized_fields,
-            requested_facets=normalized_facets,
-            sort=sort,
-            group_by=group_by,
-            max_hits_per_session=max_hits_per_session,
-            fingerprint=fingerprint,
-        ),
-        headers={"Cache-Control": "private, no-store"},
-    )
+    return JSONResponse(payload, headers={"Cache-Control": "private, no-store"})
 
 
 @router.post("/api/v1/search/batch", response_class=JSONResponse)
-def search_batch_api(
-    request: Request,
-    body: BatchSearchRequest,
-) -> JSONResponse:
-    context = get_app_context(request)
-    if bool(getattr(request.state, "auth_enabled", False)):
-        require_authenticated_user(request)
-
-    requested_hit_budget = sum(
-        query.limit
-        * (query.max_hits_per_session if query.group_by == "session" else 1)
+def search_batch_api(request: Request, body: BatchSearchRequest) -> JSONResponse:
+    budget = sum(
+        query.limit * (query.max_hits_per_session if query.group_by == "session" else 1)
         for query in body.queries
     )
-    if requested_hit_budget > body.max_total_hits:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "Batch hit budget exceeded: reduce per-query limits or increase "
-                "max_total_hits"
-            ),
+    if budget > body.max_total_hits:
+        raise api_error(
+            422,
+            "invalid_input",
+            "Batch hit budget exceeded: reduce per-query limits or increase max_total_hits",
         )
-
-    results: list[dict[str, object]] = []
-    returned_hit_count = 0
-    with connect(context.settings.database_path) as connection:
-        project_access = build_project_access_context(
-            connection,
-            auth_user=getattr(request.state, "auth_user", None),
-            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
-        )
-        for query in body.queries:
-            search_query = query.q.strip()
-            if not search_query:
-                raise HTTPException(status_code=422, detail="Search query cannot be empty")
-            normalized_project_id = str(query.project_id or "").strip() or None
-            normalized_repository_id = str(query.repository_id or "").strip() or None
-            normalized_host = str(query.host or "").strip() or None
-            normalized_remote, normalized_root = _normalize_repository_filters(
-                query.remote,
-                query.root,
-            )
-            from_timestamp, to_timestamp = _validate_date_range(
-                query.from_date,
-                query.to_date,
-            )
-            normalized_fields = _normalize_api_values(
-                query.fields,
-                supported=SEARCH_FIELDS,
-                label="field",
-            )
-            normalized_facets = _normalize_api_values(
-                query.facets,
-                supported=SEARCH_FACETS,
-                label="facet",
-            )
-            search_page = search_turn_hits_raw(
-                connection,
-                search_query,
-                page=1,
-                page_size=query.limit,
-                project_id=normalized_project_id,
-                repository_id=normalized_repository_id,
-                remote=normalized_remote,
-                root=normalized_root,
-                host=normalized_host,
-                from_timestamp=from_timestamp,
-                to_timestamp=to_timestamp,
-                sort=query.sort,
-                group_by=query.group_by,
-                max_hits_per_session=query.max_hits_per_session,
-                mode=query.mode,
-                fields=normalized_fields,
-                facets=normalized_facets,
-                project_access=project_access,
-            )
-            payload = _serialize_search_page(
-                search_page,
-                query=search_query,
-                project_id=normalized_project_id,
-                repository_id=normalized_repository_id,
-                remote=normalized_remote,
-                root=normalized_root,
-                host=normalized_host,
-                from_timestamp=from_timestamp,
-                to_timestamp=to_timestamp,
-                mode=query.mode,
-                fields=normalized_fields,
-                requested_facets=normalized_facets,
-                sort=query.sort,
-                group_by=query.group_by,
-                max_hits_per_session=query.max_hits_per_session,
-            )
-            result: dict[str, object] = {"id": query.id, **payload}
-            results.append(result)
-            returned_hit_count += sum(
-                len(group["hits"])
-                for group in payload["groups"]
-            ) if query.group_by == "session" else len(payload["hits"])
-
+    for query in body.queries:
+        _normalized_query(query)
+    with _snapshot(request, body.snapshot_id) as (
+        connection,
+        access,
+        snapshot,
+        signer,
+        _,
+    ):
+        results = [
+            {
+                "id": query.id,
+                **_execute_query(connection, access, snapshot, signer, query),
+            }
+            for query in body.queries
+        ]
+    returned = sum(
+        len(result["hits"]) + sum(len(group["hits"]) for group in result["groups"])
+        for result in results
+    )
     return JSONResponse(
         {
+            "snapshot_id": snapshot["snapshot_id"],
+            "snapshot": snapshot,
+            "normalized_request": {
+                "snapshot_id": snapshot["snapshot_id"],
+                "max_total_hits": body.max_total_hits,
+                "queries": [
+                    {"id": result["id"], **result["normalized_query"]}
+                    for result in results
+                ],
+            },
             "query_count": len(results),
-            "returned_hit_count": returned_hit_count,
+            "returned_hit_count": returned,
             "max_total_hits": body.max_total_hits,
             "results": results,
         },
@@ -691,69 +764,77 @@ def projects_api(
     root: str | None = Query(default=None, max_length=2048),
     host: str | None = Query(default=None, max_length=255),
     limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = Query(default=None, max_length=2048),
+    cursor: str | None = Query(default=None, min_length=1, max_length=2048),
+    snapshot_id: str | None = Query(default=None, min_length=1, max_length=2048),
 ) -> JSONResponse:
-    context = get_app_context(request)
-    if bool(getattr(request.state, "auth_enabled", False)):
-        require_authenticated_user(request)
-
-    normalized_repository_id = str(repository_id or "").strip() or None
-    normalized_host = str(host or "").strip() or None
-    normalized_remote, normalized_root = _normalize_repository_filters(remote, root)
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            [
-                "projects",
-                normalized_repository_id,
-                normalized_remote,
-                normalized_root,
-                normalized_host,
-                limit,
-            ],
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()[:24]
-    page = _decode_cursor(cursor, fingerprint)
-
-    with connect(context.settings.database_path) as connection:
-        project_access = build_project_access_context(
-            connection,
-            auth_user=getattr(request.state, "auth_user", None),
-            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
-        )
+    remote, root = _normalize_repository_filters(remote, root)
+    filters = {
+        "repository_id": str(repository_id or "").strip() or None,
+        "remote": remote,
+        "root": root,
+        "host": str(host or "").strip() or None,
+    }
+    normalized = {**filters, "limit": limit}
+    fingerprint = digest({"endpoint": "projects", **normalized})
+    with _snapshot(request, snapshot_id, cursor) as (
+        connection,
+        access,
+        snapshot,
+        signer,
+        cursor_data,
+    ):
+        page = cursor_page(cursor_data, fingerprint)
         result = list_repository_projects(
-            connection,
-            repository_id=normalized_repository_id,
-            remote=normalized_remote,
-            root=normalized_root,
-            host=normalized_host,
-            page=page,
-            page_size=limit,
-            project_access=project_access,
+            connection, **filters, page=page, page_size=limit, project_access=access
         )
-    next_cursor = (
-        _encode_cursor(page + 1, fingerprint) if bool(result["has_next"]) else None
-    )
     return JSONResponse(
         {
-            "filters": {
-                "repository_id": normalized_repository_id,
-                "remote": normalized_remote,
-                "root": normalized_root,
-                "host": normalized_host,
+            "snapshot_id": snapshot["snapshot_id"],
+            "snapshot": snapshot,
+            "normalized_request": {
+                **normalized,
+                "snapshot_id": snapshot["snapshot_id"],
             },
+            "filters": filters,
             "projects": result["items"],
             "total_count": int(result["total_count"]),
-            "limit": int(result["page_size"]),
-            "next_cursor": next_cursor,
+            "limit": limit,
+            "next_cursor": encode_cursor(
+                signer, page + 1, fingerprint, snapshot["snapshot_id"]
+            )
+            if result["has_next"]
+            else None,
         },
         headers={"Cache-Control": "private, no-store"},
     )
 
 
+def _get_session(connection, access, session_id):
+    session = fetch_session_with_project(connection, session_id)
+    if session is None or not row_is_visible_to_project_access(session, access):
+        raise api_error(404, "not_found", "Session not found")
+    return session
+
+
+def _conditional_response(request, payload, etag):
+    quoted_etag = '"' + etag + '"'
+    headers = {
+        "Cache-Control": "private, no-store",
+        # Snapshot/retrieval metadata may differ while the evidence is unchanged.
+        "ETag": "W/" + quoted_etag,
+        "X-Snapshot-ID": payload["snapshot_id"],
+    }
+    candidates = [
+        value.strip().removeprefix("W/")
+        for value in request.headers.get("if-none-match", "").split(",")
+    ]
+    if "*" in candidates or quoted_etag in candidates:
+        return Response(status_code=304, headers=headers)
+    return JSONResponse(payload, headers=headers)
+
+
 @router.get(
-    "/api/v1/sessions/{session_id}/turns/{turn_number}",
-    response_class=JSONResponse,
+    "/api/v1/sessions/{session_id}/turns/{turn_number}", response_class=JSONResponse
 )
 def session_turn_api(
     request: Request,
@@ -761,75 +842,44 @@ def session_turn_api(
     turn_number: int = Path(..., ge=1),
     context_turns: int = Query(default=0, alias="context", ge=0, le=10),
     include: str | None = Query(default=None, max_length=100),
-) -> JSONResponse:
-    app_context = get_app_context(request)
-    if bool(getattr(request.state, "auth_enabled", False)):
-        require_authenticated_user(request)
+    snapshot_id: str | None = Query(default=None, min_length=1, max_length=2048),
+):
     includes = _parse_turn_includes(include)
-
-    with connect(app_context.settings.database_path) as connection:
-        project_access = build_project_access_context(
-            connection,
-            auth_user=getattr(request.state, "auth_user", None),
-            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
-        )
-        session = fetch_session_with_project(connection, session_id)
-        if session is None or not row_is_visible_to_project_access(session, project_access):
-            raise HTTPException(status_code=404, detail="Session not found")
-
-        target = connection.execute(
-            """
-            SELECT *
-            FROM session_turns
-            WHERE session_id = ? AND turn_number = ?
-            """,
-            (session_id, turn_number),
-        ).fetchone()
-        if target is None:
-            raise HTTPException(status_code=404, detail="Turn not found")
-
-        bounds = connection.execute(
-            """
-            SELECT MIN(turn_number) AS first_turn, MAX(turn_number) AS last_turn
-            FROM session_turns
-            WHERE session_id = ?
-            """,
-            (session_id,),
-        ).fetchone()
-        session_first_turn = int(bounds["first_turn"] or turn_number)
-        session_last_turn = int(bounds["last_turn"] or turn_number)
-        first_turn = max(session_first_turn, turn_number - context_turns)
-        last_turn = min(session_last_turn, turn_number + context_turns)
-        turn_rows = connection.execute(
-            """
-            SELECT *
-            FROM session_turns
-            WHERE session_id = ? AND turn_number BETWEEN ? AND ?
-            ORDER BY turn_number ASC
-            """,
-            (session_id, first_turn, last_turn),
+    with _snapshot(request, snapshot_id) as (connection, access, snapshot, _, _):
+        session = _get_session(connection, access, session_id)
+        rows = connection.execute(
+            "SELECT * FROM session_turns WHERE session_id = ? AND turn_number BETWEEN ? AND ? ORDER BY turn_number",
+            (
+                session_id,
+                max(1, turn_number - context_turns),
+                turn_number + context_turns,
+            ),
         ).fetchall()
-        events = _turn_events(
-            connection,
-            session_id,
-            int(turn_rows[0]["start_event_index"]),
-            int(turn_rows[-1]["end_event_index"]),
-        )
+        if not any(row["turn_number"] == turn_number for row in rows):
+            raise api_error(404, "not_found", "Turn not found")
+        turns = [_load_turn(connection, session, row) for row in rows]
+        for turn in turns:
+            turn["is_target"] = turn["turn_number"] == turn_number
+            if "activity" not in includes:
+                turn.pop("activity", None)
         project = effective_project_fields(session)
-
-    turns = build_turns(
-        events,
-        cwd=str(session["cwd"] or "").strip() or None,
-        starting_turn_number=first_turn,
-    )
-    return JSONResponse(
-        {
+        target = next(turn for turn in turns if turn["is_target"])
+        payload = {
+            "snapshot_id": snapshot["snapshot_id"],
+            "snapshot": snapshot,
+            "normalized_request": {
+                "session_id": session_id,
+                "turn_number": turn_number,
+                "context": context_turns,
+                "include": sorted(includes),
+                "snapshot_id": snapshot["snapshot_id"],
+            },
             "session_id": session_id,
             "requested_turn": turn_number,
             "context": {
                 "requested": context_turns,
-                "first_turn": first_turn,
-                "last_turn": last_turn,
+                "first_turn": rows[0]["turn_number"],
+                "last_turn": rows[-1]["turn_number"],
             },
             "include": sorted(includes),
             "project": {
@@ -849,18 +899,173 @@ def session_turn_api(
                 "head": str(session["git_commit_hash"] or "").strip() or None,
                 "dirty": None,
             },
-            "turns": [
-                _serialize_turn(
-                    turn,
-                    target_turn_number=turn_number,
-                    include_activity="activity" in includes,
-                )
-                for turn in turns
-            ],
+            "turns": turns,
             "links": {
                 "conversation": f"/sessions/{quote(session_id, safe='')}?turn={turn_number}",
                 "audit": f"/sessions/{quote(session_id, safe='')}?view=audit&turn={turn_number}&focus=1",
             },
-        },
-        headers={"Cache-Control": "private, no-store"},
+            **{
+                key: target[key]
+                for key in (
+                    "content_digest",
+                    "content_version",
+                    "normalization_version",
+                    "activity_digest",
+                )
+            },
+        }
+    etag = (
+        target["content_digest"]
+        if not context_turns and "activity" in includes
+        else digest(
+            {
+                "turns": [turn["content_digest"] for turn in turns],
+                "include": sorted(includes),
+            }
+        )
+    )
+    return _conditional_response(request, payload, etag)
+
+
+@router.get(
+    "/api/v1/sessions/{session_id}/turns/{turn_number}/activity",
+    response_class=JSONResponse,
+)
+def turn_activity_api(
+    request: Request,
+    session_id: str,
+    turn_number: int = Path(..., ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, min_length=1, max_length=2048),
+    snapshot_id: str | None = Query(default=None, min_length=1, max_length=2048),
+    kind: str | None = Query(default=None, min_length=1, max_length=128),
+    event_type: str | None = Query(default=None, min_length=1, max_length=128),
+    tool_name: str | None = Query(default=None, min_length=1, max_length=128),
+    from_event_index: int | None = Query(default=None, ge=0),
+    to_event_index: int | None = Query(default=None, ge=0),
+    from_date: datetime | None = Query(default=None, alias="from"),
+    to_date: datetime | None = Query(default=None, alias="to"),
+):
+    start, end = _validate_date_range(from_date, to_date)
+    if (
+        from_event_index is not None
+        and to_event_index is not None
+        and from_event_index > to_event_index
+    ):
+        raise api_error(
+            422, "invalid_input", "from_event_index must be <= to_event_index"
+        )
+    normalized = {
+        "session_id": session_id,
+        "turn_number": turn_number,
+        "limit": limit,
+        "kind": kind,
+        "event_type": event_type,
+        "tool_name": tool_name,
+        "from_event_index": from_event_index,
+        "to_event_index": to_event_index,
+        "from": start,
+        "to": end,
+    }
+    fingerprint = digest({"endpoint": "activity", **normalized})
+    with _snapshot(request, snapshot_id, cursor) as (
+        connection,
+        access,
+        snapshot,
+        signer,
+        cursor_data,
+    ):
+        page = cursor_page(cursor_data, fingerprint)
+        session = _get_session(connection, access, session_id)
+        row = connection.execute(
+            "SELECT * FROM session_turns WHERE session_id = ? AND turn_number = ?",
+            (session_id, turn_number),
+        ).fetchone()
+        if row is None:
+            raise api_error(404, "not_found", "Turn not found")
+        turn = _load_turn(connection, session, row)
+        events = []
+        from_time, to_time = parse_timestamp(start), parse_timestamp(end)
+        for ordinal, event in enumerate(turn["activity"]):
+            index = event["event_index"]
+            if kind is not None and event["kind"] != kind:
+                continue
+            if event_type is not None and event["payload_type"] != event_type:
+                continue
+            if tool_name is not None and event["tool_name"] != tool_name:
+                continue
+            if from_event_index is not None and (
+                index is None or index < from_event_index
+            ):
+                continue
+            if to_event_index is not None and (index is None or index > to_event_index):
+                continue
+            timestamp = parse_timestamp(event["timestamp"])
+            if from_time and (timestamp is None or timestamp < from_time):
+                continue
+            if to_time and (timestamp is None or timestamp > to_time):
+                continue
+            events.append(
+                (
+                    timestamp
+                    if timestamp is not None
+                    else datetime.min.replace(tzinfo=UTC),
+                    index if index is not None else -1,
+                    ordinal,
+                    event,
+                )
+            )
+        events.sort(key=lambda item: item[:3])
+        total = len(events)
+        selected = events[(page - 1) * limit : page * limit]
+        items = [
+            {
+                **event,
+                "activity_ordinal": ordinal,
+                "activity_id": digest(
+                    {"turn": turn["activity_digest"], "ordinal": ordinal}
+                ),
+            }
+            for _, _, ordinal, event in selected
+        ]
+        payload = {
+            "snapshot_id": snapshot["snapshot_id"],
+            "snapshot": snapshot,
+            "normalized_request": {
+                **normalized,
+                "snapshot_id": snapshot["snapshot_id"],
+            },
+            "session_id": session_id,
+            "turn_number": turn_number,
+            "total_count": total,
+            "returned_count": len(items),
+            "limit": limit,
+            "activity": items,
+            "first_event_index": items[0]["event_index"] if items else None,
+            "last_event_index": items[-1]["event_index"] if items else None,
+            "next_cursor": encode_cursor(
+                signer, page + 1, fingerprint, snapshot["snapshot_id"]
+            )
+            if page * limit < total
+            else None,
+            **{
+                key: turn[key]
+                for key in (
+                    "content_digest",
+                    "content_version",
+                    "normalization_version",
+                    "activity_digest",
+                )
+            },
+        }
+    return _conditional_response(
+        request,
+        payload,
+        digest(
+            {
+                "activity_digest": turn["activity_digest"],
+                "request": normalized,
+                "page": page,
+            }
+        ),
     )

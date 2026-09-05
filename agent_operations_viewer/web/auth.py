@@ -54,7 +54,7 @@ BOOTSTRAP_PUBLIC_PATHS = {
     "/setup/status",
 }
 SEARCH_API_PATHS = {"/api/v1/search", "/api/v1/search/batch", "/api/v1/projects"}
-SEARCH_API_TURN_PATH = re.compile(r"^/api/v1/sessions/[^/]+/turns/[0-9]+$")
+SEARCH_API_TURN_PATH = re.compile(r"^/api/v1/sessions/[^/]+/turns/[0-9]+(?:/activity)?$")
 
 
 def is_search_api_path(path: str) -> bool:
