@@ -659,11 +659,12 @@ def list_repository_projects(
                 p.visibility,
                 p.repository_id,
                 COUNT(DISTINCT s.id) AS session_count,
-                MIN(COALESCE(s.session_timestamp, s.started_at, s.imported_at)) AS first_session_at,
-                MAX(COALESCE(s.session_timestamp, s.started_at, s.imported_at)) AS last_session_at
+                strftime('%Y-%m-%dT%H:%M:%SZ', MIN(julianday(COALESCE(NULLIF(s.session_timestamp, ''), NULLIF(s.started_at, ''), s.imported_at)))) AS first_session_at,
+                strftime('%Y-%m-%dT%H:%M:%SZ', MAX(julianday(COALESCE(NULLIF(s.session_timestamp, ''), NULLIF(s.started_at, ''), s.imported_at)))) AS last_session_at
             FROM projects AS p
             LEFT JOIN project_sources AS ps ON ps.project_id = p.id
             LEFT JOIN sessions AS s ON s.inferred_project_key = ps.match_project_key
+                AND NOT EXISTS (SELECT 1 FROM ignored_project_sources i WHERE i.match_project_key = s.inferred_project_key)
             {where_clause}
             GROUP BY p.id
         )
@@ -676,6 +677,7 @@ def list_repository_projects(
     ).fetchall()
     total_count = int(rows[0]["total_count"] or 0) if rows else 0
     items: list[dict[str, Any]] = []
+    repository_counts: dict[str | None, dict[str, Any]] = {}
     for row in rows:
         project_id = str(row["id"])
         sources = connection.execute(
@@ -689,10 +691,11 @@ def list_repository_projects(
                 s.github_remote_url,
                 s.repository_id,
                 COUNT(DISTINCT s.id) AS session_count,
-                MIN(COALESCE(s.session_timestamp, s.started_at, s.imported_at)) AS first_session_at,
-                MAX(COALESCE(s.session_timestamp, s.started_at, s.imported_at)) AS last_session_at
+                strftime('%Y-%m-%dT%H:%M:%SZ', MIN(julianday(COALESCE(NULLIF(s.session_timestamp, ''), NULLIF(s.started_at, ''), s.imported_at)))) AS first_session_at,
+                strftime('%Y-%m-%dT%H:%M:%SZ', MAX(julianday(COALESCE(NULLIF(s.session_timestamp, ''), NULLIF(s.started_at, ''), s.imported_at)))) AS last_session_at
             FROM project_sources AS ps
             LEFT JOIN sessions AS s ON s.inferred_project_key = ps.match_project_key
+                AND NOT EXISTS (SELECT 1 FROM ignored_project_sources i WHERE i.match_project_key = s.inferred_project_key)
             LEFT JOIN project_overrides AS o
                 ON o.match_project_key = ps.match_project_key
             WHERE ps.project_id = ?
@@ -715,6 +718,7 @@ def list_repository_projects(
                 or trimmed(source["git_repository_url"])
                 or trimmed(source["github_remote_url"]),
                 "session_count": int(source["session_count"] or 0),
+                "count_scope": "project_source",
                 "first_session_at": trimmed(source["first_session_at"]),
                 "last_session_at": trimmed(source["last_session_at"]),
             }
@@ -728,6 +732,26 @@ def list_repository_projects(
             }
         )
         canonical_id = resolve_repository_id(connection, row["repository_id"])
+        if canonical_id not in repository_counts:
+            from .projects import visible_session_where
+            repository_conditions = ["COALESCE(s.repository_id, p.repository_id) = ?"]
+            repository_params = [canonical_id]
+            if access_condition:
+                repository_conditions.append(access_condition)
+                repository_params.extend(access_params)
+            counts = connection.execute(
+                f"""
+                SELECT COUNT(DISTINCT s.id) AS session_count,
+                    strftime('%Y-%m-%dT%H:%M:%SZ', MIN(julianday(COALESCE(NULLIF(s.session_timestamp, ''), NULLIF(s.started_at, ''), s.imported_at)))) AS first_session_at,
+                    strftime('%Y-%m-%dT%H:%M:%SZ', MAX(julianday(COALESCE(NULLIF(s.session_timestamp, ''), NULLIF(s.started_at, ''), s.imported_at)))) AS last_session_at
+                FROM sessions s
+                LEFT JOIN project_sources ps ON ps.match_project_key = s.inferred_project_key
+                LEFT JOIN projects p ON p.id = ps.project_id
+                {visible_session_where(repository_conditions)}
+                """, repository_params,
+            ).fetchone()
+            repository_counts[canonical_id] = dict(counts)
+        counts = repository_counts[canonical_id]
         items.append(
             {
                 "id": project_id,
@@ -739,6 +763,11 @@ def list_repository_projects(
                 "repository": repository_snapshot(connection, canonical_id),
                 "sources": source_payload,
                 "session_count": int(row["session_count"] or 0),
+                "count_scope": "project",
+                "project_membership_exclusive": True,
+                "repository_session_count": counts["session_count"] if canonical_id else None,
+                "repository_first_session_at": counts["first_session_at"] if canonical_id else None,
+                "repository_last_session_at": counts["last_session_at"] if canonical_id else None,
                 "first_session_at": trimmed(row["first_session_at"]),
                 "last_session_at": trimmed(row["last_session_at"]),
             }

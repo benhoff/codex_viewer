@@ -148,6 +148,32 @@ def _empty_search_coverage(*, state: str = "empty") -> dict[str, Any]:
     }
 
 
+def coverage_readiness(coverage: dict[str, Any]) -> dict[str, Any]:
+    """Conservative completeness gate; absent index timestamps remain a limitation."""
+    result = dict(coverage)
+    for unit in ("sessions", "turns"):
+        unsearched = max(0, int(result[f"{unit}_total"]) - int(result[f"{unit}_indexed"]))
+        result.setdefault(f"{unit}_pending", unsearched)
+        result.setdefault(f"{unit}_stale", 0)
+        result.setdefault(f"{unit}_failed", 0)
+    reasons = [
+        {"code": name, "count": result[name]}
+        for name in ("sessions_pending", "sessions_stale", "sessions_failed", "turns_pending", "turns_stale", "turns_failed")
+        if result[name]
+    ]
+    unknown = result["freshness"].get("indexed_at_unknown_sessions", 0)
+    if unknown:
+        reasons.append({"code": "index_timestamp_unknown", "count": unknown})
+    if result["freshness"]["state"] == "unresolved_scope":
+        reasons.append({"code": "unresolved_scope"})
+    for name in ("sessions_without_turns", "sessions_import_warnings", "turns_missing_search_rows", "turns_missing_evidence"):
+        if result.get(name):
+            reasons.append({"code": name, "count": result[name]})
+    result["exhaustive_ready"] = not reasons
+    result["exhaustive_reasons"] = reasons
+    return result
+
+
 def _normalize_search_options(
     sort: str,
     group_by: str,
@@ -453,9 +479,13 @@ def _base_search_conditions(
     from_timestamp: str | None,
     to_timestamp: str | None,
     project_access: ProjectAccessContext | None,
+    exclude_session_ids: Sequence[str] = (),
 ) -> tuple[list[str], list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
+    if exclude_session_ids:
+        conditions.append(f"s.id NOT IN ({','.join('?' for _ in exclude_session_ids)})")
+        params.extend(exclude_session_ids)
     if project_id:
         conditions.append("p.id = ?")
         params.append(project_id)
@@ -493,6 +523,44 @@ def _base_search_conditions(
         conditions.append(access_condition)
         params.extend(access_params)
     return conditions, params
+
+
+def prepare_coverage_inventory(connection: sqlite3.Connection, *, persistent: bool = False) -> None:
+    """Compute evidence availability once for an immutable snapshot generation."""
+    table_type = "" if persistent else "TEMP"
+    connection.execute(f"""
+        CREATE {table_type} TABLE evidence_turn_integrity (
+            session_id TEXT NOT NULL, turn_number INTEGER NOT NULL,
+            has_search INTEGER NOT NULL, has_evidence INTEGER NOT NULL,
+            PRIMARY KEY(session_id, turn_number)
+        ) WITHOUT ROWID
+    """)
+    # Use an explicit key for this small inventory rather than depending on
+    # SQLite choosing an automatic index for a materialized FTS subquery.
+    connection.execute("""
+        CREATE TEMP TABLE evidence_indexed_turns (
+            session_id TEXT NOT NULL, turn_number INTEGER NOT NULL,
+            PRIMARY KEY(session_id, turn_number)
+        ) WITHOUT ROWID
+    """)
+    try:
+        connection.execute("""
+            INSERT OR IGNORE INTO evidence_indexed_turns
+            SELECT CAST(session_id AS TEXT), CAST(turn_number AS INTEGER)
+            FROM session_turn_search
+        """)
+        connection.execute("""
+            INSERT INTO evidence_turn_integrity
+            SELECT st.session_id, st.turn_number, ix.session_id IS NOT NULL,
+                EXISTS(SELECT 1 FROM events e WHERE e.session_id = st.session_id
+                    AND e.event_index BETWEEN st.start_event_index AND st.end_event_index)
+            FROM session_turns st
+            LEFT JOIN evidence_indexed_turns ix
+                ON ix.session_id = st.session_id AND ix.turn_number = st.turn_number
+            ORDER BY st.session_id, st.turn_number
+        """)
+    finally:
+        connection.execute("DROP TABLE IF EXISTS temp.evidence_indexed_turns")
 
 
 def _search_coverage(
@@ -550,8 +618,8 @@ def _search_coverage(
             ) AS last_indexed_at,
             COUNT(DISTINCT s.id) AS sessions_total,
             COUNT(DISTINCT CASE WHEN {fully_indexed_sql} THEN s.id END) AS sessions_indexed,
-            COUNT(*) AS turns_total,
-            COUNT(CASE WHEN {fully_indexed_sql} THEN 1 END) AS turns_indexed,
+            COUNT(st.turn_number) AS turns_total,
+            COUNT(CASE WHEN {fully_indexed_sql} THEN st.turn_number END) AS turns_indexed,
             COUNT(
                 DISTINCT CASE
                     WHEN {fully_indexed_sql}
@@ -559,9 +627,8 @@ def _search_coverage(
                     THEN s.id
                 END
             ) AS indexed_at_known_sessions
-        FROM session_turns AS st
-        JOIN sessions AS s
-            ON s.id = st.session_id
+        FROM sessions AS s
+        LEFT JOIN session_turns AS st ON s.id = st.session_id
         LEFT JOIN project_overrides AS o
             ON o.match_project_key = s.inferred_project_key
         LEFT JOIN project_sources AS ps
@@ -577,9 +644,60 @@ def _search_coverage(
     if not rows:
         return _empty_search_coverage()
 
+    # Discovery must include sessions whose turn index has not been built yet.
+    # Session rollups can also know about turns absent from session_turns.
+    has_inventory = connection.execute("""
+        SELECT 1 FROM sqlite_master WHERE name = 'evidence_turn_integrity'
+        UNION ALL SELECT 1 FROM sqlite_temp_master WHERE name = 'evidence_turn_integrity'
+    """).fetchone() is not None
+    indexed_turns_sql = (
+        "SELECT session_id, turn_number FROM evidence_turn_integrity WHERE has_search = 1"
+        if has_inventory else
+        "SELECT DISTINCT CAST(session_id AS TEXT) AS session_id, CAST(turn_number AS INTEGER) AS turn_number FROM session_turn_search"
+    )
+    evidence_sql = (
+        "COALESCE((SELECT has_evidence FROM evidence_turn_integrity ei WHERE ei.session_id = st.session_id AND ei.turn_number = st.turn_number), 0)"
+        if has_inventory else
+        "EXISTS(SELECT 1 FROM events e WHERE e.session_id = s.id AND e.event_index BETWEEN st.start_event_index AND st.end_event_index)"
+    )
+    states = connection.execute(
+        f"""
+        WITH indexed_turns AS MATERIALIZED (
+            {indexed_turns_sql}
+        ), indexed_sessions AS MATERIALIZED (
+            SELECT DISTINCT session_id FROM indexed_turns
+        )
+        SELECT s.id, MAX(s.turn_count) AS known_turns,
+               COUNT(st.turn_number) AS indexed_turn_rows,
+               CASE WHEN {fully_indexed_sql} THEN 1 ELSE 0 END AS current,
+               indexed_sessions.session_id IS NOT NULL AS has_search,
+               CASE WHEN NULLIF(TRIM(s.import_warning), '') IS NOT NULL THEN 1 ELSE 0 END AS warning,
+               SUM(CASE WHEN st.turn_number IS NOT NULL AND indexed_turns.session_id IS NULL
+                   THEN 1 ELSE 0 END) AS missing_search,
+               SUM(CASE WHEN st.turn_number IS NOT NULL AND NOT ({evidence_sql})
+                   THEN 1 ELSE 0 END) AS missing_evidence
+        FROM sessions s
+        LEFT JOIN session_turns st ON st.session_id = s.id
+        LEFT JOIN indexed_turns ON indexed_turns.session_id = st.session_id
+            AND indexed_turns.turn_number = st.turn_number
+        LEFT JOIN indexed_sessions ON indexed_sessions.session_id = s.id
+        LEFT JOIN project_sources ps ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects p ON p.id = ps.project_id
+        LEFT JOIN project_overrides o ON o.match_project_key = s.inferred_project_key
+        {visible_session_where(base_conditions)}
+        GROUP BY s.id
+        """, base_params,
+    ).fetchall()
+    # With time bounds, unknown turn timestamps cannot safely be assigned outside
+    # the interval; the no-turn gate still reports their unsearched session.
+    has_time_bounds = any("julianday" in condition for condition in base_conditions)
+    missing_turns = sum(max(0, int(row["known_turns"] or 0) - int(row["indexed_turn_rows"])) for row in states) if not has_time_bounds else 0
+    stale_sessions = sum(1 for row in states if not row["current"] and row["has_search"])
+    stale_turns = sum(int(row["indexed_turn_rows"]) for row in states if not row["current"] and row["has_search"])
+
     sessions_total = sum(int(row["sessions_total"] or 0) for row in rows)
     sessions_indexed = sum(int(row["sessions_indexed"] or 0) for row in rows)
-    turns_total = sum(int(row["turns_total"] or 0) for row in rows)
+    turns_total = sum(int(row["turns_total"] or 0) for row in rows) + missing_turns
     turns_indexed = sum(int(row["turns_indexed"] or 0) for row in rows)
     indexed_at_known_sessions = sum(
         int(row["indexed_at_known_sessions"] or 0) for row in rows
@@ -642,6 +760,16 @@ def _search_coverage(
         "turns_total": turns_total,
         "turns_indexed": turns_indexed,
         "pending_reindex_sessions": pending_reindex_sessions,
+        "sessions_pending": pending_reindex_sessions - stale_sessions,
+        "sessions_stale": stale_sessions,
+        "sessions_failed": 0,
+        "turns_pending": turns_total - turns_indexed - stale_turns,
+        "turns_stale": stale_turns,
+        "turns_failed": 0,
+        "sessions_without_turns": sum(1 for row in states if not row["indexed_turn_rows"]),
+        "sessions_import_warnings": sum(int(row["warning"]) for row in states),
+        "turns_missing_search_rows": sum(int(row["missing_search"]) for row in states),
+        "turns_missing_evidence": sum(int(row["missing_evidence"]) for row in states),
         "projects_searched": projects,
         "index_versions": {
             "turn": TURN_INDEX_VERSION,
@@ -1381,6 +1509,7 @@ def search_turn_hits_raw(
     fields: str | Sequence[str] | None = None,
     facets: str | Sequence[str] | None = None,
     project_access: ProjectAccessContext | None = None,
+    exclude_session_ids: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Return search-domain data without HTML or route-specific links."""
 
@@ -1444,6 +1573,7 @@ def search_turn_hits_raw(
         from_timestamp=trimmed(from_timestamp),
         to_timestamp=trimmed(to_timestamp),
         project_access=project_access,
+        exclude_session_ids=exclude_session_ids,
     )
     coverage = _search_coverage(
         connection,
