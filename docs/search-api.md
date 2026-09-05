@@ -54,11 +54,13 @@ Use `--data-urlencode` (or an equivalent URL encoder) for every query parameter.
 | `from` | No | Inclusive lower timestamp bound in ISO 8601 format. A timestamp without an offset is treated as UTC. |
 | `to` | No | Inclusive upper timestamp bound in ISO 8601 format. A timestamp without an offset is treated as UTC. |
 | `mode` | No | `all` (default), `any`, `phrase`, or `exact`. See [Lexical modes and fields](#lexical-modes-and-fields). |
-| `fields` | No | Comma-separated fields to search: `prompt`, `response`, `activity`, `commands`, `paths`, `commit_ids`, and `tool_output`. Omit this parameter to search every indexed field plus project metadata. |
+| `fields` | No | Comma-separated fields to search: `prompt`, `response`, `activity`, `commands`, `paths`, `commit_ids`, `tool_output`, and `patches`. Omit this parameter to search every indexed field plus project metadata. |
+| `exclude_session_id` | No | Repeatable exact session ID exclusion; at most 100 entries, each 1–128 characters. Values are trimmed, deduplicated, and sorted. Exclusions apply to hits, facets, eligible coverage, and pagination. Batch queries use an array with this same name. |
+| `snapshot_id` | No | Pin a previously returned searchable database generation. Omission creates a snapshot; a cursor implicitly selects its original snapshot. |
 | `facets` | No | Comma-separated result counts to return: `project`, `session`, `date`, `branch`, and `matched_field`. Facets are computed before pagination. |
 | `sort` | No | `relevance` (default), `time_asc` (oldest first), or `time_desc` (newest first). |
 | `group_by` | No | `none` (default) returns flat hits. `session` returns session groups. |
-| `max_hits_per_session` | No | Maximum hits returned in each session group, from 1 to 100. Defaults to 3 and is ignored when `group_by=none`. |
+| `max_hits_per_session` | No | Maximum hits returned in each session group, from 1 to 100. Defaults to 3. Supplying it explicitly requires `group_by=session`; otherwise the request returns `422`. |
 | `limit` | No | Page size, from 1 to 100. Defaults to 20. It counts hits when ungrouped and sessions when grouped. |
 | `cursor` | No | Opaque value returned as `next_cursor` by the preceding page. |
 
@@ -194,7 +196,7 @@ A successful request returns HTTP `200` with JSON. This representative response 
     },
     "index": {
       "mode": "hybrid_lexical",
-      "chunk_version": 2
+      "chunk_version": 3
     }
   },
   "coverage": {
@@ -221,7 +223,7 @@ A successful request returns HTTP `200` with JSON. This representative response 
     "index_versions": {
       "turn": 6,
       "turn_search": 3,
-      "search_chunk": 2
+      "search_chunk": 3
     },
     "freshness": {
       "state": "current",
@@ -387,7 +389,11 @@ curl --get "https://codex.home.benhoff.net/api/v1/projects" \
   --data-urlencode "limit=50"
 ```
 
-The optional filters are `repository_id`, `remote`, `root`, and `host`. Filters are combined. `limit` ranges from 1 to 100 and defaults to 50; follow `next_cursor` to retrieve another page.
+The optional filters are `repository_id`, `remote`, `root`, and `host`. Filters are combined. `limit` ranges from 1 to 100 and defaults to 50; follow `next_cursor` to retrieve another page. `snapshot_id` pins discovery to the same corpus as subsequent searches.
+
+`session_count` is the distinct count of non-ignored sessions assigned to that exact project, regardless of the discovery filters used to select the project. `repository_session_count` counts distinct visible sessions across its canonical repository. Each session belongs to at most one project (the source-key mapping is unique); `project_membership_exclusive=true` makes this explicit. Source counts have `count_scope=project_source` and partition their project's sessions by source key, host, root, captured remote, and repository. Counts never aggregate inaccessible projects.
+
+Project, source, repository, and coverage first/last timestamps are the minimum/maximum UTC instants of each session's first nonempty `session_timestamp`, `started_at`, or `imported_at`, rendered to second precision. Repository aggregates use `repository_first_session_at` and `repository_last_session_at`. Search time filters operate on turn timestamps and can therefore narrow eligible coverage further.
 
 Each project contains its project ID, label, visibility, canonical `repository_id`, time range, session count, source histories, and repository aliases. A repository discovered through SSH and HTTPS remotes uses one normalized remote identity. Histories without a non-local remote fall back to `(source host, normalized working directory)` and are never merged solely because they share a basename.
 
@@ -436,7 +442,7 @@ Repository records that later gain stronger remote evidence are merged through a
 
 ## Batch Search
 
-Use `POST /api/v1/search/batch` to run related searches under one authentication and ACL snapshot. The endpoint accepts 1 to 20 query objects. Each object supports the same query, filters, mode, fields, facets, ordering, grouping, and limit options as the GET endpoint, except cursors. Batch results contain the first page of each query and set `next_cursor` to `null`; use GET for subsequent pages.
+Use `POST /api/v1/search/batch` to run related searches against one corpus and index snapshot with one current authorization check. The endpoint accepts 1 to 20 query objects. Each object supports the same query, filters, mode, fields, facets, ordering, grouping, exclusions, and limit options as GET, except cursors. Supply `snapshot_id` at the top level to reuse a snapshot; per-query snapshots are rejected. Batch results contain the first page and a usable `next_cursor` when more matches exist. Continue through GET using the same query parameters and that cursor. Every result carries the batch's snapshot identifier.
 
 ```bash
 curl "https://codex.home.benhoff.net/api/v1/search/batch" \
@@ -508,6 +514,7 @@ This endpoint uses the same personal search token and project ACLs as search. It
 | --- | --- | --- |
 | `context` | No | Number of neighboring turns to return on each side, from 0 to 10. Defaults to 0. Context is clipped at the beginning and end of the session. |
 | `include` | No | Comma-separated optional sections. The currently supported value is `activity`. |
+| `snapshot_id` | No | Reuse a searchable corpus snapshot, including its captured events. |
 
 Each item in `turns` contains:
 
@@ -533,7 +540,7 @@ curl --get "https://codex.home.benhoff.net/api/v1/search" \
   --data-urlencode "cursor=PASTE_NEXT_CURSOR_HERE"
 ```
 
-A search cursor is bound to the original `q`, filters, `mode`, `fields`, `facets`, `sort`, `group_by`, `max_hits_per_session`, and `limit`. A project-discovery cursor is bound to its repository, remote, root, host, and limit filters. Repeat the applicable parameters exactly on every page. Changing one of them while reusing the cursor returns HTTP `400`. Cursors are opaque implementation details; do not decode or construct them.
+A search cursor is cryptographically signed and bound to the normalized `q`, filters, exclusions, `mode`, `fields`, `facets`, `sort`, `group_by`, `max_hits_per_session`, `limit`, snapshot, and snapshot owner's authorization scope. A project-discovery cursor binds its repository, remote, root, host, and limit filters. Repeat the applicable parameters on every page. The cursor implicitly reuses its snapshot; an explicitly different `snapshot_id` is rejected. Changing a bound parameter returns HTTP `400` with `cursor_mismatch`. Cursors are opaque implementation details; do not decode or construct them. Unsigned cursors from older API versions are invalid.
 
 For flat requests, each page contains up to `limit` items in `hits`. For grouped requests, each page contains up to `limit` items in `groups`, and each group contains up to `max_hits_per_session` hits. Follow `next_cursor` in the same way for either response shape.
 
@@ -579,9 +586,67 @@ Errors are JSON objects with a `detail` field when the client sends `Accept: app
 | Status | Meaning | What to check |
 | --- | --- | --- |
 | `400` | The cursor is malformed or does not belong to this query. | Start again without a cursor, or repeat the original query, filters, and limit. |
+| `403` | Snapshot belongs to another user, or its access scope has shrunk. | Obtain a new snapshot using current authorization. |
+| `409` | Invalid snapshot, unsupported snapshot schema/normalization, or indexed evidence cannot be reconstructed. | Inspect `detail.code`; do not silently substitute current evidence. |
+| `410` | Snapshot expired or is unavailable. | Start a new investigation snapshot. |
 | `401` | Authentication failed. | Confirm the bearer header uses an active personal search token. Sync/daemon tokens are not accepted. |
 | `403` | The server is not ready for normal authenticated use. | An administrator may need to complete initial setup. |
 | `422` | A parameter or batch budget failed validation. | Check `q`, repository filters, timestamps, the date range, `mode`, `fields`, `facets`, `sort`, `group_by`, limits, and `max_total_hits`. |
+| `503` | Snapshot preparing, capacity reached, or build failed/interrupted. | Inspect `detail.code`. For `snapshot_building`, honor `Retry-After` and retry with `detail.snapshot_id` when present. |
+
+## Reproducible research contract
+
+All search endpoints reject unknown query parameters and body properties with `422`. Errors identify the offending name in `detail[].loc` and supply `allowed` names. For example, an extra field on the second batch query has location `["body", "queries", 1, "field"]`. Query parameters other than `exclude_session_id` cannot be repeated. Unsupported and explicitly inapplicable constraints never silently succeed.
+
+Search responses expose `normalized_query`, including defaults, canonical exclusion order, effective search fields, and whether project metadata is searched. Discovery, batch, and evidence responses expose `normalized_request`. The returned `snapshot_id` identifies the effective snapshot even when it was supplied through a cursor. Request cursors themselves are transport state, not evidence filters.
+
+### Snapshot lifetime and current access
+
+Every discovery, search, batch, complete-turn, and activity response includes `snapshot_id` and `snapshot`. Metadata contains `created_at`, `expires_at`, `index_generation`, `normalization_version`, `index_versions`, and creation-time coverage/freshness. `snapshot.coverage_scope` explicitly identifies the whole authorized corpus before query filters. Use the search response's top-level `coverage` to assess the eligible corpus after repository, source, date, and exclusion filters.
+
+A snapshot is an immutable SQLite backup, including indexed text and captured events. It survives process restarts, expires after 15 minutes, and can be reused across all endpoints. Live indexing never changes its content or ordering. Each batch creates or reuses exactly one backup. Snapshots are bound to the authenticated user; they do not freeze authorization grants. Every request checks current session/project visibility. Any revoked access, removed session, ignored source, or changed project assignment invalidates the old access scope with `403 snapshot_access_revoked`. Newly granted access does not broaden an existing snapshot. Invalid and expired snapshots never fall back to live data.
+
+Large snapshots are prepared by one background builder per database, independently of the client connection. The initial request waits at most one second for preparation; if unfinished, it returns `503` with `detail.code=snapshot_building`, a signed `detail.snapshot_id`, and `Retry-After: 2`. Retry the same request with that ID (at the top level of a batch body). Other workers contending for creation return the same retryable code, potentially without an ID; they do not queue indefinitely. Valid existing snapshots and invalid identifiers never wait for the builder lock. Small snapshots still return an ordinary `200` on the first request. Preparation has a ten-minute work budget, leaving room for inventory/metadata after a large full-database copy; a failed or interrupted build returns an explicit `503` error and requires a new snapshot. This budget is not an expected completion time: production storage can spend approximately five minutes on the backup alone. The 15-minute expiry starts when preparation is requested, not when it becomes ready.
+
+Build responses include progress when available: `detail.build_id` for log correlation, `stage` (`cleanup`, `backup`, `coverage_inventory`, `coverage`, `metadata`, or `publish`), `elapsed_seconds`, `stage_elapsed_seconds`, `stage_timings_seconds` for completed stages, and `budget_seconds`. Backup progress adds `backup_pages_copied` and `backup_pages_total`. Pending progress is a last-reported measurement, updated during backup and on stage transitions. A `snapshot_build_failed` response preserves these diagnostics and adds a sanitized `reason` (for example `deadline_exceeded`, `database_busy`, `disk_full`, or `sqlite_error`), `error_type`, and, for SQLite exceptions, `sqlite_errorname`. SQL, private paths, and raw exception messages are not returned. Server logs contain the exception and correlate stage timings by snapshot generation. Older failures created before this instrumentation may lack these fields.
+
+Snapshot preparation records an indexed inventory of searchable turns and evidence availability. Coverage reads reuse that immutable inventory, rather than probing the full-text index and captured-event store repeatedly. Project discovery counts sessions directly and does not recompute full coverage for every project.
+
+Backups and their signing key live in the database directory's private `search-snapshots/` directory (0700; backup/key files 0600). At most 32 unexpired snapshots are retained per database; creation cleans up expired backups and returns `503 snapshot_capacity` if full. Reusing a snapshot avoids another full database copy. Operators should allow disk space for these backups; keep the signing key when restarting workers. Expired backups and abandoned preparation files are removed on subsequent creation, so an idle installation may retain expired files until its next research request. An index or normalization upgrade invalidates incompatible snapshots explicitly.
+
+### Exhaustive readiness
+
+`coverage.exhaustive_ready` is true only when `exhaustive_reasons` is empty. The gate checks `sessions_pending`, `sessions_stale`, `sessions_failed`, `turns_pending`, `turns_stale`, and `turns_failed`, plus missing turn/search/evidence rows, import warnings, unknown index timestamps, and unresolved scope. Discovery includes sessions that have no turn index; known rollup turns missing from the index are pending. Versions behind the current index with retained searchable content count as stale; versions behind without searchable content count as pending. This importer does not persist a separate per-session failed-index state: failed counts are zero, while unsuccessful indexing remains pending/stale and import warnings independently block readiness. The gate covers imported, discovered sessions, not upstream sessions the server has never received.
+
+A snapshot can remain incomplete throughout its lifetime. Positive hits can still be useful. A no-match result supports an exhaustive claim only for its explicitly pinned, eligible corpus when this gate is true and the reported retrieval strategy searched the requested terms.
+
+### Content identity and canonical serialization
+
+Search hits, complete-turn records, and activity pages expose `content_digest`, `content_version`, `normalization_version`, and `activity_digest`. The turn digest covers the same complete normalized turn regardless of context or whether activity was requested. To reproduce it, retrieve with `include=activity`, take the target element of `turns`, and remove `is_target`, `content_digest`, `content_version`, `normalization_version`, and `activity_digest`. The remaining object is `T`. Hash the UTF-8 bytes of canonical JSON for `{"normalization_version":"evidence-1","turn":T}` using SHA-256 and prefix the hexadecimal result with `sha256:`.
+
+Canonical JSON uses recursively sorted object keys, array order unchanged, no insignificant whitespace (`separators=(",", ":")`), Unicode characters unescaped (`ensure_ascii=False`), and finite JSON numbers serialized as by Python's `json.dumps(..., allow_nan=False)`. The included turn fields are `turn_number`, `turn_id`, `prompt`, `response`, `duration_seconds`, `agent`, `execution_context`, `commands`, `patches`, `files`, `stats`, and `activity`. The activity digest hashes `{"normalization_version":"evidence-1","activity":T.activity}` under the same rules. Activity is the merged normalized detail collection, not every upstream transport record. Links, coverage, snapshot identifiers, requested context, and retrieval timestamps are outside both scopes. `content_version` is the turn digest's hex suffix. Corrections change the digest; changes to normalization semantics require a new normalization version.
+
+Complete-turn retrieval returns a weak ETag equal to the target digest for `context=0&include=activity`; other projections hash the ordered turn-digest list and selected includes. Activity ETags bind the collection digest, filters, limit, and page. Tags are weak because volatile snapshot/retrieval metadata is excluded from the evidence identity. `If-None-Match` supports a matching tag, a list of tags, or `*`, and returns `304` after authorization and snapshot validation. `X-Snapshot-ID` is also returned on `304`.
+
+### Bounded activity retrieval
+
+`GET /api/v1/sessions/{session_id}/turns/{turn_number}/activity` accepts:
+
+| Parameter | Meaning |
+| --- | --- |
+| `limit` | 1–100 events per page, default 50. |
+| `cursor`, `snapshot_id` | Signed continuation and reusable snapshot, as above. |
+| `kind` | Exact normalized activity kind, such as `tool_call`. |
+| `event_type` | Exact normalized `payload_type`, such as `function_call`. |
+| `tool_name` | Exact normalized tool name, such as `apply_patch`. |
+| `from_event_index`, `to_event_index` | Inclusive nonnegative event-index bounds. |
+| `from`, `to` | Inclusive ISO timestamp bounds; missing offsets mean UTC. Undated events do not match time bounds. |
+
+The response includes `activity`, filtered `total_count`, `returned_count`, `next_cursor`, `first_event_index`, `last_event_index`, snapshot metadata, and both content identities. Activity sorts by UTC timestamp (undated events first), event index, then immutable position in the captured normalized collection. Each returned event has a stable `activity_id` and its original `activity_ordinal`. To verify the collection digest from all unfiltered pages, restore ordinal order and remove these two pagination annotations before hashing. Cursors bind the session, turn, every filter, page size, snapshot, and authorization scope. Complete-turn `include=activity` remains available for compatibility.
+
+### Patch-only search
+
+`fields=patches` uses a separate full-content chunk index. It indexes submitted `apply_patch` bodies (including patches embedded in recognized shell invocations) and structured applied unified diffs. Headers, context, additions, and deletions are included; unrelated command text and patch status messages are excluded. Filenames are searchable in patch headers but patch body tokens are not attributed to `paths`. Matches report `matched_field=patches`, bounded character offsets, and `chunk.lines` ranges labeled `header`, `context`, `addition`, or `deletion` where available (`unknown` for a potentially partial leading line). All four lexical modes, facets, batches, snapshots, and pagination use the same ACL-scoped retrieval path. Chunk schema version 3 triggers background reindexing of existing sessions; coverage remains incomplete until that work finishes.
 
 Common problems:
 
