@@ -53,11 +53,11 @@ Page cursors remain page-number based. Replacing them with keyset cursors contai
 
 Turn/chunk overlap is already deduplicated to one result per `(session_id, turn_number)` by the current candidate-ranking query. This slice should retain that behavior and add grouping across turns in the same session.
 
-## Slice 4: Coverage and Freshness
+## Slice 4: Coverage and Freshness (Implemented)
 
 Goal: let clients distinguish “no indexed evidence” from “the indexed corpus shows no match.”
 
-Add an ACL- and filter-aware `coverage` object to every search response:
+Every search response now includes an ACL- and filter-aware `coverage` object:
 
 ```json
 {
@@ -65,7 +65,9 @@ Add an ACL- and filter-aware `coverage` object to every search response:
     "first_session_at": "2026-01-03T10:20:00Z",
     "last_session_at": "2026-09-05T07:10:00Z",
     "last_indexed_at": "2026-09-05T07:11:12Z",
+    "sessions_total": 123,
     "sessions_indexed": 123,
+    "turns_total": 2840,
     "turns_indexed": 2840,
     "pending_reindex_sessions": 0,
     "projects_searched": [
@@ -75,15 +77,9 @@ Add an ACL- and filter-aware `coverage` object to every search response:
 }
 ```
 
-Implementation steps:
+The aggregate query uses the same project ACL, `project_id`, `host`, and date conditions as search without applying the text expression. It reports eligible and fully indexed session/turn counts, current index versions, per-project counts, and pending reindexes. Tests prove private and out-of-filter projects do not appear in counts, ranges, or `projects_searched`.
 
-1. Build the coverage query from the same project ACL, `project_id`, `host`, and date conditions as search, but without the text-match condition.
-2. Compute session and turn ranges/counts from visible rows.
-3. Compare each session's turn and chunk index versions with the current application versions to count pending reindexes.
-4. Define `last_indexed_at` from a persisted index-completion timestamp. Do not substitute request time or session import time.
-5. Add tests proving private projects never appear in counts, ranges, or `projects_searched`.
-
-This slice should precede facets because both need the same ACL-safe aggregate-query layer.
+The schema now persists `sessions.search_indexed_at` only after the turn, compact-search, and full-content chunk index versions are all current. Existing rows migrate to `NULL`; the API reports `timestamp_unknown` rather than substituting import time. Future imports, incremental suffix indexing, project reindexing, and bounded chunk/turn backfills update the timestamp at actual completion.
 
 ## Slice 5: Canonical Repository Identity and Project Discovery
 

@@ -369,6 +369,7 @@ def search_api(
                 "to": to_timestamp,
             },
             "retrieval": search_page["retrieval"],
+            "coverage": search_page["coverage"],
             "sort": sort,
             "group_by": group_by,
             "max_hits_per_session": max_hits_per_session,

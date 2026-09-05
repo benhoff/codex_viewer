@@ -16,7 +16,7 @@ from .projects import (
     visible_session_where,
 )
 from .search_query import SearchQueryPlan, plan_search_query
-from .turn_index import SEARCH_CHUNK_VERSION
+from .turn_index import SEARCH_CHUNK_VERSION, TURN_INDEX_VERSION, TURN_SEARCH_VERSION
 
 
 TURN_TIMESTAMP_SQL = """
@@ -31,8 +31,40 @@ TURN_TIMESTAMP_SQL = """
     )
 """
 
+SESSION_TIMESTAMP_SQL = """
+    COALESCE(
+        NULLIF(s.session_timestamp, ''),
+        NULLIF(s.started_at, ''),
+        NULLIF(s.imported_at, '')
+    )
+"""
+
 SEARCH_SORT_MODES = frozenset({"relevance", "time_asc", "time_desc"})
 SEARCH_GROUP_MODES = frozenset({"none", "session"})
+
+
+def _empty_search_coverage(*, state: str = "empty") -> dict[str, Any]:
+    return {
+        "first_session_at": None,
+        "last_session_at": None,
+        "last_indexed_at": None,
+        "sessions_total": 0,
+        "sessions_indexed": 0,
+        "turns_total": 0,
+        "turns_indexed": 0,
+        "pending_reindex_sessions": 0,
+        "projects_searched": [],
+        "index_versions": {
+            "turn": TURN_INDEX_VERSION,
+            "turn_search": TURN_SEARCH_VERSION,
+            "search_chunk": SEARCH_CHUNK_VERSION,
+        },
+        "freshness": {
+            "state": state,
+            "indexed_at_known_sessions": 0,
+            "indexed_at_unknown_sessions": 0,
+        },
+    }
 
 
 def _normalize_search_options(
@@ -131,6 +163,7 @@ def _empty_search_page(
     *,
     retrieval: dict[str, Any] | None = None,
     group_by: str = "none",
+    coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "items": [],
@@ -147,6 +180,7 @@ def _empty_search_page(
         "showing_from": 0,
         "showing_to": 0,
         "retrieval": retrieval or {},
+        "coverage": coverage or _empty_search_coverage(),
     }
 
 
@@ -318,6 +352,160 @@ def _base_search_conditions(
         conditions.append(access_condition)
         params.extend(access_params)
     return conditions, params
+
+
+def _search_coverage(
+    connection: sqlite3.Connection,
+    *,
+    base_conditions: list[str],
+    base_params: list[Any],
+) -> dict[str, Any]:
+    fully_indexed_sql = f"""
+        COALESCE(s.turn_index_version, 0) >= {TURN_INDEX_VERSION}
+        AND COALESCE(s.turn_search_version, 0) >= {TURN_SEARCH_VERSION}
+        AND COALESCE(s.search_chunk_version, 0) >= {SEARCH_CHUNK_VERSION}
+    """
+    project_key_sql = """
+        COALESCE(
+            NULLIF(TRIM(o.override_group_key), ''),
+            NULLIF(TRIM(p.current_group_key), ''),
+            NULLIF(TRIM(s.inferred_project_key), ''),
+            ''
+        )
+    """
+    project_label_sql = f"""
+        COALESCE(
+            NULLIF(TRIM(o.override_display_label), ''),
+            NULLIF(TRIM(p.display_label), ''),
+            NULLIF(TRIM(s.inferred_project_label), ''),
+            {project_key_sql}
+        )
+    """
+    rows = connection.execute(
+        f"""
+        SELECT
+            p.id AS project_id,
+            {project_key_sql} AS project_key,
+            {project_label_sql} AS project_label,
+            strftime(
+                '%Y-%m-%dT%H:%M:%SZ',
+                MIN(julianday({SESSION_TIMESTAMP_SQL}))
+            ) AS first_session_at,
+            strftime(
+                '%Y-%m-%dT%H:%M:%SZ',
+                MAX(julianday({SESSION_TIMESTAMP_SQL}))
+            ) AS last_session_at,
+            strftime(
+                '%Y-%m-%dT%H:%M:%SZ',
+                MAX(
+                    CASE WHEN {fully_indexed_sql}
+                    THEN julianday(NULLIF(TRIM(s.search_indexed_at), ''))
+                    END
+                )
+            ) AS last_indexed_at,
+            COUNT(DISTINCT s.id) AS sessions_total,
+            COUNT(DISTINCT CASE WHEN {fully_indexed_sql} THEN s.id END) AS sessions_indexed,
+            COUNT(*) AS turns_total,
+            COUNT(CASE WHEN {fully_indexed_sql} THEN 1 END) AS turns_indexed,
+            COUNT(
+                DISTINCT CASE
+                    WHEN {fully_indexed_sql}
+                     AND NULLIF(TRIM(s.search_indexed_at), '') IS NOT NULL
+                    THEN s.id
+                END
+            ) AS indexed_at_known_sessions
+        FROM session_turns AS st
+        JOIN sessions AS s
+            ON s.id = st.session_id
+        LEFT JOIN project_overrides AS o
+            ON o.match_project_key = s.inferred_project_key
+        LEFT JOIN project_sources AS ps
+            ON ps.match_project_key = s.inferred_project_key
+        LEFT JOIN projects AS p
+            ON p.id = ps.project_id
+        {visible_session_where(base_conditions)}
+        GROUP BY p.id, {project_key_sql}, {project_label_sql}
+        ORDER BY project_label ASC, project_key ASC, project_id ASC
+        """,
+        base_params,
+    ).fetchall()
+    if not rows:
+        return _empty_search_coverage()
+
+    sessions_total = sum(int(row["sessions_total"] or 0) for row in rows)
+    sessions_indexed = sum(int(row["sessions_indexed"] or 0) for row in rows)
+    turns_total = sum(int(row["turns_total"] or 0) for row in rows)
+    turns_indexed = sum(int(row["turns_indexed"] or 0) for row in rows)
+    indexed_at_known_sessions = sum(
+        int(row["indexed_at_known_sessions"] or 0) for row in rows
+    )
+    indexed_at_unknown_sessions = max(
+        sessions_indexed - indexed_at_known_sessions,
+        0,
+    )
+    pending_reindex_sessions = max(sessions_total - sessions_indexed, 0)
+    first_timestamps = [
+        str(row["first_session_at"])
+        for row in rows
+        if row["first_session_at"]
+    ]
+    last_timestamps = [
+        str(row["last_session_at"])
+        for row in rows
+        if row["last_session_at"]
+    ]
+    indexed_timestamps = [
+        str(row["last_indexed_at"])
+        for row in rows
+        if row["last_indexed_at"]
+    ]
+    if pending_reindex_sessions:
+        freshness_state = "pending_reindex"
+    elif indexed_at_unknown_sessions:
+        freshness_state = "timestamp_unknown"
+    else:
+        freshness_state = "current"
+
+    projects = []
+    for row in rows:
+        project_sessions_total = int(row["sessions_total"] or 0)
+        project_sessions_indexed = int(row["sessions_indexed"] or 0)
+        projects.append(
+            {
+                "id": str(row["project_id"]) if row["project_id"] else None,
+                "key": trimmed(row["project_key"]),
+                "label": trimmed(row["project_label"]),
+                "session_count": project_sessions_total,
+                "turn_count": int(row["turns_total"] or 0),
+                "sessions_indexed": project_sessions_indexed,
+                "pending_reindex_sessions": max(
+                    project_sessions_total - project_sessions_indexed,
+                    0,
+                ),
+            }
+        )
+
+    return {
+        "first_session_at": min(first_timestamps) if first_timestamps else None,
+        "last_session_at": max(last_timestamps) if last_timestamps else None,
+        "last_indexed_at": max(indexed_timestamps) if indexed_timestamps else None,
+        "sessions_total": sessions_total,
+        "sessions_indexed": sessions_indexed,
+        "turns_total": turns_total,
+        "turns_indexed": turns_indexed,
+        "pending_reindex_sessions": pending_reindex_sessions,
+        "projects_searched": projects,
+        "index_versions": {
+            "turn": TURN_INDEX_VERSION,
+            "turn_search": TURN_SEARCH_VERSION,
+            "search_chunk": SEARCH_CHUNK_VERSION,
+        },
+        "freshness": {
+            "state": freshness_state,
+            "indexed_at_known_sessions": indexed_at_known_sessions,
+            "indexed_at_unknown_sessions": indexed_at_unknown_sessions,
+        },
+    }
 
 
 def _turn_search_from_clause(conditions: list[str]) -> str:
@@ -538,6 +726,7 @@ def _run_search_stage(
     group_by: str,
     max_hits_per_session: int,
     retrieval: dict[str, Any],
+    coverage: dict[str, Any],
 ) -> dict[str, Any]:
     normalized_page = max(int(page or 1), 1)
     pagination_total = session_count if group_by == "session" else total_count
@@ -855,6 +1044,7 @@ def _run_search_stage(
         "showing_from": offset + 1 if returned_units else 0,
         "showing_to": offset + returned_units,
         "retrieval": retrieval,
+        "coverage": coverage,
     }
 
 
@@ -903,6 +1093,7 @@ def search_turn_hits_raw(
             normalized_page_size,
             retrieval=retrieval,
             group_by=normalized_group_by,
+            coverage=_empty_search_coverage(state="unresolved_scope"),
         )
     base_conditions, base_params = _base_search_conditions(
         project_id=effective_project_id,
@@ -910,6 +1101,11 @@ def search_turn_hits_raw(
         from_timestamp=trimmed(from_timestamp),
         to_timestamp=trimmed(to_timestamp),
         project_access=project_access,
+    )
+    coverage = _search_coverage(
+        connection,
+        base_conditions=base_conditions,
+        base_params=base_params,
     )
     stage_counts: dict[str, int | None] = {
         "strict": None,
@@ -927,6 +1123,7 @@ def search_turn_hits_raw(
             normalized_page_size,
             retrieval=retrieval,
             group_by=normalized_group_by,
+            coverage=coverage,
         )
 
     strict_count, strict_session_count = _search_stage_counts(
@@ -992,6 +1189,7 @@ def search_turn_hits_raw(
             normalized_page_size,
             retrieval=retrieval,
             group_by=normalized_group_by,
+            coverage=coverage,
         )
     return _run_search_stage(
         connection,
@@ -1007,4 +1205,5 @@ def search_turn_hits_raw(
         group_by=normalized_group_by,
         max_hits_per_session=normalized_max_hits,
         retrieval=retrieval,
+        coverage=coverage,
     )

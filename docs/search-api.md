@@ -162,6 +162,37 @@ A successful request returns HTTP `200` with JSON. This representative response 
       "chunk_version": 1
     }
   },
+  "coverage": {
+    "first_session_at": "2026-08-01T09:00:00Z",
+    "last_session_at": "2026-08-23T13:00:00Z",
+    "last_indexed_at": "2026-09-05T08:14:02Z",
+    "sessions_total": 12,
+    "sessions_indexed": 12,
+    "turns_total": 184,
+    "turns_indexed": 184,
+    "pending_reindex_sessions": 0,
+    "projects_searched": [
+      {
+        "id": "01JPROJECTID",
+        "key": "acme/viewer",
+        "label": "Agent Operations Viewer",
+        "session_count": 12,
+        "turn_count": 184,
+        "sessions_indexed": 12,
+        "pending_reindex_sessions": 0
+      }
+    ],
+    "index_versions": {
+      "turn": 6,
+      "turn_search": 2,
+      "search_chunk": 1
+    },
+    "freshness": {
+      "state": "current",
+      "indexed_at_known_sessions": 12,
+      "indexed_at_unknown_sessions": 0
+    }
+  },
   "hits": [
     {
       "project": {
@@ -222,6 +253,7 @@ Important response fields:
 - `total_count` always counts all matching turns for the selected retrieval strategy and filters, before the per-session cap.
 - `session_count` counts distinct sessions containing those matches.
 - `pagination.unit` is `hit` for flat results and `session` for grouped results. `pagination.total_count` is the count in that unit, while `pagination.returned_count` describes the current page.
+- `coverage` describes the visible, structurally filtered turn corpus that was eligible to be searched. It is independent of whether the query text produced a hit.
 - `next_cursor` is `null` on the final page.
 - `repository` records the remote, working directory, branch, and commit stored with the session. The current `root` value is the session working directory and may be below the actual repository root. `dirty` is currently `null` because ingestion does not yet capture dirty state.
 - `snippet`, `prompt_excerpt`, and `response_excerpt` are plain text, not HTML.
@@ -265,6 +297,29 @@ The `retrieval.strategy` value is one of:
 - `relaxed`: the service broadened an abstract or unsuccessful query.
 - `project_history`: the service returned recent turns from a resolved project as evidence.
 - `no_match`: no usable match or unambiguous accessible project was found.
+
+## Coverage and Freshness
+
+Coverage uses the same personal-token ACL, `project_id`, `host`, `from`, and `to` restrictions as the search itself, but does not apply the text query. Private projects that the token owner cannot access are absent from every range, count, and `projects_searched` entry.
+
+The counts have deliberately distinct meanings:
+
+- `sessions_total` and `turns_total` describe the complete eligible corpus. Only sessions containing an in-scope normalized turn are included.
+- `sessions_indexed` and `turns_indexed` count the portion whose turn, compact-search, and full-content chunk index versions are all current.
+- `pending_reindex_sessions` identifies incomplete index coverage. A zero value is required before treating an unsuccessful query as evidence that the entire eligible corpus was searched.
+- `last_indexed_at` is the latest persisted completion time from a fully current index. It is never inferred from session import or request time.
+- `first_session_at` and `last_session_at` bound the sessions containing eligible turns. Values are normalized to UTC.
+- Each `projects_searched` item repeats its eligible and indexed counts, making the exact ACL-safe project scope inspectable.
+
+`coverage.freshness.state` is one of:
+
+- `current`: all eligible sessions use current index versions and have persisted completion timestamps.
+- `pending_reindex`: one or more eligible sessions need an index rebuild.
+- `timestamp_unknown`: index versions are current, but at least one historical session predates persisted completion timestamps. Its content was searched, but its exact indexing time is unknown.
+- `empty`: no normalized turns exist under the structural filters and ACL.
+- `unresolved_scope`: a natural-language project reference was inaccessible, unmatched, or ambiguous, so the service intentionally searched no broader corpus.
+
+For legacy installations, the schema migration adds a nullable `search_indexed_at` field. Existing values remain unknown until a real indexing operation completes; deployment does not manufacture historical completion times.
 
 ## Retrieve a Complete Turn
 

@@ -516,6 +516,19 @@ class SearchApiTests(unittest.TestCase):
         self.assertNotIn("<mark>", response.text)
         self.assertNotIn("[[", response.text)
         self.assertEqual(response.headers["cache-control"], "private, no-store")
+        coverage = payload["coverage"]
+        self.assertEqual(coverage["sessions_total"], 4)
+        self.assertEqual(coverage["sessions_indexed"], 4)
+        self.assertEqual(coverage["turns_total"], 5)
+        self.assertEqual(coverage["turns_indexed"], 5)
+        self.assertEqual(coverage["pending_reindex_sessions"], 0)
+        self.assertIsNotNone(coverage["last_indexed_at"])
+        self.assertEqual(coverage["freshness"]["state"], "current")
+        self.assertEqual(
+            {project["id"] for project in coverage["projects_searched"]},
+            {"public-project", "grouping-project", "chunk-api-project"},
+        )
+        self.assertNotIn("private-project", response.text)
         repository = next(
             hit["repository"]
             for hit in payload["hits"]
@@ -545,6 +558,13 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(granted_response.status_code, 200, granted_response.text)
         self.assertEqual(granted_response.json()["total_count"], 1)
         self.assertEqual(granted_response.json()["hits"][0]["session_id"], "private-one")
+        granted_coverage = granted_response.json()["coverage"]
+        self.assertEqual(granted_coverage["sessions_total"], 1)
+        self.assertEqual(granted_coverage["pending_reindex_sessions"], 0)
+        self.assertEqual(
+            [project["id"] for project in granted_coverage["projects_searched"]],
+            ["private-project"],
+        )
 
     def test_turn_context_api_returns_complete_turn_and_repository(self) -> None:
         self.assertEqual(self._turn().status_code, 401)
@@ -618,6 +638,11 @@ class SearchApiTests(unittest.TestCase):
             hidden_response.json()["retrieval"]["project"]["resolution"],
             "unmatched",
         )
+        self.assertEqual(
+            hidden_response.json()["coverage"]["freshness"]["state"],
+            "unresolved_scope",
+        )
+        self.assertEqual(hidden_response.json()["coverage"]["projects_searched"], [])
 
     def test_api_returns_full_content_chunk_provenance(self) -> None:
         response = self._search(token=self.viewer_token, q=self.long_marker)

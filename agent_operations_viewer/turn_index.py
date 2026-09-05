@@ -35,6 +35,41 @@ SEARCH_CHUNK_OVERLAP_CHARS = 400
 LEGACY_SEARCH_TRUNCATION_WARNING = "Search text truncated during import"
 
 
+def _refresh_search_indexed_at(
+    connection: sqlite3.Connection,
+    session_ids: Sequence[str],
+) -> None:
+    normalized_ids = sorted(
+        {str(session_id or "").strip() for session_id in session_ids if session_id}
+    )
+    if not normalized_ids:
+        return
+    indexed_at = datetime.now(tz=UTC).replace(microsecond=0).isoformat()
+    connection.executemany(
+        """
+        UPDATE sessions
+        SET search_indexed_at = CASE
+            WHEN COALESCE(turn_index_version, 0) >= ?
+             AND COALESCE(turn_search_version, 0) >= ?
+             AND COALESCE(search_chunk_version, 0) >= ?
+            THEN ?
+            ELSE NULL
+        END
+        WHERE id = ?
+        """,
+        [
+            (
+                TURN_INDEX_VERSION,
+                TURN_SEARCH_VERSION,
+                SEARCH_CHUNK_VERSION,
+                indexed_at,
+                session_id,
+            )
+            for session_id in normalized_ids
+        ],
+    )
+
+
 def _event_value(event: sqlite3.Row | dict[str, Any] | object, key: str) -> Any:
     if isinstance(event, sqlite3.Row):
         try:
@@ -558,7 +593,10 @@ def replace_session_turns(
     connection.execute(
         """
         UPDATE sessions
-        SET turn_index_version = ?, search_chunk_version = 0
+        SET
+            turn_index_version = ?,
+            search_chunk_version = 0,
+            search_indexed_at = NULL
         WHERE id = ?
         """,
         (TURN_INDEX_VERSION, session_id),
@@ -845,7 +883,10 @@ def backfill_session_turns(connection: sqlite3.Connection) -> int:
     connection.executemany(
         """
         UPDATE sessions
-        SET turn_index_version = ?, search_chunk_version = 0
+        SET
+            turn_index_version = ?,
+            search_chunk_version = 0,
+            search_indexed_at = NULL
         WHERE id = ?
         """,
         [(TURN_INDEX_VERSION, session_id) for session_id in session_ids],
@@ -1141,6 +1182,7 @@ def _write_session_search_chunks(
             "UPDATE sessions SET search_chunk_version = ? WHERE id = ?",
             (SEARCH_CHUNK_VERSION, session_id),
         )
+    _refresh_search_indexed_at(connection, [session_id])
     return len(records)
 
 
@@ -1238,6 +1280,7 @@ def replace_session_turn_search(
         "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
         (TURN_SEARCH_VERSION, normalized_session_id),
     )
+    _refresh_search_indexed_at(connection, [normalized_session_id])
 
 
 def replace_session_turn_suffix(
@@ -1327,6 +1370,7 @@ def replace_session_turn_suffix(
             normalized_session_id,
         ),
     )
+    _refresh_search_indexed_at(connection, [normalized_session_id])
     return rows
 
 
@@ -1377,6 +1421,7 @@ def backfill_session_turn_search(connection: sqlite3.Connection) -> int:
         "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
         [(TURN_SEARCH_VERSION, session_id) for session_id in session_ids],
     )
+    _refresh_search_indexed_at(connection, session_ids)
     return len(session_ids)
 
 

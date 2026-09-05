@@ -19,7 +19,11 @@ from agent_operations_viewer.search_query import (
     SEARCH_INTENT_RESOLVED_ISSUES,
     plan_search_query,
 )
-from agent_operations_viewer.turn_index import TURN_INDEX_VERSION, TURN_SEARCH_VERSION
+from agent_operations_viewer.turn_index import (
+    SEARCH_CHUNK_VERSION,
+    TURN_INDEX_VERSION,
+    TURN_SEARCH_VERSION,
+)
 
 
 NOW = "2026-08-23T12:00:00+00:00"
@@ -315,6 +319,130 @@ class SearchServiceTests(unittest.TestCase):
             )
 
         self.assertEqual([item["session_id"] for item in page["items"]], ["older-session"])
+
+    def test_coverage_is_filter_aware_acl_safe_and_reports_unknown_freshness(self) -> None:
+        with connect(self.db_path) as connection:
+            insert_search_turn(
+                connection,
+                session_id="coverage-known",
+                project_id="coverage-public-project",
+                project_key="acme/coverage-public",
+                project_label="acme/coverage-public",
+                host="coverage-host",
+                timestamp="2026-08-20T12:00:00+00:00",
+                prompt="indexed public evidence",
+            )
+            insert_search_turn(
+                connection,
+                session_id="coverage-unknown",
+                project_id="coverage-public-project",
+                project_key="acme/coverage-public",
+                project_label="acme/coverage-public",
+                host="coverage-host",
+                timestamp="2026-08-21T12:00:00+00:00",
+                prompt="indexed timestamp unknown evidence",
+            )
+            insert_search_turn(
+                connection,
+                session_id="coverage-private",
+                project_id="coverage-private-project",
+                project_key="acme/coverage-private",
+                project_label="acme/coverage-private",
+                visibility="private",
+                host="coverage-host",
+                timestamp="2026-08-22T12:00:00+00:00",
+                prompt="classified coverage evidence",
+            )
+            insert_search_turn(
+                connection,
+                session_id="coverage-other-host",
+                project_id="coverage-other-project",
+                project_key="acme/coverage-other",
+                project_label="acme/coverage-other",
+                host="other-host",
+                timestamp="2026-08-23T12:00:00+00:00",
+                prompt="other host evidence",
+            )
+            connection.executemany(
+                """
+                UPDATE sessions
+                SET search_chunk_version = ?, search_indexed_at = ?
+                WHERE id = ?
+                """,
+                [
+                    (
+                        SEARCH_CHUNK_VERSION,
+                        "2026-08-20T12:05:00+00:00",
+                        "coverage-known",
+                    ),
+                    (SEARCH_CHUNK_VERSION, None, "coverage-unknown"),
+                    (
+                        SEARCH_CHUNK_VERSION,
+                        "2026-08-22T12:05:00+00:00",
+                        "coverage-private",
+                    ),
+                ],
+            )
+            viewer_access = ProjectAccessContext(
+                auth_enabled=True,
+                bypass=False,
+                user_id="coverage-viewer",
+                project_roles={},
+            )
+            page = search_turn_hits_raw(
+                connection,
+                "zzznomatchone zzznomatchtwo",
+                host="coverage-host",
+                from_timestamp="2026-08-20T00:00:00+00:00",
+                to_timestamp="2026-08-21T23:59:59+00:00",
+                project_access=viewer_access,
+            )
+            viewer_access.project_roles["coverage-private-project"] = "viewer"
+            granted_page = search_turn_hits_raw(
+                connection,
+                "zzznomatchone zzznomatchtwo",
+                host="coverage-host",
+                project_access=viewer_access,
+            )
+            stale_page = search_turn_hits_raw(
+                connection,
+                "zzznomatchone zzznomatchtwo",
+                host="other-host",
+                project_access=viewer_access,
+            )
+
+        self.assertEqual(page["total_count"], 0)
+        coverage = page["coverage"]
+        self.assertEqual(coverage["sessions_total"], 2)
+        self.assertEqual(coverage["sessions_indexed"], 2)
+        self.assertEqual(coverage["turns_total"], 2)
+        self.assertEqual(coverage["turns_indexed"], 2)
+        self.assertEqual(coverage["pending_reindex_sessions"], 0)
+        self.assertEqual(coverage["first_session_at"], "2026-08-20T12:00:00Z")
+        self.assertEqual(coverage["last_session_at"], "2026-08-21T12:00:00Z")
+        self.assertEqual(coverage["last_indexed_at"], "2026-08-20T12:05:00Z")
+        self.assertEqual(coverage["freshness"]["state"], "timestamp_unknown")
+        self.assertEqual(coverage["freshness"]["indexed_at_known_sessions"], 1)
+        self.assertEqual(coverage["freshness"]["indexed_at_unknown_sessions"], 1)
+        self.assertEqual(
+            [project["id"] for project in coverage["projects_searched"]],
+            ["coverage-public-project"],
+        )
+
+        granted_coverage = granted_page["coverage"]
+        self.assertEqual(granted_coverage["sessions_total"], 3)
+        self.assertEqual(
+            {project["id"] for project in granted_coverage["projects_searched"]},
+            {"coverage-public-project", "coverage-private-project"},
+        )
+        self.assertNotIn("coverage-other-project", str(granted_coverage))
+
+        stale_coverage = stale_page["coverage"]
+        self.assertEqual(stale_coverage["sessions_total"], 1)
+        self.assertEqual(stale_coverage["sessions_indexed"], 0)
+        self.assertEqual(stale_coverage["pending_reindex_sessions"], 1)
+        self.assertIsNone(stale_coverage["last_indexed_at"])
+        self.assertEqual(stale_coverage["freshness"]["state"], "pending_reindex")
 
     def test_legacy_session_cap_does_not_limit_turn_fts_search(self) -> None:
         with connect(self.db_path) as connection:

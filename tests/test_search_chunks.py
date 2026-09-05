@@ -314,11 +314,12 @@ class SearchChunkIndexTests(unittest.TestCase):
                 upsert_parsed_session(connection, parsed)
             page = search_turn_hits_raw(connection, marker)
             version_row = connection.execute(
-                "SELECT search_chunk_version FROM sessions WHERE id = ?",
+                "SELECT search_chunk_version, search_indexed_at FROM sessions WHERE id = ?",
                 ("imported-chunk-session",),
             ).fetchone()
 
         self.assertEqual(int(version_row["search_chunk_version"]), SEARCH_CHUNK_VERSION)
+        self.assertIsNotNone(version_row["search_indexed_at"])
         self.assertEqual(page["total_count"], 1)
         self.assertEqual(page["items"][0]["match_source"], "chunk")
         self.assertEqual(page["items"][0]["matched_field"], "response")
