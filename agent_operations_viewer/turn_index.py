@@ -780,15 +780,27 @@ def _insert_session_turn_rows(
         )
 
 
-def backfill_session_turns(connection: sqlite3.Connection) -> int:
+def backfill_session_turns(
+    connection: sqlite3.Connection,
+    *,
+    batch_size: int | None = None,
+) -> int:
+    normalized_batch_size = (
+        max(1, min(int(batch_size), 500)) if batch_size is not None else None
+    )
+    limit_sql = " LIMIT ?" if normalized_batch_size is not None else ""
+    params: tuple[int, ...] = (TURN_INDEX_VERSION,)
+    if normalized_batch_size is not None:
+        params = (*params, normalized_batch_size)
     stale_rows = connection.execute(
-        """
+        f"""
         SELECT id
         FROM sessions
         WHERE COALESCE(turn_index_version, 0) < ?
         ORDER BY id ASC
+        {limit_sql}
         """,
-        (TURN_INDEX_VERSION,),
+        params,
     ).fetchall()
     session_ids = [str(row["id"]) for row in stale_rows]
     if not session_ids:
@@ -1460,15 +1472,27 @@ def replace_session_turn_suffix(
     return rows
 
 
-def backfill_session_turn_search(connection: sqlite3.Connection) -> int:
+def backfill_session_turn_search(
+    connection: sqlite3.Connection,
+    *,
+    batch_size: int | None = None,
+) -> int:
+    normalized_batch_size = (
+        max(1, min(int(batch_size), 500)) if batch_size is not None else None
+    )
+    limit_sql = " LIMIT ?" if normalized_batch_size is not None else ""
+    params: tuple[int, ...] = (TURN_SEARCH_VERSION,)
+    if normalized_batch_size is not None:
+        params = (*params, normalized_batch_size)
     stale_rows = connection.execute(
-        """
+        f"""
         SELECT id
         FROM sessions
         WHERE COALESCE(turn_search_version, 0) < ?
         ORDER BY id ASC
+        {limit_sql}
         """,
-        (TURN_SEARCH_VERSION,),
+        params,
     ).fetchall()
     session_ids = [str(row["id"]) for row in stale_rows]
     if not session_ids:

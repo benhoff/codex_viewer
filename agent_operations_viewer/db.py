@@ -1114,6 +1114,7 @@ ON search_api_tokens(owner_user_id, created_at DESC);
 """
 
 WRITE_LOCK = threading.RLock()
+SESSION_BACKFILL_BATCH_SIZE = 10
 
 
 def connect(database_path: Path) -> sqlite3.Connection:
@@ -1775,8 +1776,26 @@ def run_db_backfills(database_path: Path) -> None:
             backfill_session_agent_metadata(connection)
             backfill_session_rollups(connection)
             backfill_session_turn_activity_daily(connection)
-            backfill_session_turns(connection)
-            backfill_session_turn_search(connection)
+
+        while True:
+            with write_transaction(connection):
+                indexed_count = backfill_session_turns(
+                    connection,
+                    batch_size=SESSION_BACKFILL_BATCH_SIZE,
+                )
+            if indexed_count < SESSION_BACKFILL_BATCH_SIZE:
+                break
+
+        while True:
+            with write_transaction(connection):
+                indexed_count = backfill_session_turn_search(
+                    connection,
+                    batch_size=SESSION_BACKFILL_BATCH_SIZE,
+                )
+            if indexed_count < SESSION_BACKFILL_BATCH_SIZE:
+                break
+
+        with write_transaction(connection):
             from .action_queue import backfill_action_queue_rollups
 
             backfill_action_queue_rollups(connection)
@@ -1799,9 +1818,9 @@ def run_db_backfills(database_path: Path) -> None:
             with write_transaction(connection):
                 indexed_count = backfill_session_search_chunks(
                     connection,
-                    batch_size=50,
+                    batch_size=SESSION_BACKFILL_BATCH_SIZE,
                 )
-            if indexed_count < 50:
+            if indexed_count < SESSION_BACKFILL_BATCH_SIZE:
                 break
 
 

@@ -15,7 +15,9 @@ from unittest import mock
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from agent_operations_viewer.api_tokens import create_api_token
 from agent_operations_viewer.db import (
+    SESSION_BACKFILL_BATCH_SIZE,
     WRITE_LOCK,
     backfill_session_agent_metadata,
     connect,
@@ -27,8 +29,14 @@ from agent_operations_viewer.db import (
 from agent_operations_viewer.config import Settings
 from agent_operations_viewer.importer import fetch_host_sync_manifest
 from agent_operations_viewer.session_insights import AGENT_METADATA_VERSION
+from agent_operations_viewer.turn_index import (
+    TURN_INDEX_VERSION,
+    TURN_SEARCH_VERSION,
+    backfill_session_turn_search,
+    backfill_session_turns,
+)
 from agent_operations_viewer.web.app import _start_post_startup_maintenance, create_app
-from agent_operations_viewer.web.auth import AuthMiddleware
+from agent_operations_viewer.web.auth import AuthMiddleware, _require_sync_api_auth
 from agent_operations_viewer.web.concurrency import (
     WorkQueueFull,
     _BoundedWorkExecutor,
@@ -74,6 +82,107 @@ def insert_legacy_session(
 
 
 class StartupPerformanceTests(unittest.TestCase):
+    def test_turn_backfills_honor_batch_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "viewer.sqlite3"
+            init_db(database_path)
+            with connect(database_path) as connection:
+                with write_transaction(connection):
+                    for index in range(5):
+                        insert_legacy_session(
+                            connection,
+                            session_id=f"batched-session-{index}",
+                            inferred_project_key=f"directory:test:/workspace/{index}",
+                        )
+
+                with write_transaction(connection):
+                    turn_count = backfill_session_turns(connection, batch_size=2)
+                current_turns = connection.execute(
+                    "SELECT COUNT(*) FROM sessions WHERE turn_index_version = ?",
+                    (TURN_INDEX_VERSION,),
+                ).fetchone()[0]
+
+                with write_transaction(connection):
+                    search_count = backfill_session_turn_search(connection, batch_size=2)
+                current_search = connection.execute(
+                    "SELECT COUNT(*) FROM sessions WHERE turn_search_version = ?",
+                    (TURN_SEARCH_VERSION,),
+                ).fetchone()[0]
+
+            self.assertEqual(turn_count, 2)
+            self.assertEqual(current_turns, 2)
+            self.assertEqual(search_count, 2)
+            self.assertEqual(current_search, 2)
+
+    def test_run_db_backfills_processes_every_bounded_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "viewer.sqlite3"
+            init_db(database_path)
+            session_count = SESSION_BACKFILL_BATCH_SIZE + 3
+            with connect(database_path) as connection:
+                with write_transaction(connection):
+                    for index in range(session_count):
+                        insert_legacy_session(
+                            connection,
+                            session_id=f"complete-session-{index:03d}",
+                            inferred_project_key=f"directory:test:/complete/{index}",
+                        )
+
+            run_db_backfills(database_path)
+
+            with connect(database_path) as connection:
+                current = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM sessions
+                    WHERE turn_index_version = ? AND turn_search_version = ?
+                    """,
+                    (TURN_INDEX_VERSION, TURN_SEARCH_VERSION),
+                ).fetchone()[0]
+            self.assertEqual(current, session_count)
+
+    def test_sync_token_auth_skips_usage_write_while_writer_is_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "viewer.sqlite3"
+            init_db(database_path)
+            with connect(database_path) as connection:
+                with write_transaction(connection):
+                    token = create_api_token(connection, "Busy-writer token")
+
+            writer_started = threading.Event()
+            release_writer = threading.Event()
+
+            def hold_writer_slot() -> None:
+                with WRITE_LOCK:
+                    writer_started.set()
+                    release_writer.wait(timeout=2)
+
+            holder = threading.Thread(target=hold_writer_slot)
+            holder.start()
+            self.assertTrue(writer_started.wait(timeout=1))
+            try:
+                started_at = time.monotonic()
+                result = _require_sync_api_auth(
+                    SimpleNamespace(database_path=database_path),
+                    bearer_token=token["token"],
+                    source_host="busy-host",
+                    raw_body=b"",
+                    method="GET",
+                    path="/api/sync/manifest-v2",
+                    machine_id="",
+                    machine_timestamp="",
+                    machine_nonce="",
+                    machine_signature="",
+                    machine_body_sha256="",
+                )
+                elapsed = time.monotonic() - started_at
+            finally:
+                release_writer.set()
+                holder.join(timeout=1)
+
+            self.assertEqual(result["auth_type"], "api_token")
+            self.assertLess(elapsed, 0.1)
+
     def test_incidental_write_skips_immediately_while_upload_writer_is_busy(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             database_path = Path(tmpdir) / "viewer.sqlite3"

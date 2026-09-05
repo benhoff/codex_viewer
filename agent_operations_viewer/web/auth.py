@@ -116,8 +116,12 @@ def _require_sync_api_auth(
         if bearer_token:
             token_row = find_active_api_token(connection, bearer_token)
             if token_row is not None:
-                with write_transaction(connection):
-                    touch_api_token_usage(connection, token_row["id"], source_host)
+                # Usage timestamps are bookkeeping, not part of authentication.
+                # Do not make every sync request wait behind an index rebuild or
+                # upload that currently owns SQLite's single writer slot.
+                with try_write_transaction(connection) as writable:
+                    if writable:
+                        touch_api_token_usage(connection, token_row["id"], source_host)
                 return {
                     "auth_type": "api_token",
                     "token_id": str(token_row["id"]),
