@@ -1,4 +1,5 @@
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 import tempfile
 import time
@@ -179,7 +180,8 @@ class SearchSnapshotTests(unittest.TestCase):
 
             def authorize(action, table, column, database, trigger):
                 if action == sqlite3.SQLITE_READ and table not in {
-                    "sqlite_master", "evidence_snapshot_metadata"
+                    "sqlite_master",
+                    "evidence_snapshot_metadata",
                 }:
                     return sqlite3.SQLITE_DENY
                 return sqlite3.SQLITE_OK
@@ -204,6 +206,67 @@ class SearchSnapshotTests(unittest.TestCase):
                     base_params=[value, *params],
                 )
                 self.assertEqual(coverage["sessions_total"], 0)
+
+    def test_filtered_coverage_uses_compact_catalog_not_wide_corpus_tables(self):
+        with self.snapshot() as (connection, access, _, _, _):
+            condition, params = project_access_condition_sql(access)
+
+            def authorize(action, table, column, database, trigger):
+                if action == sqlite3.SQLITE_READ and table in {
+                    "sessions",
+                    "session_turns",
+                    "events",
+                    "session_turn_search",
+                }:
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+
+            connection.set_authorizer(authorize)
+            coverage = _search_coverage(
+                connection,
+                base_conditions=["s.id = ?", condition],
+                base_params=["public", *params],
+            )
+            self.assertEqual(coverage["sessions_total"], 1)
+            self.assertEqual(coverage["turns_total"], 1)
+
+    def test_ready_lifetime_and_cleanup_do_not_charge_preparation_time(self):
+        start = time.time()
+        wall_clock = [start]
+
+        def slow_inventory(connection, **kwargs):
+            wall_clock[0] += 500
+            prepare_coverage_inventory(connection, **kwargs)
+
+        with patch(
+            "agent_operations_viewer.search_snapshots.time.time",
+            side_effect=lambda: wall_clock[0],
+        ), patch("agent_operations_viewer.search_snapshots.MAX_SNAPSHOTS", 1):
+            with patch(
+                "agent_operations_viewer.search_snapshots.prepare_coverage_inventory",
+                side_effect=slow_inventory,
+            ):
+                with self.snapshot() as (_, _, metadata, _, _):
+                    snapshot_id = metadata["snapshot_id"]
+                    ready = datetime.fromisoformat(metadata["ready_at"]).timestamp()
+                    expires = datetime.fromisoformat(metadata["expires_at"]).timestamp()
+                    self.assertAlmostEqual(expires - ready, 900, places=3)
+            wall_clock[0] = start + 950
+            with self.snapshot(snapshot_id):
+                pass
+            with self.assertRaises(HTTPException) as caught:
+                with self.snapshot():
+                    pass
+            self.assertEqual(caught.exception.detail["code"], "snapshot_capacity")
+            wall_clock[0] = expires + 1
+            # The signed upper bound has not expired yet: ready metadata must
+            # enforce the earlier actual expiration, without renewing content.
+            with self.assertRaises(HTTPException) as caught:
+                with self.snapshot(snapshot_id):
+                    pass
+            self.assertEqual(caught.exception.detail["code"], "snapshot_expired")
+            with self.snapshot():
+                pass
 
     def test_inventory_uses_explicit_keys_and_tracks_missing_search_rows(self):
         with closing(connect(self.settings.database_path)) as connection:

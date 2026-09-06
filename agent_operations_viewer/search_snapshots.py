@@ -25,6 +25,7 @@ from fastapi import HTTPException
 from itsdangerous import BadData, URLSafeSerializer
 
 from .db import connect
+from .search_budget import search_work_budget
 from .projects import (
     ProjectAccessContext,
     build_project_access_context,
@@ -43,8 +44,8 @@ SNAPSHOT_TTL_SECONDS = 900
 MAX_SNAPSHOTS = 32
 NORMALIZATION_VERSION = "evidence-1"
 SNAPSHOT_REQUEST_WAIT_SECONDS = 1.0
-# A full production backup alone can take about five minutes. Leave room for
-# inventory/metadata work while retaining at least five minutes of snapshot TTL.
+# A full production backup alone can take about five minutes. Preparation has
+# its own allowance; ready snapshots receive a separate useful read lifetime.
 SNAPSHOT_BUILD_TIMEOUT_SECONDS = 600
 logger = logging.getLogger(__name__)
 
@@ -340,9 +341,15 @@ def _build_snapshot(
                 _search_coverage(frozen, base_conditions=conditions, base_params=params)
             )
             enter_stage("metadata")
+            members = _visible_members(frozen, access)
+            projects = sorted(_visible_projects(frozen, access))
+            ready = time.time()
             metadata = {
                 "created_at": datetime.fromtimestamp(created, UTC).isoformat(),
-                "expires_at": datetime.fromtimestamp(job.expires, UTC).isoformat(),
+                "ready_at": datetime.fromtimestamp(ready, UTC).isoformat(),
+                "expires_at": datetime.fromtimestamp(
+                    min(job.expires, ready + SNAPSHOT_TTL_SECONDS), UTC
+                ).isoformat(),
                 "index_generation": job.generation,
                 "normalization_version": NORMALIZATION_VERSION,
                 "index_versions": coverage["index_versions"],
@@ -359,9 +366,9 @@ def _build_snapshot(
                         {
                             "metadata": metadata,
                             "access": asdict(access),
-                            "members": _visible_members(frozen, access),
+                            "members": members,
                             "owner": owner,
-                            "projects": sorted(_visible_projects(frozen, access)),
+                            "projects": projects,
                         }
                     ),
                 ),
@@ -370,7 +377,8 @@ def _build_snapshot(
         enter_stage("publish")
         path = directory / f"{job.generation}.sqlite3"
         os.replace(temporary, path)
-        os.utime(path, (created, created))
+        # Cleanup must use the ready lifetime, not time consumed by preparation.
+        os.utime(path, (ready, ready))
         logger.info(
             "Evidence snapshot %s ready in %.3fs; stage timings=%s",
             job.generation,
@@ -425,7 +433,9 @@ def _new_snapshot(settings, directory, signer, *, auth_user, auth_enabled, owner
                 lock.close()
                 raise _building()
             generation = secrets.token_hex(24)
-            expires = now + SNAPSHOT_TTL_SECONDS
+            # Keep the signed ID stable while polling. This is an upper bound;
+            # the immutable ready metadata enforces the actual read expiration.
+            expires = now + SNAPSHOT_BUILD_TIMEOUT_SECONDS + SNAPSHOT_TTL_SECONDS
             snapshot_id = signer.dumps(
                 {
                     "type": "snapshot",
@@ -537,7 +547,7 @@ def evidence_snapshot(
                 _BUILDS.pop(key, None)
     with closing(connect(settings.database_path)) as live, closing(
         sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    ) as frozen:
+    ) as frozen, search_work_budget(live, frozen, generation=token["generation"]):
         current_access = build_project_access_context(
             live, auth_user=auth_user, auth_enabled=auth_enabled
         )
@@ -547,6 +557,11 @@ def evidence_snapshot(
                 0
             ]
         )
+        if (
+            datetime.fromisoformat(stored["metadata"]["expires_at"]).timestamp()
+            <= time.time()
+        ):
+            raise api_error(410, "snapshot_expired", "Snapshot expired")
         if stored["metadata"][
             "normalization_version"
         ] != NORMALIZATION_VERSION or stored["metadata"]["index_versions"] != {

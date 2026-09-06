@@ -25,6 +25,7 @@ from .repositories import (
     resolve_repository_id,
 )
 from .search_query import SEARCH_MODES, SearchQueryPlan, plan_search_query
+from .search_budget import mark_search_stage
 from .turn_index import SEARCH_CHUNK_VERSION, TURN_INDEX_VERSION, TURN_SEARCH_VERSION
 
 
@@ -565,6 +566,28 @@ def prepare_coverage_inventory(connection: sqlite3.Connection, *, persistent: bo
         """)
     finally:
         connection.execute("DROP TABLE IF EXISTS temp.evidence_indexed_turns")
+    prepare_coverage_catalog(connection, persistent=persistent)
+
+
+def prepare_coverage_catalog(connection: sqlite3.Connection, *, persistent: bool = False) -> None:
+    """Keep filtered coverage off wide session/turn records in frozen databases."""
+    table_type = "" if persistent else "TEMP"
+    connection.execute(f"""
+        CREATE {table_type} TABLE evidence_coverage_sessions AS
+        SELECT id, inferred_project_key, inferred_project_label, repository_id,
+               cwd, source_host, session_timestamp, started_at, imported_at,
+               last_turn_timestamp, turn_index_version, turn_search_version,
+               search_chunk_version, search_indexed_at, turn_count, import_warning
+        FROM sessions
+    """)
+    connection.execute("CREATE UNIQUE INDEX evidence_coverage_sessions_id ON evidence_coverage_sessions(id)")
+    connection.execute(f"""
+        CREATE {table_type} TABLE evidence_coverage_turns AS
+        SELECT session_id, turn_number, latest_timestamp, response_timestamp,
+               prompt_timestamp, start_event_index, end_event_index
+        FROM session_turns
+    """)
+    connection.execute("CREATE UNIQUE INDEX evidence_coverage_turns_id ON evidence_coverage_turns(session_id, turn_number)")
 
 
 def _search_coverage(
@@ -573,6 +596,7 @@ def _search_coverage(
     base_conditions: list[str],
     base_params: list[Any],
 ) -> dict[str, Any]:
+    mark_search_stage("coverage")
     # The builder already computed coverage for the frozen authorization scope.
     # Reuse it only for that exact scope: query text/fields do not narrow corpus
     # coverage, but project/date/exclusion filters and different ACLs do.
@@ -587,6 +611,13 @@ def _search_coverage(
         )
         if base_conditions == ([condition] if condition else []) and base_params == params:
             return stored["metadata"]["coverage"]
+
+    has_catalog = connection.execute("""
+        SELECT 1 FROM sqlite_master WHERE name = 'evidence_coverage_sessions'
+        UNION ALL SELECT 1 FROM sqlite_temp_master WHERE name = 'evidence_coverage_sessions'
+    """).fetchone() is not None
+    sessions_table = "evidence_coverage_sessions" if has_catalog else "sessions"
+    turns_table = "evidence_coverage_turns" if has_catalog else "session_turns"
 
     fully_indexed_sql = f"""
         COALESCE(s.turn_index_version, 0) >= {TURN_INDEX_VERSION}
@@ -646,8 +677,8 @@ def _search_coverage(
                     THEN s.id
                 END
             ) AS indexed_at_known_sessions
-        FROM sessions AS s
-        LEFT JOIN session_turns AS st ON s.id = st.session_id
+        FROM {sessions_table} AS s
+        LEFT JOIN {turns_table} AS st ON s.id = st.session_id
         LEFT JOIN project_overrides AS o
             ON o.match_project_key = s.inferred_project_key
         LEFT JOIN project_sources AS ps
@@ -695,8 +726,8 @@ def _search_coverage(
                    THEN 1 ELSE 0 END) AS missing_search,
                SUM(CASE WHEN st.turn_number IS NOT NULL AND NOT ({evidence_sql})
                    THEN 1 ELSE 0 END) AS missing_evidence
-        FROM sessions s
-        LEFT JOIN session_turns st ON st.session_id = s.id
+        FROM {sessions_table} s
+        LEFT JOIN {turns_table} st ON st.session_id = s.id
         LEFT JOIN indexed_turns ON indexed_turns.session_id = st.session_id
             AND indexed_turns.turn_number = st.turn_number
         LEFT JOIN indexed_sessions ON indexed_sessions.session_id = s.id
@@ -849,6 +880,7 @@ def _search_stage_counts(
     base_params: list[Any],
     match: SearchMatchSpec | None,
 ) -> tuple[int, int]:
+    mark_search_stage("retrieval_counts")
     with_clause = ""
     if match:
         with_clause = f"WITH {_matched_candidate_ctes(match, include_evidence=False)}"
@@ -904,6 +936,7 @@ def _search_facets(
     match: SearchMatchSpec | None,
     requested: tuple[str, ...],
 ) -> dict[str, list[dict[str, Any]]]:
+    mark_search_stage("facets")
     if not requested:
         return {}
     if match:
@@ -1171,6 +1204,7 @@ def _run_search_stage(
     coverage: dict[str, Any],
     facets: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
+    mark_search_stage("page_retrieval")
     normalized_page = max(int(page or 1), 1)
     pagination_total = session_count if group_by == "session" else total_count
     page_count = max((pagination_total + page_size - 1) // page_size, 1)

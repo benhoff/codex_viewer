@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import quote
@@ -37,6 +38,7 @@ from ...search_snapshots import (
     encode_cursor,
 )
 from ...turn_index import patch_line_ranges
+from ...search_budget import SearchWorkTimeout, mark_search_stage
 from ...session_view import build_turns, parse_timestamp
 from ..auth import require_authenticated_user
 from ..context import get_app_context
@@ -448,16 +450,28 @@ def _parse_turn_includes(value: str | None) -> set[str]:
     return includes
 
 
+@contextmanager
 def _snapshot(request, snapshot_id=None, cursor=None):
     if bool(getattr(request.state, "auth_enabled", False)):
         require_authenticated_user(request)
-    return evidence_snapshot(
-        get_app_context(request).settings,
-        auth_user=getattr(request.state, "auth_user", None),
-        auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
-        snapshot_id=snapshot_id,
-        cursor=cursor,
-    )
+    try:
+        with evidence_snapshot(
+            get_app_context(request).settings,
+            auth_user=getattr(request.state, "auth_user", None),
+            auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
+            snapshot_id=snapshot_id,
+            cursor=cursor,
+        ) as snapshot:
+            yield snapshot
+    except SearchWorkTimeout as exc:
+        raise api_error(
+            503,
+            "query_timeout",
+            "Search work budget exceeded; narrow the query or reduce the requested hits",
+            stage=exc.stage,
+            elapsed_seconds=exc.elapsed_seconds,
+            budget_seconds=exc.budget_seconds,
+        ) from exc
 
 
 def _normalized_query(query):
@@ -503,6 +517,7 @@ def _normalized_query(query):
 
 
 def _load_turn(connection, session, row):
+    mark_search_stage("evidence_reconstruction")
     number = int(row["turn_number"])
     events = _turn_events(
         connection,
@@ -519,11 +534,13 @@ def _load_turn(connection, session, row):
         raise api_error(
             409, "incomplete_index", "Indexed turn has no reconstructable evidence"
         )
+    mark_search_stage("evidence_serialization")
     payload = _serialize_turn(
         turns[0], target_turn_number=number, include_activity=True
     )
     # Evidence identity is independent of selection/context and HTTP presentation.
     canonical = {key: value for key, value in payload.items() if key != "is_target"}
+    mark_search_stage("evidence_digest")
     identity = digest(
         {"normalization_version": NORMALIZATION_VERSION, "turn": canonical}
     )
@@ -544,14 +561,29 @@ def _load_turn(connection, session, row):
 
 
 def _hit_identity(connection, hit, cache):
+    mark_search_stage("hit_identity")
     key = (hit["session_id"], hit["turn_number"])
     if key not in cache:
-        session = fetch_session_with_project(connection, key[0])
+        # The search already enforced visibility. Reconstruction needs only the
+        # identity and cwd, not the session's potentially huge captured body.
+        session = connection.execute(
+            "SELECT id, cwd FROM sessions WHERE id = ?", (key[0],)
+        ).fetchone()
         row = connection.execute(
-            "SELECT * FROM session_turns WHERE session_id = ? AND turn_number = ?",
+            "SELECT turn_number, start_event_index, end_event_index FROM session_turns "
+            "WHERE session_id = ? AND turn_number = ?",
             key,
         ).fetchone()
-        cache[key] = _load_turn(connection, session, row)
+        turn = _load_turn(connection, session, row)
+        cache[key] = {
+            name: turn[name]
+            for name in (
+                "content_digest",
+                "normalization_version",
+                "content_version",
+                "activity_digest",
+            )
+        }
     turn = cache[key]
     for name in (
         "content_digest",
@@ -561,9 +593,11 @@ def _hit_identity(connection, hit, cache):
     ):
         hit[name] = turn[name]
     if hit.get("matched_field") == "patches" and hit.get("chunk"):
+        mark_search_stage("patch_lookup")
         chunk = hit["chunk"]
         record = connection.execute(
-            "SELECT content FROM session_search_chunk_fts WHERE chunk_id = ?",
+            "SELECT f.content FROM session_search_chunks c "
+            "JOIN session_search_chunk_fts f ON f.rowid = c.rowid WHERE c.chunk_id = ?",
             (chunk["id"],),
         ).fetchone()
         if record:
@@ -574,7 +608,9 @@ def _hit_identity(connection, hit, cache):
                 chunk["lines"][0]["kind"] = "unknown"
 
 
-def _execute_query(connection, access, snapshot, signer, query, cursor=None):
+def _execute_query(
+    connection, access, snapshot, signer, query, cursor=None, *, evidence_cache=None
+):
     normalized = _normalized_query(query)
     fingerprint = digest(normalized)
     page = cursor_page(cursor, fingerprint)
@@ -634,12 +670,13 @@ def _execute_query(connection, access, snapshot, signer, query, cursor=None):
         }
     )
     payload["filters"]["exclude_session_id"] = normalized["exclude_session_id"]
-    cache = {}
+    cache = evidence_cache if evidence_cache is not None else {}
     for hit in payload["hits"]:
         _hit_identity(connection, hit, cache)
     for group in payload["groups"]:
         for hit in group["hits"]:
             _hit_identity(connection, hit, cache)
+    mark_search_stage("response")
     return payload
 
 
@@ -724,10 +761,18 @@ def search_batch_api(request: Request, body: BatchSearchRequest) -> JSONResponse
         signer,
         _,
     ):
+        evidence_cache = {}
         results = [
             {
                 "id": query.id,
-                **_execute_query(connection, access, snapshot, signer, query),
+                **_execute_query(
+                    connection,
+                    access,
+                    snapshot,
+                    signer,
+                    query,
+                    evidence_cache=evidence_cache,
+                ),
             }
             for query in body.queries
         ]
