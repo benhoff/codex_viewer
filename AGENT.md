@@ -190,6 +190,7 @@ Viewers can:
 
 - view dashboards, projects, sessions, exports, streams, environment audits, and machines
 - use their own review queue
+- create and export their own task assessment revisions for sessions they can read
 - create and revoke their own personal search API tokens
 - change their own local password if they are a local password user
 
@@ -284,6 +285,13 @@ Current v1 rule:
 Even if a user has project role `editor`, the app does not yet delegate regrouping or canonical identity changes to them.
 
 ## Personal State
+
+Task assessment revisions use the same personal owner scope as the review queue.
+They are immutable snapshots of a selected turn range, its evidence, cost policy,
+and human judgments. Every assessment page, save, historical revision, and export
+rechecks project access and owner scope. A viewer can edit their own assessment's
+cost policy; this does not modify install-wide settings. See
+[the task assessment specification](docs/task-assessment-spec.md).
 
 The review queue is personal when auth is enabled.
 

@@ -554,6 +554,7 @@
                     >
                       {% if saved_turn_status == 'open' %}Saved{% elif saved_turn_status == 'resolved' %}Resolved{% endif %}
                     </span>
+                    <a href="{{ request.url.path }}/assessment?start_turn={{ turn.number }}&end_turn={{ turn.number }}" class="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-sm font-semibold text-stone-700 hover:bg-stone-100">Assess task</a>
                     {% if turn.prompt_timestamp %}
                       <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ turn.prompt_timestamp|full_timestamp }}">{{ turn.prompt_timestamp|humanize_timestamp }}</p>
                     {% endif %}

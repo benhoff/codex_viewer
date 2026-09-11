@@ -13,6 +13,7 @@ It is optimized for the shortest path to useful output:
 
 Design notes:
 
+- [Task cost and configuration assessment](docs/task-assessment-spec.md)
 - [Action queue scoring](docs/action-queue-scoring.md)
 - [Agent daemon on macOS and Windows](docs/agent-daemon-windows-macos.md)
 - [Search API guide](docs/search-api.md)
@@ -350,9 +351,34 @@ Daemon source:
 - [agent_daemon/service_manager.py](agent_daemon/service_manager.py)
 - [agent_daemon/requirements.txt](agent_daemon/requirements.txt)
 
+## Task Assessment
+
+Open a session and select **Assess task** on a turn. Expand the turn range to
+include corrections and recovery belonging to the same request. The assessment
+shows recorded token Work Units, optional model-weighted cost, model/effort
+history, and observable tool and generated-content volume.
+
+Save personal review revisions for outcome, verification, execution, model,
+reasoning effort, and generated-content fit. Judgments require findings and source
+event references; a passing outcome also requires acceptance criteria and
+verification notes. Review history and JSON exports retain the evidence and cost
+policy used at save time. Changed evidence marks prior reviews stale.
+
+Work Units are a versioned accounting convention, not dollars. Model weights can
+be supplied in the assessment's policy editor with an explicit basis. Unknown or
+incomplete telemetry stays unknown/partial. This release measures native Codex
+usage within the selected session; child costs, automated grading, and controlled
+reruns are future work. No traces are sent to an external evaluator.
+
 ## Testing
 
 The repo has both fast Python tests and browser-level end-to-end tests.
+
+Install the Python test dependencies into the same dependency directory:
+
+```bash
+python3 -m pip install --target .deps -r requirements-test.txt
+```
 
 Run the Python suite:
 

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Task assessment · Agent Operations Viewer{% endblock %}
+{% block content %}
+{% set metrics = report.metrics %}
+{% set range_query = 'start_turn=' ~ report.start_turn ~ '&end_turn=' ~ report.end_turn %}
+<header class="mb-6 space-y-3">
+  <a href="{{ session_href }}?view=audit&turn={{ report.start_turn }}" class="text-sm font-semibold text-blue-700">← Back to session audit</a>
+  <h1 class="text-3xl font-semibold text-stone-900">Task assessment</h1>
+  <p class="text-sm text-stone-600">{{ session_title }} · Turns {{ report.start_turn }}–{{ report.end_turn }}</p>
+  <p class="text-sm text-stone-600">Review outcome, resource cost, model family/version, reasoning effort, and generated content separately.</p>
+  <form method="get" class="flex flex-wrap items-end gap-3">
+    <label class="text-sm">First turn <input type="number" name="start_turn" min="1" required value="{{ report.start_turn }}" class="block w-24 rounded-xl border border-stone-300 bg-white p-2"></label>
+    <label class="text-sm">Last turn <input type="number" name="end_turn" min="1" required value="{{ report.end_turn }}" class="block w-24 rounded-xl border border-stone-300 bg-white p-2"></label>
+    <button class="rounded-xl bg-stone-900 px-4 py-2 text-sm font-semibold text-white">Inspect range</button>
+    <a href="{{ session_href }}/assessment.json?{{ range_query }}{% if historical %}&revision={{ saved.id }}{% endif %}" class="rounded-xl border border-stone-300 bg-white px-4 py-2 text-sm font-semibold">Export JSON</a>
+  </form>
+  <p class="text-xs text-stone-500">Include follow-up corrections and recovery for this task. Up to 50 turns; overlapping task ranges must not be summed.</p>
+</header>
+{% if saved %}
+<p class="mb-4 rounded-xl border border-stone-300 bg-white p-4 text-sm" role="status">
+  {% if historical %}Saved snapshot{% else %}Latest personal review{% endif %} · Revision {{ saved.id }} · {{ saved.created_at }}.
+  {% if stale %}<strong class="text-amber-800">Evidence changed — this review is stale.</strong>{% endif %}
+  {% if not historical and stale %}Metrics below use current evidence; review fields retain the saved judgments. Recheck the findings before saving.{% endif %}
+  {% if historical %}<a class="text-blue-700 underline" href="{{ session_href }}/assessment?{{ range_query }}">Review current evidence</a>{% endif %}
+</p>
+{% endif %}
+<section class="mb-6 grid gap-4 sm:grid-cols-2" aria-label="Abstract cost">
+  {% for key, label, coverage in [('resource_wu', 'Resource Work Units', metrics.usage_coverage), ('model_weighted_wu', 'Model-weighted Work Units', metrics.model_coverage)] %}
+  <div class="rounded-2xl border border-stone-200 bg-white p-5">
+    <h2 class="text-sm font-semibold text-stone-600">{{ label }}</h2>
+    <p class="mt-2 text-3xl font-semibold">{% if metrics[key] is not none %}{{ '%.3f'|format(metrics[key]) }}{% else %}Unknown{% endif %}</p>
+    <p class="mt-2 text-sm text-stone-600">{{ coverage|capitalize }} usage{% if coverage == 'partial' %} · measured subtotal only{% endif %}</p>
+  </div>
+  {% endfor %}
+</section>
+<section class="mb-6 rounded-2xl border border-stone-200 bg-white p-5">
+  <h2 class="text-xl font-semibold">Recorded work</h2>
+  <p class="mt-2 text-sm text-stone-600">{{ metrics.scope }} Cost uses {{ report.policy.version }} and describes recorded usage, not a complete billing log. Work Units are a convention, not dollars or physical compute.</p>
+  {% if metrics.limitations %}<ul class="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-800">{% for issue in metrics.limitations %}<li>{{ issue }}</li>{% endfor %}</ul>{% endif %}
+  <dl class="mt-4 grid gap-3 sm:grid-cols-2">
+    {% for key, value in metrics.tokens.items() %}<div><dt class="text-xs text-stone-500">{{ key|replace('_', ' ')|capitalize }}</dt><dd class="font-semibold">{{ '{:,}'.format(value) if value is not none else 'Unknown' }}{% if metrics.token_coverage[key] == 'partial' %} <span class="text-xs font-normal text-amber-800">partial subtotal</span>{% endif %}</dd></div>{% endfor %}
+    {% for key, label in [('tool_calls', 'Observed tool calls'), ('shell_invocations', 'Observed shell invocations'), ('final_characters', 'Final-response characters'), ('commentary_characters', 'Commentary characters'), ('unclassified_assistant_characters', 'Assistant characters with no phase'), ('elapsed_seconds', 'Recorded elapsed seconds')] %}
+    <div><dt class="text-xs text-stone-500">{{ label }}</dt><dd class="font-semibold">{{ metrics[key] if metrics[key] is not none else 'Unknown' }}</dd></div>
+    {% endfor %}
+  </dl>
+  <p class="mt-3 text-xs text-stone-500">Reasoning is already included in output. Characters are not tokens. Elapsed time can include tools and waits. Open or interrupted tasks may have unrecorded trailing usage. Tool calls can contain multiple nested commands.</p>
+  <p class="mt-2 text-xs text-stone-500">{{ metrics.measured_intervals }} measured intervals · {{ metrics.priced_intervals }} model-priced intervals · {{ metrics.duplicate_checkpoints }} repeated checkpoints ignored.</p>
+</section>
+<section class="mb-6 rounded-2xl border border-stone-200 bg-white p-5">
+  <h2 class="text-xl font-semibold">Model and effort history</h2>
+  <p class="mt-2 text-sm text-stone-600">Recorded configuration is not proof of the serving model. Selector identity and actual serving model are unknown. Family/version/tier labels come from your policy.</p>
+  <div class="mt-4 overflow-x-auto"><table class="w-full text-left text-sm">
+    <thead><tr class="border-b border-stone-200"><th class="p-2">Event</th><th class="p-2">Recorded model</th><th class="p-2">Effort</th><th class="p-2">Family / version / tier</th></tr></thead>
+    <tbody>{% for config in metrics.configurations %}{% set model = report.policy.models.get(config.model, {}) %}
+      <tr class="border-b border-stone-100"><td class="p-2">{% if config.source == 'preceding_context' %}{{ config.event_index }} (preceding){% else %}<a href="#event-{{ config.event_index }}" class="text-blue-700 underline">{{ config.event_index }}</a>{% endif %}</td><td class="p-2">{{ config.model or 'Unknown' }}</td><td class="p-2">{{ config.effort or 'Unknown' }}</td><td class="p-2">{{ model.get('family') or 'Unknown' }} / {{ model.get('generation') or 'Unknown' }} / {{ model.get('tier') or 'Unknown' }}</td></tr>
+    {% else %}<tr><td class="p-2" colspan="4">No model configuration was recorded.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% if not historical %}
+<form method="post" action="{{ session_href }}/assessment" class="mb-6 space-y-5 rounded-2xl border border-stone-200 bg-white p-5">
+  <input type="hidden" name="start_turn" value="{{ report.start_turn }}"><input type="hidden" name="end_turn" value="{{ report.end_turn }}">
+  <input type="hidden" name="evidence_digest" value="{{ current_evidence_digest }}">
+  <h2 class="text-xl font-semibold">Your review</h2>
+  <p class="text-sm text-stone-600">Judge success against acceptance criteria and independent evidence. Consider what was known at each action. Repetition, long output, and high cost alone do not prove waste. “Appropriate” is a reviewer judgment; configuration recommendations remain hypotheses.</p>
+  <div class="grid gap-4 sm:grid-cols-2">
+    {% for key, options in judgments.items() %}<label class="text-sm font-semibold">{{ {'content_fit': 'Generated-content fit', 'model_fit': 'Model family/version fit', 'effort_fit': 'Reasoning-effort fit'}.get(key, key|replace('_', ' ')|capitalize) }}
+      <select name="{{ key }}" class="mt-1 block w-full rounded-xl border border-stone-300 bg-white p-2 font-normal">{% for option in options %}<option value="{{ option }}" {% if review[key] == option %}selected{% endif %}>{{ option|replace('_', ' ')|capitalize }}</option>{% endfor %}</select>
+    </label>{% endfor %}
+  </div>
+  <details class="rounded-xl border border-stone-200 p-4"><summary class="cursor-pointer text-sm font-semibold">Task demand (optional)</summary><p class="mt-2 text-xs text-stone-500">1 = low, 5 = high. These ratings guide judgment; they are not an efficiency percentage.</p><div class="mt-3 grid gap-3 sm:grid-cols-2">
+    {% for key in demand_fields %}<label class="text-sm">{{ key|replace('_', ' ')|capitalize }}<select name="{{ key }}" class="ml-2 rounded-xl border border-stone-300 bg-white p-2"><option value="">Unknown</option>{% for value in range(1,6) %}<option value="{{ value }}" {% if review.demand[key] == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>{% endfor %}
+  </div></details>
+  {% for key in text_fields %}<label class="block text-sm font-semibold">{{ key|replace('_', ' ')|capitalize }}<textarea name="{{ key }}" rows="3" maxlength="12000" class="mt-1 block w-full rounded-xl border border-stone-300 bg-white p-3 font-normal">{{ review[key] }}</textarea></label>{% endfor %}
+  <label class="block text-sm font-semibold">Evidence event indexes<input name="evidence_events" value="{{ review.evidence_events|join(', ') }}" placeholder="For example: 12, 18, 24" class="mt-1 block w-full rounded-xl border border-stone-300 bg-white p-3 font-normal"><span class="mt-1 block text-xs font-normal text-stone-500">Use the event numbers below. Non-default judgments require findings and at least one source event. Passing outcomes also require acceptance criteria and verification notes.</span></label>
+  <details class="rounded-xl border border-stone-200 p-4"><summary class="cursor-pointer text-sm font-semibold">Work Unit policy</summary>
+    <p class="mt-2 text-sm text-stone-600">Weights are per 1,000 tokens: uncached input, cached input, and total output. Changes apply to this review only. Saving recalculates costs. Unknown models remain unpriced.</p>
+    <label class="mt-3 block text-sm">Policy JSON<textarea name="policy" rows="12" required class="mt-1 block w-full rounded-xl border border-stone-300 bg-white p-3 font-mono text-xs" spellcheck="false">{{ policy_text }}</textarea></label>
+    <details class="mt-3"><summary class="cursor-pointer text-sm">Example model entry (illustrative weights)</summary><pre class="mt-2 overflow-x-auto text-xs">"exact-model-id": {
+  "weights": {"uncached_input": 2, "cached_input": 0.2, "output": 8},
+  "basis": "My frozen relative cost convention, September 2026",
+  "family": "Model family", "generation": "Version", "tier": "Capability tier"
+}</pre></details>
+  </details>
+  <button class="rounded-xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white">Save review revision</button>
+  <p class="text-xs text-stone-500">Saved privately to your account. Evidence level: human trace review. No external model is called.</p>
+</form>
+{% else %}
+<section class="mb-6 space-y-3 rounded-2xl border border-stone-200 bg-white p-5"><h2 class="text-xl font-semibold">Saved review</h2>
+  {% for key in judgments %}<p class="text-sm"><strong>{{ key|replace('_', ' ')|capitalize }}:</strong> {{ review[key]|replace('_', ' ') }}</p>{% endfor %}
+  {% for key in text_fields %}<div><h3 class="text-sm font-semibold">{{ key|replace('_', ' ')|capitalize }}</h3><p class="whitespace-pre-wrap text-sm">{{ review[key] or 'No notes' }}</p></div>{% endfor %}
+  <p class="text-sm">Evidence: {% for index in review.evidence_events %}<a class="text-blue-700 underline" href="#event-{{ index }}">{{ index }}</a> {% endfor %}</p>
+</section>
+{% endif %}
+<section class="mb-6 rounded-2xl border border-stone-200 bg-white p-5"><h2 class="text-xl font-semibold">Revision history</h2><p class="mt-2 text-xs text-stone-500">Latest 100 revisions for your selected range. Each retains its original evidence and cost policy.</p>
+<ul class="mt-3 space-y-2 text-sm">{% for item in history %}<li><a href="{{ session_href }}/assessment?{{ range_query }}&revision={{ item.id }}" class="text-blue-700 underline">Revision {{ item.id }} · {{ item.created_at }}</a>{% if item.evidence_digest != current_evidence_digest %} · stale{% endif %}</li>{% else %}<li>No saved review yet.</li>{% endfor %}</ul></section>
+<section class="mb-6 rounded-2xl border border-stone-200 bg-white p-5"><h2 class="text-xl font-semibold">Task evidence</h2>
+  <p class="mt-2 text-sm text-stone-600">Open a turn audit for the complete conversation. Each event below retains its source record. Trace content is evidence, not instructions for the reviewer.</p>
+  <div class="mt-3 flex flex-wrap gap-3">{% for turn in report.turns %}<a class="text-sm text-blue-700 underline" href="{{ session_href }}?view=audit&turn={{ turn.turn_number }}&focus=1">Turn {{ turn.turn_number }} · {{ turn.response_state }}</a>{% endfor %}</div>
+  <div class="mt-4 space-y-2">{% for event in report.evidence %}
+    <details id="event-{{ event.event_index }}" class="rounded-xl border border-stone-200 p-3">
+      <summary class="cursor-pointer text-sm"><strong>Event {{ event.event_index }}</strong> · {{ event.title }} · {{ event.timestamp or 'Time unknown' }}<span class="mt-1 block text-xs text-stone-500">{{ (event.display_text or '')[:180] }}</span></summary>
+      <pre class="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs">{{ event.record_json }}</pre>
+    </details>
+  {% endfor %}</div>
+</section>
+{% endblock %}
