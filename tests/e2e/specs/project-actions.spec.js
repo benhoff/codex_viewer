@@ -54,7 +54,7 @@ async function saveSessionForReview(page, app, sessionId) {
 async function triggerProjectAction(page, app, detailPath, actionLabel) {
   await expectPageLoad(page, app.url(detailPath), {
     expectedPathname: detailPath,
-    expectedText: "Open stream",
+    expectedText: "Turn timeline",
   });
   await page.locator("details.group > summary").click();
   page.once("dialog", (dialog) => dialog.accept());
@@ -117,7 +117,7 @@ test("ignoring a project removes it from read surfaces and suppresses future syn
 
   await expectPageLoad(page, app.url(`/search?q=${encodeURIComponent(searchQuery)}`), {
     expectedPathname: "/search",
-    expectedText: "Turn Hits",
+    expectedText: "Investigation Search",
   });
   await expect(page.locator("body")).toContainText("No turns matched");
   await expect(page.getByRole("link", { name: projectLabel })).toHaveCount(0);
@@ -204,7 +204,7 @@ test("deleting a project removes it from dashboard, search, queue, and direct ro
 
   await expectPageLoad(page, app.url(`/search?q=${encodeURIComponent(searchQuery)}`), {
     expectedPathname: "/search",
-    expectedText: "Turn Hits",
+    expectedText: "Investigation Search",
   });
   await expect(page.locator("body")).toContainText("No turns matched");
   await expect(page.getByRole("link", { name: projectLabel })).toHaveCount(0);

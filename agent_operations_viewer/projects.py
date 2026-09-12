@@ -101,6 +101,8 @@ GROUP_KEY_MATCH_SQL = """
 
 TURN_STREAM_SELECT = f"""
     st.session_id,
+    s.summary,
+    s.last_user_message,
     st.turn_number,
     st.prompt_excerpt,
     st.prompt_timestamp,
@@ -1819,6 +1821,7 @@ def fetch_turn_stream(
         items.append(
             {
                 "session_id": str(row["session_id"]),
+                "session_title": _project_session_preview_title(row["summary"], row["last_user_message"]),
                 "turn_number": int(row["turn_number"] or 0),
                 "timestamp": timestamp,
                 "prompt_excerpt": trimmed(row["prompt_excerpt"]) or "No prompt excerpt",

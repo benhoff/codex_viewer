@@ -240,3 +240,43 @@
     font-style: italic;
   }
 }
+
+@layer components {
+  .project-turn {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.5rem;
+    padding: 1.25rem 0;
+    border-top: 1px solid var(--cv-border);
+  }
+
+  .project-turn-time {
+    color: var(--cv-text-muted);
+    font-size: 0.75rem;
+    line-height: 1.5rem;
+  }
+
+  .project-turn-title,
+  .project-turn-response {
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  .project-view a:focus-visible,
+  .project-view summary:focus-visible,
+  .project-view button:focus-visible {
+    outline: 2px solid var(--cv-accent);
+    outline-offset: 3px;
+    border-radius: 0.25rem;
+  }
+
+  @media (min-width: 640px) {
+    .project-turn {
+      grid-template-columns: 7rem minmax(0, 1fr);
+      gap: 1.5rem;
+    }
+  }
+}

@@ -3,371 +3,127 @@
 {% block title %}{{ group.display_label }} | Agent Operations Viewer{% endblock %}
 
 {% block content %}
-  {% set primary_blocker = project_action_groups[0] if project_action_groups else none %}
-  {% set primary_latest_audit_href = primary_blocker.latest_session_href if primary_blocker and primary_blocker.latest_session_href else '' %}
-  {% set canonical_repo_label = (group.organization ~ '/' ~ group.repository) if group.organization and group.repository else '' %}
-  {% set recent_turns = stream_preview["items"] %}
-  {% set recent_turns_preview = recent_turns[:5] %}
-  {% set recent_turns_remaining = recent_turns[5:] %}
-  <div class="mx-auto w-full max-w-7xl">
-    <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.35)] backdrop-blur sm:p-6">
-      <p class="text-[0.76rem] font-semibold uppercase tracking-[0.2em] text-stone-500" title="{{ group.latest_timestamp|full_timestamp }}">{{ group.latest_timestamp|humanize_timestamp }}</p>
-      <div class="mt-3 flex flex-wrap items-start justify-between gap-4">
-        <div class="min-w-0 flex-1">
-          <h1 class="font-display text-3xl leading-tight text-stone-900 sm:text-4xl lg:text-[2.8rem]">{{ group.display_label }}</h1>
-          {% if canonical_repo_label and canonical_repo_label != group.display_label and canonical_repo_label != group.display_label|replace(' / ', '/') %}
-            <div class="mt-2 flex flex-wrap items-center gap-2 text-sm leading-6 text-stone-600 sm:text-base">
-              <span>{{ canonical_repo_label }}</span>
-              {% if group.visibility == 'private' %}
-                <span class="rounded-full bg-amber-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-amber-800">Private</span>
-              {% endif %}
-            </div>
-          {% elif group.visibility == 'private' %}
-            <div class="mt-2 flex flex-wrap items-center gap-2 text-sm leading-6 text-stone-600 sm:text-base">
-              <span class="rounded-full bg-amber-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-amber-800">Private</span>
-            </div>
-          {% endif %}
-
-          <div class="mt-4 flex flex-wrap items-center gap-2">
+  <div class="project-view mx-auto w-full max-w-5xl">
+    <header class="mb-6">
+      <a href="/" class="text-sm text-stone-500 hover:text-stone-900">Projects</a>
+      <div class="mt-3 flex items-start justify-between gap-4">
+        <div class="min-w-0">
+          <h1 class="break-words text-2xl font-semibold text-stone-900 sm:text-3xl">{{ group.display_label }}</h1>
+          <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-stone-500">
+            {% if group.visibility == 'private' %}<span>Private</span><span aria-hidden="true">·</span>{% endif %}
             {% if status_strip.last_activity_at %}
-              <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">
-                Last active {{ status_strip.last_activity_at|humanize_timestamp }}
-              </span>
+              <span title="{{ status_strip.last_activity_at|full_timestamp }}">Last active {{ status_strip.last_activity_at|humanize_timestamp }}</span>
+              <span aria-hidden="true">·</span>
             {% endif %}
-            {% if status_strip.last_host %}
-              <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">
-                {{ status_strip.last_host }}
-              </span>
-            {% endif %}
-            <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-700">
-              {{ status_strip.recent_turn_count }} turns / 7d
-            </span>
+            <span>{{ host_summaries|length }} host{% if host_summaries|length != 1 %}s{% endif %}</span>
             {% if queue_counts.open %}
-              <a href="{{ queue_href }}" class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-amber-800 transition hover:border-amber-300 hover:bg-amber-100">
-                {{ queue_counts.open }} in queue
-              </a>
+              <span aria-hidden="true">·</span><a href="{{ queue_href }}" class="text-blue-700 hover:underline">{{ queue_counts.open }} saved for review</a>
             {% endif %}
-          </div>
+          </p>
         </div>
-
-        <div class="flex flex-wrap items-center gap-2 sm:justify-end">
-          <a href="{{ stream_href }}" class="inline-flex items-center rounded-full border border-stone-900 bg-stone-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-stone-800">
-            Open stream
-          </a>
-          <a href="{{ files_href }}" class="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-800 transition hover:border-violet-300 hover:bg-violet-100">
-            Changed files
-          </a>
-          {% if primary_latest_audit_href %}
-            <a href="{{ primary_latest_audit_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-white">
-              Latest audit
-            </a>
-          {% endif %}
-          <a href="{{ environment_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-white">
-            Environment
-          </a>
-          {% if can_manage_project_acl %}
-            <a href="{{ edit_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-white">
-              Edit
-            </a>
-            <details class="group relative">
-              <summary class="list-none">
-                <span class="inline-flex cursor-pointer items-center rounded-full border border-stone-900/10 bg-white/90 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-white">
-                  Admin
-                </span>
-              </summary>
-              <div class="absolute right-0 z-20 mt-2 flex min-w-[10rem] flex-wrap gap-2 rounded-[1rem] border border-stone-200 bg-white/95 p-3 shadow-[0_18px_45px_-30px_rgba(41,37,36,0.24)]">
-                <form method="post" action="/projects/actions" onsubmit="return confirm('Ignore this project, delete existing imported sessions, and suppress future sync imports for these project keys?');">
-                  <input type="hidden" name="group_key" value="{{ group.key }}">
-                  <input type="hidden" name="action" value="ignore">
-                  <input type="hidden" name="return_to" value="/">
-                  <button type="submit" class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-100">
-                    Ignore
-                  </button>
-                </form>
-                <form method="post" action="/projects/actions" onsubmit="return confirm('Delete this project and all imported sessions from the viewer?');">
-                  <input type="hidden" name="group_key" value="{{ group.key }}">
-                  <input type="hidden" name="action" value="delete">
-                  <input type="hidden" name="return_to" value="/">
-                  <button type="submit" class="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-100">
-                    Delete
-                  </button>
-                </form>
-              </div>
-            </details>
-          {% endif %}
-        </div>
+        {% if can_manage_project_acl %}
+          <details class="group relative shrink-0">
+            <summary class="cursor-pointer list-none rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-600 hover:bg-stone-50" aria-label="Project menu">Project <span aria-hidden="true">▾</span></summary>
+            <div class="absolute right-0 z-20 mt-2 w-48 rounded-xl border border-stone-200 bg-white p-2 shadow-lg">
+              <a href="{{ edit_href }}" class="block rounded-lg px-3 py-2 text-sm text-stone-700 hover:bg-stone-50">Edit project</a>
+              <div class="my-1 border-t border-stone-100"></div>
+              <form method="post" action="/projects/actions" onsubmit="return confirm('Ignore this project, delete existing imported sessions, and suppress future sync imports for these project keys?');">
+                <input type="hidden" name="group_key" value="{{ group.key }}">
+                <input type="hidden" name="action" value="ignore">
+                <input type="hidden" name="return_to" value="/">
+                <button type="submit" class="block w-full rounded-lg px-3 py-2 text-left text-sm text-stone-700 hover:bg-stone-50">Ignore</button>
+              </form>
+              <form method="post" action="/projects/actions" onsubmit="return confirm('Delete this project and all imported sessions from the viewer?');">
+                <input type="hidden" name="group_key" value="{{ group.key }}">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="return_to" value="/">
+                <button type="submit" class="block w-full rounded-lg px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50">Delete</button>
+              </form>
+            </div>
+          </details>
+        {% endif %}
       </div>
+      <nav aria-label="Project views" class="mt-5 flex flex-wrap gap-x-6 gap-y-2 border-b border-stone-200 text-sm">
+        <a href="{{ group.detail_href }}" {% if project_view == 'activity' %}aria-current="page"{% endif %} class="border-b-2 pb-3 {% if project_view == 'activity' %}border-blue-600 font-semibold text-blue-700{% else %}border-transparent text-stone-500 hover:text-stone-900{% endif %}">Activity</a>
+        <a href="{{ group.detail_href }}?view=sessions" {% if project_view == 'sessions' %}aria-current="page"{% endif %} class="border-b-2 pb-3 {% if project_view == 'sessions' %}border-blue-600 font-semibold text-blue-700{% else %}border-transparent text-stone-500 hover:text-stone-900{% endif %}">Sessions</a>
+        <a href="{{ files_href }}" class="border-b-2 border-transparent pb-3 text-stone-500 hover:text-stone-900">Files</a>
+        <a href="{{ environment_href }}" class="border-b-2 border-transparent pb-3 text-stone-500 hover:text-stone-900">Environment</a>
+      </nav>
+    </header>
 
-    </section>
-
-    <section class="mb-8 grid gap-6 xl:grid-cols-[minmax(0,1.35fr),minmax(19rem,0.65fr)]">
-      <div class="min-w-0 rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
-        <div class="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Recent Turns</h2>
-            <p class="mt-1 text-sm text-stone-600">The newest work across this project, sorted by time instead of session.</p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-700">
-              {{ recent_turns_preview|length }} shown{% if stream_preview["total_count"] > recent_turns_preview|length %} of {{ stream_preview["total_count"] }}{% endif %}
-            </span>
-            <a href="{{ stream_href }}" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
-              Open full stream
-            </a>
-          </div>
+    {% if project_view == 'sessions' %}
+      <section aria-labelledby="sessions-heading" class="rounded-xl border border-stone-200 bg-white px-4 sm:px-6">
+        <h2 id="sessions-heading" class="py-5 text-lg font-semibold text-stone-900">Sessions</h2>
+        <div class="divide-y divide-stone-100">
+          {% for session in all_sessions_page["items"] %}
+            <article class="py-5">
+              <h3 class="break-words text-base font-semibold"><a href="{{ session.href }}" class="text-stone-900 hover:text-blue-700 hover:underline">{{ session.display_title }}</a></h3>
+              {% if session.display_detail %}<p class="mt-1 break-words text-sm text-stone-600">{{ session.display_detail }}</p>{% endif %}
+              {% set session_when = session.last_turn_timestamp or session.session_timestamp %}
+              <p class="mt-2 text-sm text-stone-500">{{ session.host }} · {{ session.turn_count }} turns{% if session_when %} · <span title="{{ session_when|full_timestamp }}">{{ session_when|humanize_timestamp }}</span>{% endif %}</p>
+            </article>
+          {% else %}
+            <p class="pb-6 text-sm text-stone-500">No sessions are available for this project yet.</p>
+          {% endfor %}
         </div>
-
-        {% if recent_turns %}
-          <div class="mt-5 space-y-3">
-            {% for item in recent_turns_preview %}
-              <article class="rounded-[1.2rem] border border-stone-200 bg-stone-50/80 p-4 transition hover:border-stone-300 hover:bg-white">
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                  <div class="min-w-0 flex-1">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.host }}</span>
-                      <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">Turn {{ item.turn_number }}</span>
-                      <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% elif item.status_tone == 'sky' %}bg-sky-100 text-sky-800{% else %}bg-emerald-100 text-emerald-800{% endif %}">
-                        {{ item.status_label }}
-                      </span>
-                      {% for badge in item.signal_badges[:2] %}
-                        <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
-                          {{ badge.label }}
-                        </span>
-                      {% endfor %}
-                    </div>
-                    <p class="mt-3 text-sm font-semibold leading-6 text-stone-900">{{ item.prompt_excerpt }}</p>
-                    <p class="mt-2 break-words text-sm leading-6 text-stone-600">{{ item.response_excerpt }}</p>
-                  </div>
-                  <div class="flex min-w-[10rem] flex-col items-start gap-2 sm:items-end">
-                    {% if item.timestamp %}
-                      <span class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>
-                    {% endif %}
-                    <div class="flex flex-wrap gap-2 sm:justify-end">
-                      <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-white">
-                        Open session
-                      </a>
-                      <a href="{{ item.audit_href }}" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
-                        Open audit
-                      </a>
-                    </div>
-                  </div>
-                </div>
-                <div class="mt-3 flex flex-wrap gap-2">
-                  <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.command_count }} commands</span>
-                  <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.patch_count }} patches</span>
-                  <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.files_touched_count }} files</span>
-                </div>
-              </article>
-            {% endfor %}
-          </div>
-          {% if recent_turns_remaining %}
-            <details class="mt-4 rounded-[1rem] border border-stone-200/80 bg-stone-50/70">
-              <summary class="cursor-pointer list-none px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700">
-                Show {{ recent_turns_remaining|length }} more recent turn{% if recent_turns_remaining|length != 1 %}s{% endif %}
-              </summary>
-              <div class="space-y-3 border-t border-stone-200/80 px-4 py-4">
-                {% for item in recent_turns_remaining %}
-                  <article class="rounded-[1.2rem] border border-stone-200 bg-white/90 p-4 transition hover:border-stone-300 hover:bg-white">
-                    <div class="flex flex-wrap items-start justify-between gap-3">
-                      <div class="min-w-0 flex-1">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.host }}</span>
-                          <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">Turn {{ item.turn_number }}</span>
-                          <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if item.status_tone == 'amber' %}bg-amber-100 text-amber-800{% elif item.status_tone == 'sky' %}bg-sky-100 text-sky-800{% else %}bg-emerald-100 text-emerald-800{% endif %}">
-                            {{ item.status_label }}
-                          </span>
-                          {% for badge in item.signal_badges[:2] %}
-                            <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
-                              {{ badge.label }}
-                            </span>
-                          {% endfor %}
-                        </div>
-                        <p class="mt-3 text-sm font-semibold leading-6 text-stone-900">{{ item.prompt_excerpt }}</p>
-                        <p class="mt-2 break-words text-sm leading-6 text-stone-600">{{ item.response_excerpt }}</p>
-                      </div>
-                      <div class="flex min-w-[10rem] flex-col items-start gap-2 sm:items-end">
-                        {% if item.timestamp %}
-                          <span class="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ item.timestamp|full_timestamp }}">{{ item.timestamp|humanize_timestamp }}</span>
-                        {% endif %}
-                        <div class="flex flex-wrap gap-2 sm:justify-end">
-                          <a href="{{ item.session_href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-white">
-                            Open session
-                          </a>
-                          <a href="{{ item.audit_href }}" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
-                            Open audit
-                          </a>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="mt-3 flex flex-wrap gap-2">
-                      <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.command_count }} commands</span>
-                      <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.patch_count }} patches</span>
-                      <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ item.files_touched_count }} files</span>
-                    </div>
-                  </article>
-                {% endfor %}
-                {% if stream_preview["has_next"] %}
-                  <div class="flex justify-end border-t border-stone-200/80 pt-3">
-                    <a href="{{ stream_href }}" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
-                      Open full stream for all {{ stream_preview["total_count"] }} turns
-                    </a>
+        {% if all_sessions_page.has_prev or all_sessions_page.has_next %}
+          <nav aria-label="Session pages" class="flex justify-between gap-4 border-t border-stone-100 py-5 text-sm">
+            <span>{% if all_sessions_page.has_prev %}<a href="{{ group.detail_href }}?view=sessions&amp;sessions_page={{ all_sessions_page.page - 1 }}" class="text-blue-700 hover:underline">Newer sessions</a>{% endif %}</span>
+            {% if all_sessions_page.has_next %}<a href="{{ group.detail_href }}?view=sessions&amp;sessions_page={{ all_sessions_page.page + 1 }}" class="text-blue-700 hover:underline">Older sessions</a>{% endif %}
+          </nav>
+        {% endif %}
+      </section>
+    {% else %}
+      <section aria-labelledby="timeline-heading" data-project-timeline class="rounded-xl border border-stone-200 bg-white px-4 sm:px-6">
+        <div class="flex flex-wrap items-baseline justify-between gap-2 py-5">
+          <h2 id="timeline-heading" class="text-lg font-semibold text-stone-900">Turn timeline</h2>
+          <p class="text-sm text-stone-500">Newest first · {{ stream_preview.total_count }} turns</p>
+        </div>
+        {% if stream_preview.has_prev %}
+          <a href="{{ group.detail_href }}?turns_page={{ stream_preview.page - 1 }}" class="mb-4 inline-block text-sm text-blue-700 hover:underline">Newer turns</a>
+        {% endif %}
+        <div data-timeline-items>
+          {% for item in stream_preview["items"] %}
+            <article data-timeline-turn="{{ item.session_id }}:{{ item.turn_number }}" class="project-turn">
+              <time class="project-turn-time" {% if item.timestamp %}datetime="{{ item.timestamp }}" title="{{ item.timestamp|full_timestamp }}"{% endif %}>{{ item.timestamp|humanize_timestamp }}</time>
+              <div class="min-w-0">
+                <h3 class="text-base font-semibold leading-6">
+                  <a data-turn-session-link href="{{ item.session_href }}" class="project-turn-title text-stone-900 hover:text-blue-700 hover:underline" title="Open this turn in its session">{{ item.prompt_excerpt }}</a>
+                </h3>
+                <p class="project-turn-response mt-1 text-sm leading-6 text-stone-600">{{ item.response_excerpt }}</p>
+                <p class="mt-2 break-words text-xs leading-5 text-stone-500">
+                  {{ item.host }} · <span title="{{ item.session_title }}">{{ item.session_title|truncate(65) }}</span> · Turn {{ item.turn_number }}{% if item.files_touched_count %} · {{ item.files_touched_count }} file{% if item.files_touched_count != 1 %}s{% endif %} changed{% endif %}
+                </p>
+                {% set warnings = item.signal_badges|selectattr('tone', 'in', ['rose', 'amber'])|list %}
+                {% if warnings or item.response_state in ['canceled', 'missing', 'update'] %}
+                  <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    {% for badge in warnings %}
+                      <a href="{{ item.audit_href }}" class="rounded bg-amber-50 px-2 py-1 text-amber-900 hover:underline" title="Inspect this warning in the session audit">{{ badge.label }}</a>
+                    {% endfor %}
+                    {% if item.response_state == 'canceled' %}<span class="text-amber-800">Canceled</span>{% elif item.response_state == 'missing' %}<span class="text-stone-500">No response captured</span>{% elif item.response_state == 'update' %}<span class="text-stone-500">Update</span>{% endif %}
                   </div>
                 {% endif %}
               </div>
-            </details>
+            </article>
+          {% else %}
+            <p class="pb-6 text-sm text-stone-500">No turn activity is available yet.</p>
+          {% endfor %}
+        </div>
+        <div data-timeline-pagination class="border-t border-stone-100 py-5 text-center text-sm">
+          {% if stream_preview.has_next %}
+            <a data-load-older href="{{ group.detail_href }}?turns_page={{ stream_preview.page + 1 }}" class="inline-flex rounded-lg border border-stone-200 px-4 py-2 font-medium text-stone-700 hover:bg-stone-50">Load older turns</a>
+          {% elif stream_preview["items"] %}
+            <p class="text-stone-500">You’re caught up with this project’s history.</p>
           {% endif %}
-        {% else %}
-          <div class="mt-5 rounded-[1.2rem] border border-dashed border-stone-900/15 bg-white/70 p-6 text-sm text-stone-600">
-            No turn activity preview is available yet.
-          </div>
-        {% endif %}
-      </div>
-
-      <aside id="repo-sessions" class="rounded-[1.75rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.22)] backdrop-blur sm:p-6">
-        <div class="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Sessions</h2>
-            <p class="mt-1 text-sm text-stone-600">The latest session threads for this project, with pagination for deeper history.</p>
-          </div>
-          <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-700">
-            {% if all_sessions_page.showing_from %}
-              {{ all_sessions_page.showing_from }}-{{ all_sessions_page.showing_to }} of {{ all_sessions_page.total_count }}
-            {% else %}
-              0 sessions
-            {% endif %}
-          </span>
         </div>
-
-        {% if all_sessions_page["items"] %}
-          <div class="mt-5 space-y-3">
-            {% for session in all_sessions_page["items"] %}
-              <article class="rounded-[1.1rem] border border-stone-200 bg-stone-50/80 p-4">
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                  <div class="min-w-0 flex-1">
-                    <p class="break-words text-sm font-semibold leading-6 text-stone-900">{{ session.display_title }}</p>
-                    {% if session.display_detail %}
-                      <p class="mt-1 break-words text-xs leading-5 text-stone-600">{{ session.display_detail }}</p>
-                    {% endif %}
-                    <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-600">
-                      <span>{{ session.host }}</span>
-                      {% set session_when = session.last_turn_timestamp or session.session_timestamp %}
-                      {% if session_when %}
-                        <span class="text-stone-400">•</span>
-                        <span title="{{ session_when|full_timestamp }}">{{ session_when|humanize_timestamp }}</span>
-                      {% endif %}
-                    </div>
-                  </div>
-                  {% if session.action_status_label %}
-                    <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if session.action_status_tone == 'rose' %}bg-rose-100 text-rose-800{% elif session.action_status_tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
-                      {{ session.action_status_label }}
-                    </span>
-                  {% endif %}
-                </div>
-                <div class="mt-3 flex flex-wrap gap-2">
-                  <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ session.turn_count }} turns</span>
-                  {% if session.recent_turn_count %}
-                    <span class="rounded-full bg-stone-100 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-stone-700">{{ session.recent_turn_count }} in 7d</span>
-                  {% endif %}
-                  {% for badge in session.action_badges[:2] %}
-                    <span class="rounded-full px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.16em] {% if badge.tone == 'rose' %}bg-rose-100 text-rose-800{% elif badge.tone == 'amber' %}bg-amber-100 text-amber-800{% else %}bg-stone-200 text-stone-700{% endif %}">
-                      {{ badge.label }}
-                    </span>
-                  {% endfor %}
-                </div>
-                <div class="mt-3 flex flex-wrap gap-2">
-                  <a href="{{ session.href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-stone-50">
-                    Open session
-                  </a>
-                  <a href="{{ session.href }}?view=audit" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
-                    Open audit
-                  </a>
-                </div>
-              </article>
-            {% endfor %}
-          </div>
-          {% set sessions_prev_page = all_sessions_page.page - 1 %}
-          {% set sessions_next_page = all_sessions_page.page + 1 %}
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-200/80 pt-4">
-            <span class="rounded-full bg-stone-100 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-stone-700">
-              Page {{ all_sessions_page.page }} of {{ all_sessions_page.page_count }}
-            </span>
-            <div class="flex flex-wrap gap-2">
-              {% if all_sessions_page.has_prev %}
-                <a href="{{ group.detail_href }}?sessions_page={{ sessions_prev_page }}#repo-sessions" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
-                  Newer
-                </a>
-              {% endif %}
-              {% if all_sessions_page.has_next %}
-                <a href="{{ group.detail_href }}?sessions_page={{ sessions_next_page }}#repo-sessions" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50">
-                  Older
-                </a>
-              {% endif %}
-            </div>
-          </div>
-        {% else %}
-          <div class="mt-5 rounded-[1.2rem] border border-dashed border-stone-900/15 bg-white/70 p-6 text-sm text-stone-600">
-            No sessions are available for this project yet.
-          </div>
-        {% endif %}
-      </aside>
-    </section>
-
-    <section id="repo-operations" class="mb-8">
-      <div class="mb-4">
-        <h2 class="font-display text-2xl text-stone-900 sm:text-[2rem]">Operational Context</h2>
-        <p class="mt-1 text-sm text-stone-600">Host fit, environment guidance, and supporting operational drill-downs.</p>
-      </div>
-
-      <div class="grid gap-6 xl:grid-cols-[1.15fr,0.85fr]">
-        <div>
-          <div class="space-y-3">
-            {% for host in host_summaries %}
-              <article class="rounded-[1.2rem] border border-stone-200 bg-white/85 p-4 shadow-[0_18px_45px_-30px_rgba(41,37,36,0.2)]">
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                  <div class="min-w-0 flex-1">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <span class="text-base font-semibold text-stone-900">{{ host.source_host }}</span>
-                    </div>
-                    <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
-                      <span>Last seen <span title="{{ host.last_seen_at|full_timestamp }}">{{ host.last_seen_at|humanize_timestamp }}</span></span>
-                      <span>{{ host.session_count }} sessions</span>
-                      <span>{{ host.turn_count }} turns</span>
-                    </div>
-                  </div>
-                  <div class="flex flex-wrap gap-2">
-                    {% if host.latest_failed_session %}
-                      <a href="{{ host.latest_failed_session.href }}" class="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-rose-800 transition hover:border-rose-300 hover:bg-rose-100">
-                        Open latest attention
-                      </a>
-                    {% elif host.latest_session %}
-                      <a href="{{ host.latest_session.href }}" class="inline-flex items-center rounded-full border border-stone-900/10 bg-white/90 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-stone-700 transition hover:bg-white">
-                        Open latest
-                      </a>
-                    {% endif %}
-                    <a href="/machines/{{ host.source_host }}/audit" class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-sky-800 transition hover:border-sky-300 hover:bg-sky-100">
-                      Machine audit
-                    </a>
-                  </div>
-                </div>
-              </article>
-            {% endfor %}
-          </div>
-        </div>
-
-        <aside>
-          <section class="rounded-[1.4rem] border border-stone-900/10 bg-white/85 p-5 shadow-[0_18px_45px_-30px_rgba(41,37,36,0.2)]">
-            <p class="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Environment audit</p>
-            <p class="mt-2 text-lg font-semibold text-stone-900">Requirements, host fit, failures, and setup blockers</p>
-            <p class="mt-2 text-sm leading-6 text-stone-600">
-              Use the dedicated environment view when you need setup guidance or host-by-host fit details.
-            </p>
-            <a href="{{ environment_href }}" class="mt-4 inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-100">
-              Open environment audit
-            </a>
-          </section>
-        </aside>
-      </div>
-    </section>
-
+        <p data-timeline-status role="status" class="pb-3 text-center text-sm text-stone-500" hidden></p>
+      </section>
+    {% endif %}
   </div>
+{% endblock %}
+
+{% block scripts %}
+  {% if project_view == 'activity' %}
+    <script src="{{ static_asset_url(request, 'project-timeline.js') }}" defer></script>
+  {% endif %}
 {% endblock %}

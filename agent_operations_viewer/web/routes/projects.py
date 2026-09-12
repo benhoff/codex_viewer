@@ -52,7 +52,9 @@ def redirect_preserving_query(
     return RedirectResponse(url=target, status_code=status_code)
 
 
-def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -> HTMLResponse:
+def render_group_detail(
+    request: Request, key: str, *, sessions_page: int = 1, turns_page: int = 1, view: str = "activity"
+) -> HTMLResponse:
     context = get_app_context(request)
     owner_scope = owner_scope_from_request(request)
     detail_path = str(request.url.path).rstrip("/")
@@ -81,7 +83,7 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
         )
         stream_preview = fetch_turn_stream(
             connection,
-            page=1,
+            page=turns_page,
             page_size=10,
             group_key=key,
             detail_href_override=detail_path,
@@ -92,6 +94,7 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
         name="group.html",
         context={
             "request": request,
+            "project_view": "sessions" if view == "sessions" else "activity",
             "group": detail["group"],
             "signal_summary": detail["signal_summary"],
             "project_action_groups": detail["project_action_groups"],
@@ -352,6 +355,8 @@ def group_detail_path_legacy(
     owner_slug: str,
     project_slug: str,
     sessions_page: int = Query(default=1),
+    turns_page: int = Query(default=1, ge=1),
+    view: str = Query(default="activity"),
 ) -> HTMLResponse:
     context = get_app_context(request)
     with connection_scope(context.settings.database_path) as connection:
@@ -375,7 +380,7 @@ def group_detail_path_legacy(
         raise HTTPException(status_code=404, detail="Project group not found")
     if detail_href != str(request.url.path):
         return redirect_preserving_query(request, detail_href)
-    return render_group_detail(request, group_key, sessions_page=sessions_page)
+    return render_group_detail(request, group_key, sessions_page=sessions_page, turns_page=turns_page, view=view)
 
 
 @router.get("/projects/{owner_slug}/{project_slug}/queue", response_class=HTMLResponse)
@@ -572,6 +577,8 @@ def group_detail(
     owner_slug: str,
     project_slug: str,
     sessions_page: int = Query(default=1),
+    turns_page: int = Query(default=1, ge=1),
+    view: str = Query(default="activity"),
 ) -> HTMLResponse:
     context = get_app_context(request)
     with connection_scope(context.settings.database_path) as connection:
@@ -588,7 +595,7 @@ def group_detail(
         )
     if group_key is None:
         raise HTTPException(status_code=404, detail="Project group not found")
-    return render_group_detail(request, group_key, sessions_page=sessions_page)
+    return render_group_detail(request, group_key, sessions_page=sessions_page, turns_page=turns_page, view=view)
 
 
 @router.get("/{owner_slug}/{project_slug}/queue", response_class=HTMLResponse)
