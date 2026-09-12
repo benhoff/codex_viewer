@@ -542,6 +542,23 @@ CREATE TABLE IF NOT EXISTS task_assessment_revisions (
 CREATE INDEX IF NOT EXISTS idx_task_assessment_owner_range
 ON task_assessment_revisions(owner_scope, session_id, start_turn, end_turn, id DESC);
 
+CREATE TABLE IF NOT EXISTS task_grader_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_scope TEXT NOT NULL,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    start_turn INTEGER NOT NULL,
+    end_turn INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    status TEXT NOT NULL,
+    evidence_digest TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    result_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_grader_owner_range
+ON task_grader_runs(owner_scope, session_id, start_turn, end_turn, id DESC);
+
 CREATE TABLE IF NOT EXISTS project_overrides (
     match_project_key TEXT PRIMARY KEY,
     override_group_key TEXT,

@@ -237,7 +237,8 @@ class AssessmentRouteTests(unittest.TestCase):
         self.assertEqual(page.headers["cache-control"], "private, no-store")
         session = self.client.get("/sessions/assess-session")
         self.assertEqual(session.status_code, 200, session.text)
-        self.assertIn("Assess task", session.text)
+        self.assertIn("Grade turn", session.text)
+        self.assertIn('id="chunk-picker"', session.text)
 
     def test_revisions_snapshot_freshness_and_stale_save(self):
         first = self.report()

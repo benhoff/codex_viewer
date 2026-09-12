@@ -353,8 +353,26 @@ Daemon source:
 
 ## Task Assessment
 
-Open a session and select **Assess task** on a turn. Expand the turn range to
-include corrections and recovery belonging to the same request. The assessment
+Select **Assessments** in the navigation for a dashboard across all machines
+syncing to this viewer. No machine-agent update, feature flag, or LLM is required.
+Filter sessions by machine, project, activity window, and whether you have saved a
+review. Machine counts cover all matching sessions; source-backed metrics are
+calculated for the current page of ten sessions. **Assess full session** includes
+all indexed turns, so corrections and recovery are visible before you select a
+task range. Sessions exceeding 50 turns or 20,000 events require a smaller range.
+Claude sessions appear with unsupported usage accounting.
+
+The dashboard shows your latest review and its exact turn range, flags reviews
+that need rechecking, and exports the displayed page as JSON. All dashboard costs
+use the default resource policy for comparison; personal policies remain in the
+individual assessments. Costs are not summed across sessions or overlapping
+reviews. New uploads appear on the next page load. Project access and personal
+review ownership apply to filters, counts, metrics, and exports.
+
+Open a session and use **Grade a chunk**: select turns, enter a first/last range,
+or choose **Use this page**, then click **Review chunk & grade**. All turns between
+the selected endpoints are included, even across pages. **Grade turn** opens a
+single turn. Include corrections and recovery belonging to the same request. The assessment
 shows recorded token Work Units, optional model-weighted cost, model/effort
 history, and observable tool and generated-content volume.
 
@@ -367,8 +385,107 @@ policy used at save time. Changed evidence marks prior reviews stale.
 Work Units are a versioned accounting convention, not dollars. Model weights can
 be supplied in the assessment's policy editor with an explicit basis. Unknown or
 incomplete telemetry stays unknown/partial. This release measures native Codex
-usage within the selected session; child costs, automated grading, and controlled
-reruns are future work. No traces are sent to an external evaluator.
+usage within the selected session; child costs and controlled reruns are future work.
+
+### Optional LLM grader
+
+Admins can open **Settings → LLM Configuration** (`/settings#settings-llm`) to
+choose an OpenAI-compatible Chat Completions base URL, exact model ID, local or
+external processing, JSON output mode, evidence-size limit, output-token limit,
+and per-call timeout. Grading is disabled by default. The model must support
+Chat Completions, `max_completion_tokens`, and the selected JSON output mode.
+Enter the provider API key on the same settings page. Leave the password field
+blank to keep the saved key, enter a new key to replace it, or select **Remove saved
+API key** to clear it. Changes apply to the next run without restarting. No grader
+environment variable is used. Credentials are encrypted in the server database
+using a generated, owner-only `data/.grader-encryption-key` file, and are never
+displayed or included in review exports. Back up that file with the database.
+External providers require a key. Local mode
+supports localhost or a private IP endpoint and can run without a key.
+
+Once enabled, **Submit chunk for AI grading** at the top of an assessment explicitly sends that selected
+range's text evidence to the displayed endpoint. Evidence that fits uses two calls:
+demand and outcome first, with structured model/effort/cost metadata withheld, then
+configured capability using model/effort observations only. Larger selections are
+automatically packed into sequential evidence batches within each turn, keeping a
+whole turn together where possible. An oversized turn is split at event boundaries; an oversized event
+is split into exact fragments with source indexes and character offsets. The viewer
+removes mirrored bookkeeping records, repeated instructions, duplicate display/detail
+text and tool transport wrappers. Requests, patches, command output, exit status and
+final responses remain; the export retains the original evidence snapshot.
+Each evidence-extraction batch also carries quoted task requests from the selected range, including
+the initial goal and current request/corrections, plus the preceding tool call when
+it fits. Future turns are excluded from that context. Environment wrappers are not
+treated as requests. When reviewer criteria are blank, the grader uses the recorded
+requests to identify the task. Context is prepared locally without extra model calls.
+Long context is marked as truncated, omitted requests are counted, and complete
+source records remain in evidence batches. Context shares the existing input budget,
+so the added context can increase the number of batches. Context explains intent;
+it does not establish a passing outcome for unseen work.
+The initial limits are 20,000 input characters, 512 output tokens for evidence
+extraction, 1,024 output tokens for whole-task synthesis, and 600 seconds per call.
+The synthesis output allowance is independently adjustable in LLM Configuration.
+An additional 32,768-token budget includes instructions, schemas, evidence, output
+and a 1,024-token chat-template reserve. UTF-8 bytes conservatively bound input
+tokens for byte-level tokenizers such as Qwen; multilingual inputs can batch sooner.
+Up to 100 evidence
+batches run per submission, followed by whole-task synthesis and one independent
+configuration request. If extracted notes do not fit, bounded summary reductions
+combine them before synthesis. Successful reductions are checkpointed for explicit retry.
+Incidental model
+mentions can remain in trace text. Evidence is treated as untrusted; the grader
+has no tools. Images and audio are explicitly marked unavailable; encoded media
+is never fragmented into text grading batches. Mixed text/media tool results retain
+their text. Original media remains in the frozen evidence export.
+
+The browser shows an estimated batch count before submission and progress while
+the explicitly submitted job runs in the background. You can leave the page and
+return. **Cancel grading** aborts the active HTTP socket, including while waiting
+for headers. The absolute per-call timeout also aborts the socket. The worker releases
+its grading lock in `finally`. Completed results and usage are saved after each call.
+Every request disables thinking with `chat_template_kwargs.enable_thinking=false`
+and requests concise JSON. Schema/field violations, malformed JSON and
+`finish_reason: "length"` fail the stage; incomplete grades are never accepted.
+**Retry unfinished batches** continues a failed, cancelled or interrupted run without repeating
+completed batches, provided evidence, criteria, configuration, and prompt version are unchanged.
+Runs created before task-context batching remain available for review/export; submit
+a new run to use the new batch boundaries and context.
+A request interrupted before its result was saved may be sent again on an explicit
+retry. There are no automatic retries. Jobs run in the current viewer process;
+server restarts interrupt them, leaving saved results available for explicit retry.
+Each batch extracts cited observations and limitations without assigning a slice
+capability rating. The final assessment receives the meaningful user/assistant
+conversation, including corrections and final responses, plus extracted notes and
+original cited evidence when it fits. Oversized conversation excerpts are marked.
+It evaluates the whole selected task and can return pass, partial, fail or unknown;
+ratings are never averaged. Advice/design requests are evaluated as deliverables,
+without demanding unrequested implementation. Every stage's exact input, prompt,
+schema, output allowance and usage are retained in the run export. A failed final
+assessment is not accepted as a grade; retry reuses completed extractions/reductions.
+
+The UTF-8 context bound remains intentionally conservative. The configured local
+proxy returned 404 for both `/tokenize` and `/v1/tokenize` during validation; this
+release does not guess a larger safe token budget from character/token ratios.
+Visual assessment and fuller use of the 32K window require a separately verified
+multimodal/token-counting integration.
+
+The chart compares **configured intelligence** and **required intelligence** as
+estimated ordinal levels from 1 to 5, with confidence and a plausible required
+range. Missing, unfamiliar, or mixed configurations may stay unestablished.
+Differences are hypotheses for controlled experiments, not percentages of excess
+intelligence, proven savings, or predicted turnaround. Compare grader findings
+with your independent human review to calibrate them. Full-session estimates also
+appear in the assessment dashboard.
+
+Each personal grader run retains its evidence snapshot, prompts/rubric version, output schemas,
+configuration (without credentials), validated findings, and separately reported
+evaluator usage. Grading never overwrites a human review or adds its tokens to the
+task cost. Failures retain observed usage; provider usage for failed calls can be
+unknown. Runs remain inspectable via their JSON exports, and source changes mark
+estimates stale. Restarting during a run can leave an unfinished attempt; retrying
+creates a new run. Only one run is admitted per viewer process at a time.
+
+The integration follows the [official Structured Outputs documentation](https://developers.openai.com/api/docs/guides/structured-outputs).
 
 ## Testing
 
@@ -415,6 +532,7 @@ The supported lightweight backup boundary is:
 - the SQLite database file
 - raw session artifacts stored under `data/session_artifacts`
 - the generated browser session secret in `data/.session-secret`
+- the grader credential encryption key in `data/.grader-encryption-key`, if configured
 
 What this does not try to do yet:
 

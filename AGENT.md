@@ -286,6 +286,27 @@ Even if a user has project role `editor`, the app does not yet delegate regroupi
 
 ## Personal State
 
+Admins configure the optional LLM grader in Settings at `/settings#settings-llm`. When enabled,
+viewers may explicitly grade ranges they can read. Grader attempts and exports
+are personal, enforce project ACLs, and never overwrite human assessments.
+Admins set the provider key and API endpoint in the grader settings page; no grader
+environment variable is used. Keys are encrypted in a separate server-settings row
+using `data/.grader-encryption-key` (mode 0600), never returned to the browser or
+included in assessment exports. Configuration changes apply to the next run.
+Evaluator usage is recorded separately.
+Oversized evidence is split into bounded batches after explicit submission.
+The browser monitors a worker in the current viewer process; results and usage
+are checkpointed. Status and explicit retries enforce the same owner/project
+scope. Retries skip completed stages only when evidence, criteria, prompt version,
+and configuration still match. Server restarts interrupt workers; retries remain
+explicit. Independent batch outcomes do not establish a whole-task passing grade.
+
+The assessment dashboard at `/assessments` includes all accessible synced sessions.
+Its filter options, counts, machine breakdowns, and JSON export enforce project
+ACLs before pagination. Latest reviews remain scoped to the current user, even
+for admins. Full-session page metrics use the common default resource policy;
+personal review policies are preserved in their individual assessments.
+
 Task assessment revisions use the same personal owner scope as the review queue.
 They are immutable snapshots of a selected turn range, its evidence, cost policy,
 and human judgments. Every assessment page, save, historical revision, and export

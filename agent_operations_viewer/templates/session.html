@@ -240,6 +240,7 @@
     </section>
     {% endif %}
 
+    {% if pagination.total_turns %}{% include "_chunk_picker.html" %}{% endif %}
     <div data-session-window-region>
     {% if session_view_mode == 'audit' %}
       <section class="mb-6 rounded-[1.75rem] border border-stone-900/10 bg-white/78 p-4 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.28)] backdrop-blur sm:mb-8 sm:p-6">
@@ -554,7 +555,8 @@
                     >
                       {% if saved_turn_status == 'open' %}Saved{% elif saved_turn_status == 'resolved' %}Resolved{% endif %}
                     </span>
-                    <a href="{{ request.url.path }}/assessment?start_turn={{ turn.number }}&end_turn={{ turn.number }}" class="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-sm font-semibold text-stone-700 hover:bg-stone-100">Assess task</a>
+                    <label class="inline-flex items-center gap-2 rounded-full border border-stone-900/10 bg-white px-3 py-1 text-sm font-semibold text-stone-700"><input type="checkbox" data-chunk-turn="{{ turn.number }}" aria-label="Select turn {{ turn.number }} for chunk">Select for chunk</label>
+                    <a href="{{ request.url.path }}/assessment?start_turn={{ turn.number }}&end_turn={{ turn.number }}#llm-grader" class="rounded-full border border-stone-900/10 bg-white px-3 py-1 text-sm font-semibold text-stone-700 hover:bg-stone-100">Grade turn</a>
                     {% if turn.prompt_timestamp %}
                       <p class="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-stone-500" title="{{ turn.prompt_timestamp|full_timestamp }}">{{ turn.prompt_timestamp|humanize_timestamp }}</p>
                     {% endif %}
@@ -1500,6 +1502,57 @@
       let currentMode = "{{ session_view_mode }}";
       const sessionModePreferenceKey = "codex-session-mode-preference";
       let scrollTicking = false;
+      const selectedChunkTurns = new Set();
+      const chunkForm = document.getElementById("chunk-picker");
+      function updateChunkPicker(fromSelection = false) {
+        if (!chunkForm) return;
+        const first = chunkForm.elements.start_turn;
+        const last = chunkForm.elements.end_turn;
+        if (fromSelection) {
+          const selected = Array.from(selectedChunkTurns);
+          first.value = selected.length ? Math.min(...selected) : "";
+          last.value = selected.length ? Math.max(...selected) : "";
+        }
+        const start = Number(first.value), end = Number(last.value);
+        const valid = first.validity.valid && last.validity.valid && end >= start && end - start < 50;
+        chunkForm.querySelector('button[type="submit"]').disabled = !valid;
+        document.getElementById("chunk-summary").textContent = valid
+          ? `Turns ${start}–${end} (${end - start + 1} turns). All turns in this range are included.`
+          : "Choose a range of 1–50 turns within this session.";
+        document.querySelectorAll("[data-chunk-turn]").forEach(input => {
+          input.checked = selectedChunkTurns.has(Number(input.dataset.chunkTurn));
+        });
+      }
+      if (chunkForm) {
+        chunkForm.addEventListener("input", () => {
+          selectedChunkTurns.clear();
+          updateChunkPicker();
+        });
+        chunkForm.addEventListener("submit", event => {
+          updateChunkPicker();
+          if (chunkForm.querySelector('button[type="submit"]').disabled) event.preventDefault();
+        });
+        chunkForm.querySelector("[data-chunk-page]").addEventListener("click", () => {
+          const numbers = turnCards().map(turn => Number(turn.dataset.turnNumber));
+          selectedChunkTurns.clear();
+          if (numbers.length) {
+            selectedChunkTurns.add(Math.min(...numbers));
+            selectedChunkTurns.add(Math.max(...numbers));
+          }
+          updateChunkPicker(true);
+        });
+        chunkForm.querySelector("[data-chunk-clear]").addEventListener("click", () => {
+          selectedChunkTurns.clear();
+          updateChunkPicker(true);
+        });
+        document.addEventListener("change", event => {
+          if (!event.target.matches("[data-chunk-turn]")) return;
+          const number = Number(event.target.dataset.chunkTurn);
+          if (event.target.checked) selectedChunkTurns.add(number);
+          else selectedChunkTurns.delete(number);
+          updateChunkPicker(true);
+        });
+      }
 
       function sessionViewKey() {
         return `codex-session-view:${sessionId}:${currentMode}`;
@@ -1943,6 +1996,7 @@
         initializeSessionViewToggles();
         initializeTurnCards();
         initializePrevResponseHover();
+        updateChunkPicker();
       }
 
       async function fetchSessionWindow(url, { updateHistory = true, scrollBehavior = "auto" } = {}) {

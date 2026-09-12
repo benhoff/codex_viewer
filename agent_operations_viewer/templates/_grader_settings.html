@@ -1,0 +1,31 @@
+<section id="settings-llm" class="space-y-5 rounded-[1.9rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">
+  <div>
+    <p class="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-stone-500">LLM Grader</p>
+    <h2 class="mt-2 font-display text-2xl text-stone-900">LLM Configuration</h2>
+    <p class="mt-2 text-sm leading-6 text-stone-600">Configure an OpenAI-compatible Chat Completions endpoint. Grading is optional and runs only when a reviewer requests it. Large selections are graded in batches. Estimates are stored separately from human reviews.</p>
+  </div>
+  {% if error %}<p role="alert" class="rounded-xl bg-amber-50 p-4 text-sm text-amber-800">{{ error }}</p>{% endif %}
+  <form action="/settings/grader#settings-llm" method="post" class="space-y-4">
+    <label class="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name="enabled" {% if config.enabled %}checked{% endif %}>Enable manual LLM grading</label>
+    <label class="block text-sm font-semibold">Processing location<select name="processing" class="mt-1 block w-full rounded-xl border border-stone-300 p-2"><option value="external" {% if config.processing == 'external' %}selected{% endif %}>External provider (HTTPS)</option><option value="local" {% if config.processing == 'local' %}selected{% endif %}>Local or private-network endpoint</option></select></label>
+    <label class="block text-sm font-semibold">API base URL<input type="url" name="base_url" required value="{{ config.base_url }}" class="mt-1 block w-full rounded-xl border border-stone-300 p-2"></label>
+    <p class="text-xs text-stone-500">For example, https://api.openai.com/v1 or http://localhost:1234/v1. Local mode requires localhost or a private IP. The viewer appends /chat/completions. Redirects are rejected.</p>
+    <label class="block text-sm font-semibold">Grader model ID<input name="model" maxlength="200" value="{{ config.model }}" class="mt-1 block w-full rounded-xl border border-stone-300 p-2" placeholder="Exact model ID served by your endpoint"></label>
+    <div class="space-y-2 rounded-xl bg-stone-50 p-3 text-sm">
+      <strong>API key: {{ 'Configured' if key_configured else 'Not configured' }}</strong>
+      <label class="block font-semibold">API key<input type="password" name="api_key" maxlength="4096" autocomplete="new-password" spellcheck="false" class="mt-1 block w-full rounded-xl border border-stone-300 p-2" placeholder="{{ 'Leave blank to keep the saved key' if key_configured else 'Enter your provider API key' }}"></label>
+      <p>Leave blank to keep the saved key. A new value replaces it. The key is stored encrypted and is never displayed or included in review exports. External grading requires a key; local endpoints may omit it.</p>
+      {% if key_configured %}<label class="flex items-center gap-2"><input type="checkbox" name="remove_api_key">Remove saved API key</label>{% endif %}
+    </div>
+    <label class="block text-sm font-semibold">Maximum output tokens for the combined batch assessment<input type="number" name="synthesis_output_tokens" min="512" max="16000" required value="{{ config.synthesis_output_tokens }}" class="mt-1 block w-full rounded-xl border border-stone-300 p-2"></label>
+    <label class="block text-sm font-semibold">Output format<select name="response_format" class="mt-1 block w-full rounded-xl border border-stone-300 p-2"><option value="json_schema" selected>Strict JSON schema</option></select></label>
+    <div class="grid gap-4 sm:grid-cols-3">
+      {% for key, label, low, high in [('timeout_seconds', 'Timeout per call (seconds)', 5, 600), ('max_input_chars', 'Evidence characters per batch', 1000, 200000), ('max_output_tokens', 'Maximum output tokens per call', 256, 16000)] %}<label class="text-sm font-semibold">{{ label }}<input type="number" name="{{ key }}" min="{{ low }}" max="{{ high }}" required value="{{ config[key] }}" class="mt-1 block w-full rounded-xl border border-stone-300 p-2"></label>{% endfor %}
+    </div>
+    <p class="text-sm text-stone-600">Recommended starting limits: 20,000 input characters, 512 output tokens, 600 seconds. Requests also respect a 32,768-token context budget covering instructions, schemas, evidence and output. A conservative UTF-8 byte estimate can split multilingual evidence sooner. Thinking is disabled on every request; incomplete or invalid JSON fails grading.</p>
+    <p class="text-sm text-stone-600">Enabling external processing allows reviewers to send selected evidence to this endpoint. Large inputs use up to 100 sequential evidence batches, followed by a whole-task assessment and one configuration request. Additional summary calls combine evidence when needed. Images and audio are explicitly marked unavailable and never sent as encoded text. Only one grading run is admitted per viewer process. Timeout or Cancel aborts the active HTTP request; retries require an explicit action.</p>
+    <p class="text-sm text-stone-600">Saved changes apply to the next grading run. No restart is needed.</p>
+    <button class="rounded-2xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-700">Save grader configuration</button>
+  </form>
+  <p class="text-sm text-stone-600">The chart uses estimated ordinal capability levels 1–5. It cannot establish a percentage of excess intelligence, measured savings, or faster completion. Controlled reruns are needed for those comparisons.</p>
+</section>

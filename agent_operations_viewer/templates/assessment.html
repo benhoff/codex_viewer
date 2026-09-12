@@ -1,17 +1,19 @@
 {% extends "base.html" %}
+{% from "_capability_chart.html" import capability_chart %}
 {% block title %}Task assessment · Agent Operations Viewer{% endblock %}
 {% block content %}
 {% set metrics = report.metrics %}
 {% set range_query = 'start_turn=' ~ report.start_turn ~ '&end_turn=' ~ report.end_turn %}
 <header class="mb-6 space-y-3">
+  <a href="/assessments" class="mr-4 text-sm font-semibold text-blue-700">← All assessments</a>
   <a href="{{ session_href }}?view=audit&turn={{ report.start_turn }}" class="text-sm font-semibold text-blue-700">← Back to session audit</a>
   <h1 class="text-3xl font-semibold text-stone-900">Task assessment</h1>
   <p class="text-sm text-stone-600">{{ session_title }} · Turns {{ report.start_turn }}–{{ report.end_turn }}</p>
-  <p class="text-sm text-stone-600">Review outcome, resource cost, model family/version, reasoning effort, and generated content separately.</p>
-  <form method="get" class="flex flex-wrap items-end gap-3">
+  <p class="text-sm text-stone-600">Submit this chunk for AI grading or add your own review below.</p>
+  <form id="assessment-range" method="get" class="flex flex-wrap items-end gap-3">
     <label class="text-sm">First turn <input type="number" name="start_turn" min="1" required value="{{ report.start_turn }}" class="block w-24 rounded-xl border border-stone-300 bg-white p-2"></label>
     <label class="text-sm">Last turn <input type="number" name="end_turn" min="1" required value="{{ report.end_turn }}" class="block w-24 rounded-xl border border-stone-300 bg-white p-2"></label>
-    <button class="rounded-xl bg-stone-900 px-4 py-2 text-sm font-semibold text-white">Inspect range</button>
+    <button class="rounded-xl bg-stone-900 px-4 py-2 text-sm font-semibold text-white">Update chunk</button>
     <a href="{{ session_href }}/assessment.json?{{ range_query }}{% if historical %}&revision={{ saved.id }}{% endif %}" class="rounded-xl border border-stone-300 bg-white px-4 py-2 text-sm font-semibold">Export JSON</a>
   </form>
   <p class="text-xs text-stone-500">Include follow-up corrections and recovery for this task. Up to 50 turns; overlapping task ranges must not be summed.</p>
@@ -24,6 +26,7 @@
   {% if historical %}<a class="text-blue-700 underline" href="{{ session_href }}/assessment?{{ range_query }}">Review current evidence</a>{% endif %}
 </p>
 {% endif %}
+{% if not historical %}{% include "_assessment_grader.html" %}{% endif %}
 <section class="mb-6 grid gap-4 sm:grid-cols-2" aria-label="Abstract cost">
   {% for key, label, coverage in [('resource_wu', 'Resource Work Units', metrics.usage_coverage), ('model_weighted_wu', 'Model-weighted Work Units', metrics.model_coverage)] %}
   <div class="rounded-2xl border border-stone-200 bg-white p-5">
@@ -106,4 +109,97 @@
     </details>
   {% endfor %}</div>
 </section>
+{% endblock %}
+{% block scripts %}
+{{ super() }}
+<script>
+(() => {
+  const form = document.getElementById("submit-grading");
+  if (!form) return;
+  const button = form.querySelector("button");
+  const buttons = Array.from(form.querySelectorAll("button:not(#cancel-grading)"));
+  const cancelButton = document.getElementById("cancel-grading");
+  let cancelURL = null;
+  const status = document.getElementById("grading-status");
+  let busy = false;
+  function setBusy(value) {
+    busy = value;
+    buttons.forEach(item => { item.disabled = value; });
+    button.textContent = value ? "Grading…" : "Submit chunk for AI grading";
+    form.setAttribute("aria-busy", String(value));
+  }
+  function openResults(url) {
+    const destination = new URL(url, window.location.origin);
+    destination.hash = "llm-grader";
+    if (destination.pathname === window.location.pathname && destination.search === window.location.search) {
+      window.location.hash = destination.hash;
+      window.location.reload();
+    } else {
+      window.location.assign(destination.href);
+    }
+  }
+  async function readJSON(response) {
+    if (new URL(response.url).pathname.endsWith("/login")) {
+      throw new Error("Your session expired. Sign in again to check this grading run.");
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : "Could not check grading. Reload before retrying.");
+    return payload;
+  }
+  async function monitor(statusURL, resultURL) {
+    cancelURL = statusURL.replace(/\/status$/, "/cancel");
+    cancelButton.hidden = false;
+    cancelButton.disabled = false;
+    setBusy(true);
+    for (;;) {
+      const progress = await readJSON(await fetch(statusURL, { headers: { Accept: "application/json" }, cache: "no-store" }));
+      const stage = {extraction: "Collecting supporting evidence", reduction: "Combining evidence summaries", synthesis: "Assessing the whole task", demand: "Assessing the task", configuration: "Estimating configured capability", preparing: "Preparing evidence"}[progress.stage] || "Grading";
+      status.textContent = `${stage}: ${progress.completed_batches} of ${progress.total_batches} evidence batches complete. You can leave and return to this page.`;
+      if (progress.status !== "running") {
+        openResults(resultURL);
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  cancelButton.addEventListener("click", async () => {
+    if (!cancelURL) return;
+    cancelButton.disabled = true;
+    try {
+      await readJSON(await fetch(cancelURL, { method: "POST", headers: { Accept: "application/json" } }));
+      status.textContent = "Cancelling grading and closing the active request…";
+    } catch (error) {
+      status.textContent = error.message;
+      cancelButton.disabled = false;
+    }
+  });
+  function showError(error) {
+    status.textContent = error instanceof TypeError
+      ? "Connection lost. Grading may still be running. Reload to check saved progress before retrying."
+      : error.message;
+    setBusy(false);
+  }
+  document.getElementById("assessment-range").addEventListener("input", () => {
+    buttons.forEach(item => { item.disabled = true; });
+    status.textContent = "Click Update chunk to review your new range before submitting it.";
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (busy || button.disabled) return;
+    const fields = new URLSearchParams(new FormData(form, event.submitter));
+    setBusy(true);
+    status.textContent = "Preparing batches and starting grading…";
+    try {
+      const response = await fetch(form.action, { method: "POST", headers: { Accept: "application/json" }, body: fields });
+      const job = await readJSON(response);
+      await monitor(job.status_url, job.result_url);
+    } catch (error) {
+      showError(error);
+    }
+  });
+  if (form.dataset.statusUrl) {
+    monitor(form.dataset.statusUrl, window.location.href).catch(showError);
+  }
+})();
+</script>
 {% endblock %}

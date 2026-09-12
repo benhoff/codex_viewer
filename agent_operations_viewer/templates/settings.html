@@ -63,6 +63,7 @@
             <a href="#settings-top" class="block rounded-[0.95rem] px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 hover:text-stone-900">Overview</a>
             {% if can_manage_admin %}
               <a href="#settings-server-policy" class="block rounded-[0.95rem] px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 hover:text-stone-900">Server Policy</a>
+              <a href="#settings-llm" class="block rounded-[0.95rem] px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 hover:text-stone-900">LLM Configuration</a>
             {% endif %}
             <a href="#settings-auth" class="block rounded-[0.95rem] px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 hover:text-stone-900">Browser Access</a>
             {% if can_manage_search_tokens %}
@@ -225,6 +226,12 @@
         </div>
       </form>
     </section>
+    {% endif %}
+
+    {% if can_manage_admin %}
+      {% with config=grader_config, key_configured=grader_key_configured, error=grader_error %}
+        {% include "_grader_settings.html" %}
+      {% endwith %}
     {% endif %}
 
     <section id="settings-auth" class="rounded-[1.9rem] border border-stone-900/10 bg-white/75 p-5 shadow-[0_20px_60px_-28px_rgba(41,37,36,0.25)] backdrop-blur sm:p-6">

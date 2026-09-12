@@ -1,0 +1,13 @@
+{% macro capability_chart(run) %}
+{% if run.status == 'completed' %}
+{% set demand = run.result.demand %}{% set configured = run.result.configuration %}
+<div class="space-y-3" role="group" aria-label="Estimated configured versus required intelligence">
+  {% for label, level, color, confidence in [('Configured intelligence', configured.configured_level, 'bg-blue-600', configured.confidence), ('Required intelligence', demand.required_level, 'bg-emerald-600', demand.confidence)] %}
+  <div><div class="mb-1 flex flex-wrap justify-between gap-2 text-sm"><span class="font-semibold">{{ label }}</span><span>{{ (level|string ~ ' / 5') if level is not none else 'Unestablished' }} · {{ confidence }} confidence</span></div>
+    <div class="h-6 overflow-hidden rounded bg-stone-100" aria-hidden="true">{% if level is not none %}<div class="h-full {{ color }}" style="width: {{ level * 20 }}%"></div>{% endif %}</div>
+  </div>{% endfor %}
+  <p class="text-xs text-stone-600">Estimated capability levels, not a percentage scale.{% if demand.required_low is not none %} Plausible required range: {{ demand.required_low }}–{{ demand.required_high }} / 5.{% endif %}{% if run.stale %} <strong class="text-amber-800">Evidence changed; regrade before relying on this estimate.</strong>{% endif %}</p>
+  {% if configured.configured_level is not none and demand.required_high is not none and configured.configured_level > demand.required_high %}<p class="text-sm text-blue-700">Candidate for a lighter-configuration experiment. Savings and success remain untested.</p>{% endif %}
+</div>
+{% endif %}
+{% endmacro %}

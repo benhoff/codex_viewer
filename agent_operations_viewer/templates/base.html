@@ -85,6 +85,7 @@
                     </svg>
                   </summary>
                   <div class="absolute right-0 z-40 mt-2 w-64 rounded-[1.1rem] border border-[#E5E7EB] bg-white p-2 shadow-[0_18px_45px_-28px_rgba(31,41,55,0.22)]">
+                    <a href="/assessments" class="flex items-center justify-between rounded-[0.85rem] px-3 py-2 text-sm font-semibold transition {% if current_path.startswith('/assessments') or '/assessment' in current_path %}bg-[#2563EB] text-white{% else %}text-[#1F2937] hover:bg-[#F9FAFB]{% endif %}">Assessments</a>
                     <a href="/machines" class="flex items-center justify-between rounded-[0.85rem] px-3 py-2 text-sm font-semibold transition {% if current_path.startswith('/machines') or current_path.startswith('/remotes') %}bg-[#2563EB] text-white{% else %}text-[#1F2937] hover:bg-[#F9FAFB]{% endif %}">
                       <span>Machines</span>
                     </a>
@@ -138,6 +139,7 @@
               />
             </form>
             <div class="flex flex-wrap items-center gap-2">
+              <a href="/assessments" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/assessments') or '/assessment' in current_path %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Assessments</a>
               <a href="/machines" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/machines') or current_path.startswith('/remotes') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">Machines</a>
               <a href="/queue" class="rounded-full border px-4 py-2 text-sm font-semibold transition {% if current_path.startswith('/queue') %}border-[#2563EB] bg-[#2563EB] text-white{% else %}border-[#E5E7EB] bg-white text-[#6B7280] hover:bg-[#F9FAFB] hover:text-[#1F2937]{% endif %}">
                 Queue

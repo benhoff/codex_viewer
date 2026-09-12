@@ -1,7 +1,7 @@
 # Task Cost and Configuration Assessment
 
-Status: first release implemented. Automated grading and comparison runs remain
-in the later phases below.
+Status: deterministic assessment, cross-machine dashboard, and optional manual
+LLM estimates implemented. Controlled comparison runs remain in later phases.
 
 ## Purpose
 
@@ -16,7 +16,7 @@ expensive. Never derive a capability or cost ranking from model-name ordering.
 
 ## First release
 
-1. Open **Assess task** from a session turn.
+1. Open **Grade turn** from a session turn, or select a range with **Grade a chunk → Review chunk & grade**.
 2. Select a contiguous range of turns in that session, including corrections and
    recovery work belonging to the request. A single turn is the default candidate
    task, not an assertion that every turn is an independent task.
@@ -26,9 +26,9 @@ expensive. Never derive a capability or cost ranking from model-name ordering.
    judgments, findings, and a recommended experiment.
 5. Save a personal, immutable review revision and export the assessment as JSON.
 
-The first release uses deterministic accounting and human grading. It does not
-send traces to an external model, launch reruns, or change model routing. LLM
-grading and controlled comparisons are later phases described below.
+Accounting and human review use no external model. The optional LLM grader below
+sends evidence only on an explicit grading request after administrator configuration.
+It does not launch reruns or change model routing.
 
 ## Evaluation boundary and provenance
 
@@ -184,7 +184,8 @@ Every page, save, revision read, and JSON export rechecks access; inaccessible
 sessions/revisions return 404. Never accept owner identity from the request body.
 Search/sync tokens do not gain new write permissions. Writes require a same-origin
 browser request when an Origin header is supplied. Responses are private/no-store.
-No trace contents are sent to an external evaluator by this feature.
+Only an explicit LLM grading request sends selected text evidence to the configured
+evaluator; ordinary reads, human-review saves, and sync never do so.
 
 ## Routes and interface
 
@@ -200,14 +201,128 @@ model/effort history and model catalog labels; activity and generated character
 counts; review fields; linked evidence; and revision history. Explain partial
 coverage adjacent to cost. Give trace evidence stable links within this page and
 links back to each selected turn's full audit. The session view provides an
-**Assess task** link on every turn in conversation and audit modes.
+**Grade turn** link on every turn in conversation and audit modes, plus a chunk
+picker for selecting contiguous ranges. Opening a range never calls the LLM;
+**Submit chunk for AI grading** explicitly submits the displayed evidence.
+
+## Cross-machine dashboard
+
+The cross-machine discovery dashboard is available at `GET /assessments`, with a
+page-scoped JSON export at `GET /assessments.json`. It includes every accessible
+synced session without requiring a saved review. Machine/project/activity/review
+filters apply before pagination and event reads. Counts and machine breakdowns
+cover all matching sessions; current metrics cover ten sessions per page and use
+the common default resource policy. Whole-session links include all indexed
+turns within the existing range/event limits. Larger sessions explicitly require
+a task range. The latest personal review is labeled with its own range and
+freshness, independently of whole-session metrics. Dashboard totals do not sum
+costs across sessions or overlapping reviews. No background grading or startup
+trace backfill is introduced.
+
+## Optional LLM estimates
+
+Admins configure `/settings#settings-llm`: disabled by default, explicit local/external
+processing, OpenAI-compatible Chat Completions endpoint and exact model ID,
+strict JSON schema output, evidence size, output limit and per-call timeout.
+External providers require HTTPS and an API key saved through the same admin form.
+The password field never echoes the saved key; blank retains it, a new value replaces
+it, and an explicit removal clears it. Key and configuration writes are transactional.
+Keys are encrypted separately from exported configuration using a generated owner-only
+`data/.grader-encryption-key` file. No grader environment variable or restart is required.
+Local endpoints use localhost or private IPs.
+Redirects and inherited proxies are disabled.
+
+`POST /sessions/{id}/assessment/grade` uses the same owner and ACL scope and
+same-origin checks as personal reviews, requires the current evidence digest,
+and batches oversized evidence into at most 100 sequential requests. Evidence
+that fits still uses two calls. The evidence stage grades demand/outcome with structured
+configuration/cost metadata withheld; incidental mentions may remain in trace
+text. One final call independently estimates supplied capability from configuration
+observations. Trace content is untrusted, no tools are exposed, and only text is
+evaluated. Each turn is packed independently, keeping it whole where possible; oversized turns
+are split into events and oversized events into exact serialized fragments with
+source indexes and offsets. Before packing, mirrored system bookkeeping, repeated
+instructions and duplicate display/detail representations are removed; tool output
+wrappers are decoded while preserving command output and exit status. The frozen
+source snapshot stays intact. Each payload fits both the configured character limit
+and a conservative 32,768-token context budget. UTF-8 bytes bound evidence and
+instruction tokens for the configured Qwen byte-level tokenizer; schemas, maximum
+output and 1,024 chat-template tokens are reserved too. Defaults are 20,000 input
+characters, 512 output tokens and a 600-second absolute per-call deadline.
+For oversized selections, `task_context` accompanies every batch. It quotes the
+selected range's user requests up to the current turn, prioritizing the initial
+request and latest corrections when space is limited. Environment/abort wrappers
+are excluded from these request excerpts. It includes the preceding tool action
+when available within the same turn and reserved budget. No model summarization or
+out-of-range source lookup occurs. Context receives up to 3,000 bytes and action
+context up to 1,200 bytes within the configured limit; smaller limits reduce these
+allowances. Excerpts and omissions are explicitly marked, and source evidence stays
+complete across fragments. Fragment headers retain event kind, role and tool name.
+Blank acceptance criteria mean assess against the quoted requests, not infer a task
+from isolated tool output. Context is untrusted evidence and does not prove unseen
+work succeeded. Prompt version v4 requires a new submission for older runs because
+context and batch boundaries changed; prior results remain inspectable.
+Every request includes `chat_template_kwargs: {"enable_thinking": false}` and asks
+for concise schema-constrained JSON. Invalid fields, malformed JSON and truncated
+(`finish_reason: "length"`) responses fail the stage without an automatic retry.
+Each call records the exact requested schema and request-contract version. Schema
+descriptions distinguish rating confidence from outcome uncertainty while preserving
+the existing accepted-grade rules, so previously valid batches can survive an
+explicit retry with clarified schema instructions. Validation failures record a
+specific code and safe field diagnostics; they do not save arbitrary provider
+values or extra field names. Invalid citations, inconsistent ratings, malformed
+JSON and truncated responses have distinct user-facing errors.
+Each batch's citations are checked against its primary evidence and supplied
+request/action context; arbitrary references to other batches are rejected. In v5,
+batches extract cited evidence and limitations instead of assigning slice ratings.
+Bounded, checkpointed reductions combine oversized note sets. Final synthesis sees
+the conversation, corrections, final deliverables, extracted evidence and available
+original supporting excerpts; it produces the whole-task outcome and demand rating.
+Synthesis citations are restricted to supplied source events or validated note citations.
+No ordinal ratings are averaged. The final output budget defaults to 1,024 tokens,
+independently configurable from the 512-token extraction budget. All stages reject
+incomplete or invalid output. Mixed media is marked unavailable and encoded data is
+excluded from text prompts; original captures remain in exports.
+
+`POST /sessions/{id}/assessment/grader/{run_id}/cancel` requires the same owner,
+project access and origin checks as submission. It aborts the active socket even
+before response headers arrive. The per-call deadline aborts the same transport.
+Worker cleanup releases the admission semaphore in `finally`; status remains running
+until cleanup completes, so a terminal status permits an immediate new run.
+Cancellation keeps completed checkpoints and records the attempt as cancelled.
+
+Both capability bars use an explicitly ordinal 1–5 rubric, with confidence and
+a plausible required range. Unknown or mixed configurations remain unestablished.
+No intelligence-overage percentage, savings, latency prediction or validated
+comparison is derived from these estimates. Event-linked findings are checked
+against the submitted evidence; human judgments are never overwritten. The human
+review fields remain alongside the grader to support independent calibration.
+
+`task_grader_runs` stores personal attempts, status, evidence digest, source/input
+snapshot, configuration without credentials, prompt/rubric versions and content,
+validated results, and evaluator usage separately from task usage. Failed calls
+may have unknown usage, and failures retain already-observed usage. The viewer
+admits one run per process without holding a database transaction across network
+calls. Browser requests use `Accept: application/json` to receive a 202 response
+with status/result URLs while an explicitly requested worker runs in the current
+process. Plain form posts retain synchronous redirects. Batch results and usage
+are checkpointed after each request. The owner/ACL-checked
+`GET /sessions/{id}/assessment/grader/{run_id}/status` reports progress and detects
+interruption when no worker exists in the current process. Deploy as a single
+viewer process, matching the existing admission semaphore. Server restarts do not
+automatically resume work.
+An explicit `retry_run_id` resumes failed/interrupted runs, skips completed stages,
+and retains earlier failed-call usage. It requires the same owner, evidence digest,
+range, prompt version, input hash, and configuration. Calls interrupted before a
+result checkpoint can be repeated on explicit retry.
+`GET /sessions/{id}/assessment/grader/{run_id}.json` exports the frozen attempt,
+rechecking owner/project access and current freshness. No grading starts without
+explicit submission and no retries are automatic. Full-session estimates appear
+on the dashboard.
 
 ## Later phases
 
-1. Optional rubric-based LLM grader: blind outcome grading to model/cost; require
-   event-linked findings; record grader/prompt versions; treat trace content as
-   untrusted evidence; calibrate against human reviews. Explicitly configure local
-   or external processing and track evaluator usage separately from task usage.
+1. Broader grader calibration against independent human reviews and task outcomes.
 2. Controlled reruns: preserve initial repository/environment, task input,
    instructions, tools, permissions, and independent acceptance checks. Change
    effort or model one at a time. Retain failed/interrupted/recovery attempts.
@@ -216,7 +331,7 @@ links back to each selected turn's full audit. The session view provides an
    only after recalculating onto one policy. Zero accepted completions yields no
    finite cost-per-accepted-task. Use thresholds set before comparisons.
 4. Multi-session tasks, deduplicated parent/child accounting, shared calibration,
-   aggregate dashboards, and validated recommendations by task category.
+   aggregate cost dashboards, and validated recommendations by task category.
 
 No release should divide ordinal task demand by arbitrary cost to display an
 “efficiency percentage.” Generation overhead estimates, if introduced later,
@@ -244,16 +359,21 @@ must state how sufficient output was estimated and their uncertainty.
 ## Existing integration points and sources
 
 Implemented in [task_assessment.py](../agent_operations_viewer/task_assessment.py),
+[llm_grader.py](../agent_operations_viewer/llm_grader.py),
 [assessment routes](../agent_operations_viewer/web/routes/assessments.py), and
 [the assessment template](../agent_operations_viewer/templates/assessment.html).
 Python checks live in [test_task_assessment.py](../tests/test_task_assessment.py);
 the browser workflow is in
 [task-assessment.spec.js](../tests/e2e/specs/task-assessment.spec.js).
 
-Validation: 74 focused Python tests passed across assessment, parsing, session
-view, and route authentication. The assessment browser test passed using installed
-Chrome, including save/export, snapshot viewing, and mobile overflow checks. CSS
-compiled successfully. A broader Python run reported eight existing action-queue
+Validation: the settings credential update passed 47 focused Python tests across the grader,
+dashboard, assessment, route authentication, and configuration, plus the Chromium grader
+workflow covering Settings navigation, saving/keeping/removing keys, charts, and exports.
+The preceding integration passed 101 Python tests and three grader/dashboard/assessment
+browser tests, including filtering and mobile layouts. Grader tests use mocks and a
+local HTTP provider to verify request shape, two-stage isolation, citations, failed-call
+usage, and exports; no external provider has been called.
+CSS compiled successfully. A previous broader Python run reported eight existing action-queue
 failures, and the existing session browser tests reported two ambiguous-selector
 failures; both sets reproduced on an untouched HEAD checkout.
 

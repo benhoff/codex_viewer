@@ -26,6 +26,7 @@ from ...action_queue_state import (
     set_action_queue_state,
 )
 from ...db import connection_scope, write_transaction
+from ... import llm_grader as grader
 from ...environment_audit import fetch_host_environment_audit
 from ...importer import sync_sessions
 from ...local_auth import (
@@ -243,6 +244,7 @@ def render_settings_page(
     password_success: str | None = None,
     server_settings_error: str | None = None,
     server_settings_success: str | None = None,
+    grader_error: str | None = None,
     user_management_error: str | None = None,
     user_management_success: str | None = None,
 ) -> HTMLResponse:
@@ -259,6 +261,8 @@ def render_settings_page(
         machine_credentials = list_machine_credentials(connection) if can_manage_admin else []
         auth_status = fetch_auth_status(connection)
         users = list_users(connection) if can_manage_admin else []
+        grader_config = grader.load_config(connection) if can_manage_admin else None
+        grader_key_configured = grader.has_api_key(connection) if can_manage_admin else False
         search_api_tokens = (
             list_search_api_tokens(connection, str(current_user["user_id"]))
             if current_user and current_user.get("user_id")
@@ -299,6 +303,9 @@ def render_settings_page(
             "server_settings": server_settings,
             "server_settings_error": server_settings_error,
             "server_settings_success": server_settings_success,
+            "grader_config": grader_config,
+            "grader_key_configured": grader_key_configured,
+            "grader_error": grader_error,
             "can_change_password": can_change_password,
             "can_manage_search_tokens": bool(current_user and current_user.get("user_id")),
             "can_manage_admin": can_manage_admin,
@@ -308,6 +315,7 @@ def render_settings_page(
             "setup_wizard_active": setup_required,
             "setup_verification_pending": verification_pending,
         },
+        headers={"Cache-Control": "private, no-store"},
     )
 
 

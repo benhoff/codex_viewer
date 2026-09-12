@@ -1,0 +1,16 @@
+<form id="chunk-picker" action="{{ request.url.path }}/assessment#llm-grader" method="get" class="sticky top-28 z-20 mb-5 space-y-3 rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <h2 class="text-lg font-semibold text-stone-900">Grade a chunk</h2>
+    <div class="flex gap-3 text-sm">
+      <button type="button" data-chunk-page class="font-semibold text-blue-700">Use this page</button>
+      <button type="button" data-chunk-clear class="font-semibold text-stone-600">Clear</button>
+    </div>
+  </div>
+  <p class="text-sm text-stone-600">Select turns below or enter a range. Include follow-ups that belong to the same task.</p>
+  <div class="flex flex-wrap items-end gap-3">
+    <label class="text-sm">First turn<input type="number" name="start_turn" min="1" max="{{ pagination.total_turns }}" required value="{{ pagination.oldest_turn }}" class="block w-24 rounded-xl border border-stone-300 bg-white p-2"></label>
+    <label class="text-sm">Last turn<input type="number" name="end_turn" min="1" max="{{ pagination.total_turns }}" required value="{{ pagination.newest_turn }}" class="block w-24 rounded-xl border border-stone-300 bg-white p-2"></label>
+    <button type="submit" class="rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Review chunk &amp; grade</button>
+  </div>
+  <p id="chunk-summary" aria-live="polite" class="text-xs text-stone-600">Up to 50 turns. Review the chunk before sending it to the LLM.</p>
+</form>
