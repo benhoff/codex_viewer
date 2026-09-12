@@ -13,7 +13,7 @@ from agent_operations_viewer.importer import parse_session_text, upsert_parsed_s
 from agent_operations_viewer.local_auth import create_initial_admin
 from agent_operations_viewer.projects import sync_project_registry
 from agent_operations_viewer.task_assessment import (
-    DEFAULT_POLICY, measure_task, validate_policy, validate_review,
+    DEFAULT_POLICY, NORMALIZATION_VERSION, measure_task, validate_policy, validate_review,
 )
 from agent_operations_viewer.web.app import create_app
 from tests.test_route_auth_audit import make_test_settings
@@ -91,6 +91,46 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(result["commentary_characters"], 7)
         self.assertEqual(result["final_characters"], 4)
         self.assertIsNone(result["resource_wu"])
+
+    def test_context_changes_without_activity_leave_only_ambiguous_intervals_unpriced(self):
+        policy = deepcopy(DEFAULT_POLICY)
+        for model in ("model-a", "model-b"):
+            policy["models"][model] = {"weights": policy["resource"], "basis": "Test"}
+        config_a = event(1, "turn_context", kind="context", model="model-a")
+        config_b = event(3, "turn_context", kind="context", model="model-b")
+        for configurations in ([config_b], [config_b, {**config_a, "event_index": 4}]):
+            with self.subTest(configurations=configurations):
+                result = self.measure([config_a, usage(2, 100, origin=True), *configurations,
+                                       usage(5, 160), usage(6, 200)], policy=validate_policy(policy))
+                self.assertEqual(result["tokens"]["input_tokens"], 200)
+                self.assertAlmostEqual(result["resource_wu"], .36)
+                self.assertIsNone(result["intervals"][1]["model_weighted_wu"])
+                self.assertIsNotNone(result["intervals"][2]["model_weighted_wu"])
+                self.assertEqual(result["priced_intervals"], 2)
+                self.assertEqual(result["model_coverage"], "partial")
+
+    def test_context_changes_from_baseline_and_before_first_checkpoint_are_ambiguous(self):
+        policy = deepcopy(DEFAULT_POLICY)
+        for model in ("model-a", "model-b"):
+            policy["models"][model] = {"weights": policy["resource"], "basis": "Test"}
+        config_a = event(1, "turn_context", kind="context", model="model-a", reasoning_effort="high")
+        config_b = event(3, "turn_context", kind="context", model="model-b")
+        for events, kwargs in (([config_b, usage(4, 160)], {"baseline": usage(2, 100), "prior_context": config_a}),
+                               ([config_a, config_b, usage(4, 160, origin=True)], {})):
+            with self.subTest(kwargs=kwargs):
+                result = self.measure(events, policy=validate_policy(policy), **kwargs)
+                self.assertIsNone(result["model_weighted_wu"])
+                self.assertIsNotNone(result["resource_wu"])
+                self.assertEqual(result["configurations"][0]["effort"], "high")
+
+    def test_preceding_reroute_does_not_use_its_model_as_supported_configuration(self):
+        policy = deepcopy(DEFAULT_POLICY)
+        policy["models"]["model-a"] = {"weights": policy["resource"], "basis": "Test"}
+        result = self.measure([usage(3, 160)], baseline=usage(1, 100),
+                              prior_context=event(2, type="model_reroute", model="model-a"),
+                              policy=validate_policy(policy))
+        self.assertIsNone(result["model_weighted_wu"])
+        self.assertEqual(result["usage_coverage"], "recorded")
 
     def test_missing_reasoning_detail_does_not_hide_resource_cost_or_claim_complete_reasoning(self):
         partial = usage(2, 160)
@@ -237,6 +277,43 @@ class AssessmentRouteTests(unittest.TestCase):
         new = self.report()
         self.assertEqual(old["report"]["metrics"]["tokens"], new["report"]["metrics"]["tokens"])
         self.assertAlmostEqual(new["report"]["metrics"]["resource_wu"], .26)
+
+    def test_preceding_reroute_is_retained_and_changes_freshness(self):
+        policy = deepcopy(DEFAULT_POLICY)
+        policy["models"]["model-a"] = {"weights": policy["resource"], "basis": "Test"}
+        self.assertEqual(self.save(policy=json.dumps(policy)).status_code, 303)
+        before = self.report()
+        with connect(self.settings.database_path) as connection, write_transaction(connection):
+            # Simulate a producer with no new context for the selected turn.
+            connection.execute("DELETE FROM events WHERE session_id = ? AND event_index = 8", ("assess-session",))
+            connection.execute(
+                "UPDATE events SET payload_type = 'model_reroute', record_json = ? "
+                "WHERE session_id = ? AND event_index = 6",
+                (json.dumps({"type": "event_msg", "payload": {"type": "model_reroute", "to_model": "model-b"}}), "assess-session"))
+        after = self.report()
+        self.assertTrue(after["stale"])
+        self.assertEqual(after["report"]["prior_context"]["event_index"], 6)
+        self.assertIsNone(after["report"]["metrics"]["model_weighted_wu"])
+        self.assertEqual(before["report"]["metrics"]["resource_wu"], after["report"]["metrics"]["resource_wu"])
+        self.assertEqual(self.save(policy=json.dumps(policy)).status_code, 303)
+        with connect(self.settings.database_path) as connection, write_transaction(connection):
+            connection.execute("UPDATE events SET record_json = ? WHERE session_id = ? AND event_index = 6",
+                               (json.dumps({"type": "event_msg", "payload": {"type": "model_reroute", "to_model": "model-c"}}), "assess-session"))
+        self.assertTrue(self.report()["stale"], "The accounting context must participate in the evidence digest")
+
+    def test_snapshot_renders_saved_demand_policy_and_normalization_version(self):
+        self.assertEqual(self.save(complexity="4", findings="<script>alert(1)</script>").status_code, 303)
+        current = self.report()
+        revision = current["saved"]["id"]
+        snapshot = self.report(revision=revision)
+        self.assertEqual(snapshot["report"]["normalization_version"], NORMALIZATION_VERSION)
+        self.assertEqual(snapshot["review"]["demand"]["complexity"], 4)
+        page = self.client.get(self.url, params={"start_turn": 2, "revision": revision})
+        self.assertIn("Task demand", page.text)
+        self.assertIn("Complexity</dt><dd>4</dd>", page.text)
+        self.assertIn("Saved Work Unit policy", page.text)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", page.text)
+        self.assertNotIn("<script>alert(1)</script>", page.text)
 
     def test_historical_snapshot_survives_removal_of_indexed_turns(self):
         self.assertEqual(self.save().status_code, 303)

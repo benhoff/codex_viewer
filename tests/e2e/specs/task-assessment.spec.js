@@ -22,6 +22,8 @@ test("task assessment saves evidence-backed personal revisions and exports them"
   const before = await (await page.request.get(app.url(exportUrl))).json();
   expect(before.review.model_fit).toBe("unestablished");
   const evidenceIndex = before.report.evidence[0].event_index;
+  await page.getByText("Task demand (optional)", { exact: true }).click();
+  await page.locator('select[name="complexity"]').selectOption("4");
   await page.locator('select[name="model_fit"]').selectOption("candidate_for_comparison");
   await page.getByLabel("Findings", { exact: true }).fill("A bounded change; compare a cheaper configuration with the same checks.");
   await page.getByLabel("Evidence event indexes").fill(String(evidenceIndex));
@@ -32,12 +34,17 @@ test("task assessment saves evidence-backed personal revisions and exports them"
   const after = await (await page.request.get(app.url(exportUrl))).json();
   expect(after.review.evidence_level).toBe("human_trace_review");
   expect(after.review.evidence_events).toEqual([evidenceIndex]);
+  expect(after.review.demand.complexity).toBe(4);
   expect(after.report.metrics.tokens).toEqual(before.report.metrics.tokens);
   await page.screenshot({ path: testInfo.outputPath("task-assessment.png"), fullPage: true });
 
   await page.getByRole("link", { name: /^Revision \d+ ·/ }).first().click();
   await expect(page.getByRole("heading", { name: "Saved review", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save review revision" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Task demand", exact: true })).toBeVisible();
+  await expect(page.locator("dl div").filter({ has: page.getByText("Complexity", { exact: true }) })).toContainText("4");
+  await page.getByText("Saved Work Unit policy", { exact: true }).click();
+  await expect(page.locator("details pre").filter({ hasText: '"version": "work-units-v1"' })).toBeVisible();
   await expect(page.locator(`#event-${evidenceIndex}`)).toBeAttached();
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();

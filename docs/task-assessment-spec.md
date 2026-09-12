@@ -42,6 +42,10 @@ grading and controlled comparisons are later phases described below.
 - Include the preceding usage checkpoint and configuration context needed for
   accounting in the digest. Changing a selected event, boundary, or relevant
   checkpoint makes a saved review stale. Appending unrelated later turns does not.
+- Version accounting independently from the report schema and human rubric.
+  `task-accounting-v2` includes the normalization version in the evidence digest;
+  earlier revisions remain readable as saved snapshots and are marked stale
+  against current accounting.
 - Reconstruct metrics on demand from indexed ranges; do not require a full reimport
   or an expensive startup backfill. Bound ranges to 50 turns and 20,000 events;
   fail explicitly when exceeded instead of silently truncating evidence.
@@ -116,12 +120,15 @@ mapping: a model's spelling is not evidence of its price or capability.
 
 If the model changes between usage checkpoints, the interval cannot be reliably
 allocated to either model. Keep resource WU, mark model-weighted cost partial,
-and preserve every configuration observation. Keep requested/recorded context
+and preserve every configuration observation, even when no message or tool call
+appears between changes or the model switches back before the next checkpoint.
+Keep requested/recorded context
 distinct from actual execution: turn context identifies recorded configuration,
 not proof of the serving model. Selector identity remains unknown unless explicit.
 
 A recorded model reroute clears model attribution until a subsequent supported
-configuration observation. It must not continue pricing against the old model.
+configuration observation, including when the reroute precedes the selected
+range. It must not continue pricing against the old model.
 
 Tool/time/human-intervention dimensions remain separate from token WU. Keep cost
 for failures and interruptions; do not reward a low-cost incomplete result.

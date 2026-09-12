@@ -9,6 +9,7 @@ import sqlite3
 from typing import Any
 
 VERSION = "task-assessment-v1"
+NORMALIZATION_VERSION = "task-accounting-v2"
 MAX_TURNS = 50
 MAX_EVENTS = 20_000
 TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")
@@ -176,10 +177,13 @@ def measure_task(events: list[dict], *, baseline: dict | None, prior_context: di
     active_models: set[str | None] = set()
     if prior_context:
         context = payload(prior_context)
-        current_model = context.get("model") if isinstance(context.get("model"), str) else None
-        current_effort = context.get("effort") if isinstance(context.get("effort"), str) else None
+        if prior_context.get("record_type") == "turn_context":
+            current_model = context.get("model") if isinstance(context.get("model"), str) else None
+            effort = context.get("effort", context.get("reasoning_effort"))
+            current_effort = effort if isinstance(effort, str) else None
         configurations.append({"event_index": prior_context["event_index"], "model": current_model,
                                "effort": current_effort, "source": "preceding_context"})
+        active_models.add(current_model)
     intervals = []
     checkpoints = 0
     duplicate_checkpoints = 0
@@ -199,6 +203,9 @@ def measure_task(events: list[dict], *, baseline: dict | None, prior_context: di
                 current_effort = None
             configurations.append({"event_index": event["event_index"], "model": current_model,
                                    "effort": current_effort, "source": "recorded_context"})
+            # Configuration changes alone make an interval ambiguous, even if
+            # the producer did not record a message or tool call between them.
+            active_models.add(current_model)
         elif event.get("payload_type") == "model_reroute":
             # Do not continue pricing against the old context after a reroute.
             # Producer variants need a dedicated serving-model adapter before
@@ -225,14 +232,14 @@ def measure_task(events: list[dict], *, baseline: dict | None, prior_context: di
             issues.add("Starting usage baseline is unknown; the initial interval is excluded.")
             missing_interval = True
             previous = current
-            active_models.clear()
+            active_models = {current_model}
             continue
         reset = any(previous[k] is not None and current[k] is not None and current[k] < previous[k] for k in TOKEN_FIELDS)
         if reset:
             issues.add("Usage counters decreased; the discontinuous interval is excluded.")
             missing_interval = True
             previous = current
-            active_models.clear()
+            active_models = {current_model}
             continue
         delta = {k: current[k] - previous[k] if current[k] is not None and previous[k] is not None else None for k in TOKEN_FIELDS}
         delta = _tokens(delta)
@@ -259,7 +266,7 @@ def measure_task(events: list[dict], *, baseline: dict | None, prior_context: di
             issues.add("Some usage fields are missing or inconsistent; cost covers measurable intervals only.")
         intervals.append(interval)
         previous = current
-        active_models.clear()
+        active_models = {current_model}
     if supported and not checkpoints:
         issues.add("No cumulative usage checkpoints were recorded in this range.")
     if checkpoints and not intervals:
@@ -363,12 +370,14 @@ def task_source(connection: sqlite3.Connection, session: dict, start: int, end: 
                 baseline = candidate
                 break
     prior = connection.execute(
-        f"SELECT {columns} FROM events WHERE session_id = ? AND event_index < ? AND record_type = 'turn_context' "
+        f"SELECT {columns} FROM events WHERE session_id = ? AND event_index < ? "
+        "AND (record_type = 'turn_context' OR (record_type = 'event_msg' AND payload_type = 'model_reroute')) "
         "ORDER BY event_index DESC LIMIT 1", (session["id"], first)).fetchone()
     context = dict(prior) if prior else None
     identity = {key: session.get(key) for key in ("id", "model_provider", "source", "forked_from_id", "cli_version",
                                                 "cwd", "source_host", "git_commit_hash", "git_repository_url")}
-    evidence = {"version": VERSION, "identity": identity, "turns": turns, "events": events,
+    evidence = {"version": VERSION, "normalization_version": NORMALIZATION_VERSION,
+                "identity": identity, "turns": turns, "events": events,
                 "baseline": baseline, "prior_context": context}
     return {**evidence, "evidence_digest": digest(evidence), "start_turn": start, "end_turn": end}
 
@@ -379,7 +388,8 @@ def report_for_source(source: dict, policy: dict) -> dict:
     metrics = measure_task(source["events"], baseline=source["baseline"], prior_context=source["prior_context"],
                            origin_allowed=source["start_turn"] == 1 and not identity.get("forked_from_id"),
                            supported=supported, policy=policy)
-    return {"schema_version": VERSION, "session_id": identity["id"], "start_turn": source["start_turn"],
+    return {"schema_version": VERSION, "normalization_version": source["normalization_version"],
+            "session_id": identity["id"], "start_turn": source["start_turn"],
             "provenance": identity,
             "end_turn": source["end_turn"], "evidence_digest": source["evidence_digest"],
             "policy": policy, "policy_hash": digest(policy), "metrics": metrics,
