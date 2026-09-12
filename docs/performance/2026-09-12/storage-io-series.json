@@ -1,0 +1,956 @@
+{
+  "intervals": [
+    {
+      "utc": "2026-09-12T07:48:45.910624+00:00",
+      "seconds": 5.001521070022136,
+      "datasets": {
+        "myZFS": {
+          "reads_per_second": 0.0,
+          "writes_per_second": 0.0,
+          "nread_per_second": 0.0,
+          "nwritten_per_second": 0.0
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads_per_second": 196.34,
+          "writes_per_second": 0.0,
+          "nread_per_second": 804209.75,
+          "nwritten_per_second": 0.0
+        }
+      },
+      "disks": {
+        "sda": {
+          "read_MBps": 25.07,
+          "write_MBps": 34.61,
+          "read_await_ms": 10.68,
+          "write_await_ms": 4.29,
+          "busy_percent": 94.6
+        },
+        "sdb": {
+          "read_MBps": 25.8,
+          "write_MBps": 34.22,
+          "read_await_ms": 9.34,
+          "write_await_ms": 3.98,
+          "busy_percent": 90.0
+        },
+        "sdc": {
+          "read_MBps": 0.1,
+          "write_MBps": 0.0,
+          "read_await_ms": 1.25,
+          "write_await_ms": 1.67,
+          "busy_percent": 0.2
+        },
+        "nvme0n1": {
+          "read_MBps": 0.18,
+          "write_MBps": 0.56,
+          "read_await_ms": 0.22,
+          "write_await_ms": 0.36,
+          "busy_percent": 0.2
+        }
+      },
+      "pressure": {
+        "system": {
+          "some_stall_percent": 69.9,
+          "full_stall_percent": 65.4
+        },
+        "viewer": {
+          "some_stall_percent": 24.2,
+          "full_stall_percent": 24.1
+        }
+      }
+    },
+    {
+      "utc": "2026-09-12T07:48:50.912384+00:00",
+      "seconds": 5.001760249957442,
+      "datasets": {
+        "myZFS": {
+          "reads_per_second": 0.0,
+          "writes_per_second": 1928.52,
+          "nread_per_second": 0.0,
+          "nwritten_per_second": 126372816.05
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads_per_second": 433.25,
+          "writes_per_second": 0.8,
+          "nread_per_second": 1774581.66,
+          "nwritten_per_second": 3275.65
+        }
+      },
+      "disks": {
+        "sda": {
+          "read_MBps": 13.47,
+          "write_MBps": 0.18,
+          "read_await_ms": 9.98,
+          "write_await_ms": 6.3,
+          "busy_percent": 65.9
+        },
+        "sdb": {
+          "read_MBps": 18.32,
+          "write_MBps": 0.18,
+          "read_await_ms": 8.65,
+          "write_await_ms": 7.32,
+          "busy_percent": 64.4
+        },
+        "sdc": {
+          "read_MBps": 0.0,
+          "write_MBps": 0.0,
+          "read_await_ms": 0.0,
+          "write_await_ms": 0.0,
+          "busy_percent": 0.0
+        },
+        "nvme0n1": {
+          "read_MBps": 0.06,
+          "write_MBps": 0.78,
+          "read_await_ms": 0.25,
+          "write_await_ms": 0.12,
+          "busy_percent": 12.3
+        }
+      },
+      "pressure": {
+        "system": {
+          "some_stall_percent": 31.8,
+          "full_stall_percent": 29.8
+        },
+        "viewer": {
+          "some_stall_percent": 30.9,
+          "full_stall_percent": 30.8
+        }
+      }
+    },
+    {
+      "utc": "2026-09-12T07:48:55.914108+00:00",
+      "seconds": 5.001724122092128,
+      "datasets": {
+        "myZFS": {
+          "reads_per_second": 0.0,
+          "writes_per_second": 341.48,
+          "nread_per_second": 0.0,
+          "nwritten_per_second": 22382656.31
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads_per_second": 101.96,
+          "writes_per_second": 0.0,
+          "nread_per_second": 417647.98,
+          "nwritten_per_second": 0.0
+        }
+      },
+      "disks": {
+        "sda": {
+          "read_MBps": 9.71,
+          "write_MBps": 57.27,
+          "read_await_ms": 15.93,
+          "write_await_ms": 3.63,
+          "busy_percent": 91.6
+        },
+        "sdb": {
+          "read_MBps": 8.27,
+          "write_MBps": 56.59,
+          "read_await_ms": 17.27,
+          "write_await_ms": 3.32,
+          "busy_percent": 87.7
+        },
+        "sdc": {
+          "read_MBps": 0.1,
+          "write_MBps": 0.0,
+          "read_await_ms": 1.25,
+          "write_await_ms": 1.67,
+          "busy_percent": 0.2
+        },
+        "nvme0n1": {
+          "read_MBps": 0.18,
+          "write_MBps": 0.26,
+          "read_await_ms": 0.22,
+          "write_await_ms": 0.22,
+          "busy_percent": 0.0
+        }
+      },
+      "pressure": {
+        "system": {
+          "some_stall_percent": 63.2,
+          "full_stall_percent": 59.2
+        },
+        "viewer": {
+          "some_stall_percent": 35.1,
+          "full_stall_percent": 35.1
+        }
+      }
+    },
+    {
+      "utc": "2026-09-12T07:49:00.916042+00:00",
+      "seconds": 5.001932475017384,
+      "datasets": {
+        "myZFS": {
+          "reads_per_second": 0.8,
+          "writes_per_second": 324.27,
+          "nread_per_second": 3.2,
+          "nwritten_per_second": 21209761.33
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads_per_second": 137.15,
+          "writes_per_second": 0.0,
+          "nread_per_second": 561754.08,
+          "nwritten_per_second": 0.0
+        }
+      },
+      "disks": {
+        "sda": {
+          "read_MBps": 3.97,
+          "write_MBps": 45.58,
+          "read_await_ms": 21.63,
+          "write_await_ms": 4.15,
+          "busy_percent": 91.4
+        },
+        "sdb": {
+          "read_MBps": 4.94,
+          "write_MBps": 47.39,
+          "read_await_ms": 18.84,
+          "write_await_ms": 3.82,
+          "busy_percent": 91.5
+        },
+        "sdc": {
+          "read_MBps": 0.06,
+          "write_MBps": 0.04,
+          "read_await_ms": 0.45,
+          "write_await_ms": 0.25,
+          "busy_percent": 0.1
+        },
+        "nvme0n1": {
+          "read_MBps": 0.02,
+          "write_MBps": 0.22,
+          "read_await_ms": 0.15,
+          "write_await_ms": 0.22,
+          "busy_percent": 0.1
+        }
+      },
+      "pressure": {
+        "system": {
+          "some_stall_percent": 62.2,
+          "full_stall_percent": 57.5
+        },
+        "viewer": {
+          "some_stall_percent": 29.6,
+          "full_stall_percent": 29.5
+        }
+      }
+    },
+    {
+      "utc": "2026-09-12T07:49:05.917992+00:00",
+      "seconds": 5.00195069401525,
+      "datasets": {
+        "myZFS": {
+          "reads_per_second": 0.0,
+          "writes_per_second": 0.0,
+          "nread_per_second": 0.0,
+          "nwritten_per_second": 0.0
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads_per_second": 76.17,
+          "writes_per_second": 0.0,
+          "nread_per_second": 311993.48,
+          "nwritten_per_second": 0.0
+        }
+      },
+      "disks": {
+        "sda": {
+          "read_MBps": 3.65,
+          "write_MBps": 31.48,
+          "read_await_ms": 17.59,
+          "write_await_ms": 5.62,
+          "busy_percent": 91.7
+        },
+        "sdb": {
+          "read_MBps": 3.82,
+          "write_MBps": 30.35,
+          "read_await_ms": 16.97,
+          "write_await_ms": 4.59,
+          "busy_percent": 86.4
+        },
+        "sdc": {
+          "read_MBps": 0.13,
+          "write_MBps": 0.01,
+          "read_await_ms": 0.46,
+          "write_await_ms": 1.25,
+          "busy_percent": 0.2
+        },
+        "nvme0n1": {
+          "read_MBps": 0.17,
+          "write_MBps": 0.14,
+          "read_await_ms": 0.14,
+          "write_await_ms": 0.12,
+          "busy_percent": 0.1
+        }
+      },
+      "pressure": {
+        "system": {
+          "some_stall_percent": 61.3,
+          "full_stall_percent": 57.9
+        },
+        "viewer": {
+          "some_stall_percent": 27.0,
+          "full_stall_percent": 27.0
+        }
+      }
+    },
+    {
+      "utc": "2026-09-12T07:49:10.920252+00:00",
+      "seconds": 5.002261160872877,
+      "datasets": {
+        "myZFS": {
+          "reads_per_second": 0.0,
+          "writes_per_second": 0.0,
+          "nread_per_second": 0.0,
+          "nwritten_per_second": 0.0
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads_per_second": 91.16,
+          "writes_per_second": 0.0,
+          "nread_per_second": 373386.34,
+          "nwritten_per_second": 0.0
+        }
+      },
+      "disks": {
+        "sda": {
+          "read_MBps": 0.71,
+          "write_MBps": 15.01,
+          "read_await_ms": 41.4,
+          "write_await_ms": 5.29,
+          "busy_percent": 60.1
+        },
+        "sdb": {
+          "read_MBps": 0.75,
+          "write_MBps": 15.07,
+          "read_await_ms": 35.91,
+          "write_await_ms": 5.05,
+          "busy_percent": 61.7
+        },
+        "sdc": {
+          "read_MBps": 0.22,
+          "write_MBps": 0.03,
+          "read_await_ms": 0.38,
+          "write_await_ms": 1.0,
+          "busy_percent": 0.5
+        },
+        "nvme0n1": {
+          "read_MBps": 14.71,
+          "write_MBps": 1.45,
+          "read_await_ms": 0.51,
+          "write_await_ms": 0.13,
+          "busy_percent": 3.4
+        }
+      },
+      "pressure": {
+        "system": {
+          "some_stall_percent": 69.4,
+          "full_stall_percent": 64.5
+        },
+        "viewer": {
+          "some_stall_percent": 62.8,
+          "full_stall_percent": 62.6
+        }
+      }
+    }
+  ],
+  "snapshots": [
+    {
+      "time": 2009811.6148037,
+      "utc": "2026-09-12T07:48:40.909103+00:00",
+      "datasets": {
+        "myZFS": {
+          "reads": 212,
+          "writes": 71284884,
+          "nread": 16064,
+          "nwritten": 4356895152992
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads": 12095922797,
+          "writes": 306748154,
+          "nread": 49998370102473,
+          "nwritten": 825270836542
+        }
+      },
+      "disks": {
+        "sda": {
+          "reads": 8557724,
+          "read_sectors": 2897121144,
+          "read_ms": 76328674,
+          "writes": 33956272,
+          "write_sectors": 11096858472,
+          "write_ms": 116368171,
+          "busy_ms": 127440514
+        },
+        "sdb": {
+          "reads": 8812068,
+          "read_sectors": 2978794432,
+          "read_ms": 74307170,
+          "writes": 33745038,
+          "write_sectors": 11096862312,
+          "write_ms": 114266970,
+          "busy_ms": 123671887
+        },
+        "sdc": {
+          "reads": 1698513,
+          "read_sectors": 226710924,
+          "read_ms": 1452077,
+          "writes": 2535171,
+          "write_sectors": 78809490,
+          "write_ms": 2176041,
+          "busy_ms": 3252111
+        },
+        "nvme0n1": {
+          "reads": 301458084,
+          "read_sectors": 11245361722,
+          "read_ms": 92032559,
+          "writes": 96708200,
+          "write_sectors": 2436830226,
+          "write_ms": 99587069,
+          "busy_ms": 65223270
+        }
+      },
+      "pressure": {
+        "system": {
+          "some": {
+            "avg10": 56.12,
+            "avg60": 67.54,
+            "avg300": 73.74,
+            "total": 82188434213.0
+          },
+          "full": {
+            "avg10": 53.49,
+            "avg60": 63.12,
+            "avg300": 68.65,
+            "total": 76081177004.0
+          }
+        },
+        "viewer": {
+          "some": {
+            "avg10": 31.97,
+            "avg60": 36.11,
+            "avg300": 33.81,
+            "total": 538428617.0
+          },
+          "full": {
+            "avg10": 31.97,
+            "avg60": 36.09,
+            "avg300": 33.75,
+            "total": 536747828.0
+          }
+        }
+      }
+    },
+    {
+      "time": 2009816.61632477,
+      "utc": "2026-09-12T07:48:45.910624+00:00",
+      "datasets": {
+        "myZFS": {
+          "reads": 212,
+          "writes": 71284884,
+          "nread": 16064,
+          "nwritten": 4356895152992
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads": 12095923779,
+          "writes": 306748154,
+          "nread": 49998374124745,
+          "nwritten": 825270836542
+        }
+      },
+      "disks": {
+        "sda": {
+          "reads": 8558288,
+          "read_sectors": 2897366032,
+          "read_ms": 76334699,
+          "writes": 33957023,
+          "write_sectors": 11097196536,
+          "write_ms": 116371391,
+          "busy_ms": 127445244
+        },
+        "sdb": {
+          "reads": 8812677,
+          "read_sectors": 2979046504,
+          "read_ms": 74312856,
+          "writes": 33745792,
+          "write_sectors": 11097196592,
+          "write_ms": 114269971,
+          "busy_ms": 123676386
+        },
+        "sdc": {
+          "reads": 1698517,
+          "read_sectors": 226711948,
+          "read_ms": 1452082,
+          "writes": 2535174,
+          "write_sectors": 78809514,
+          "write_ms": 2176046,
+          "busy_ms": 3252120
+        },
+        "nvme0n1": {
+          "reads": 301458093,
+          "read_sectors": 11245363522,
+          "read_ms": 92032561,
+          "writes": 96708298,
+          "write_sectors": 2436835696,
+          "write_ms": 99587104,
+          "busy_ms": 65223279
+        }
+      },
+      "pressure": {
+        "system": {
+          "some": {
+            "avg10": 59.62,
+            "avg60": 67.48,
+            "avg300": 73.64,
+            "total": 82191931111.0
+          },
+          "full": {
+            "avg10": 56.87,
+            "avg60": 63.15,
+            "avg300": 68.58,
+            "total": 76084448627.0
+          }
+        },
+        "viewer": {
+          "some": {
+            "avg10": 28.27,
+            "avg60": 34.98,
+            "avg300": 33.62,
+            "total": 539637102.0
+          },
+          "full": {
+            "avg10": 28.15,
+            "avg60": 34.93,
+            "avg300": 33.55,
+            "total": 537953609.0
+          }
+        }
+      }
+    },
+    {
+      "time": 2009821.61808502,
+      "utc": "2026-09-12T07:48:50.912384+00:00",
+      "datasets": {
+        "myZFS": {
+          "reads": 212,
+          "writes": 71294530,
+          "nread": 16064,
+          "nwritten": 4357527239520
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads": 12095925946,
+          "writes": 306748158,
+          "nread": 49998383000777,
+          "nwritten": 825270852926
+        }
+      },
+      "disks": {
+        "sda": {
+          "reads": 8558716,
+          "read_sectors": 2897497640,
+          "read_ms": 76338972,
+          "writes": 33957123,
+          "write_sectors": 11097198304,
+          "write_ms": 116372021,
+          "busy_ms": 127448541
+        },
+        "sdb": {
+          "reads": 8813158,
+          "read_sectors": 2979225440,
+          "read_ms": 74317019,
+          "writes": 33745887,
+          "write_sectors": 11097198304,
+          "write_ms": 114270666,
+          "busy_ms": 123679605
+        },
+        "sdc": {
+          "reads": 1698517,
+          "read_sectors": 226711948,
+          "read_ms": 1452082,
+          "writes": 2535174,
+          "write_sectors": 78809514,
+          "write_ms": 2176046,
+          "busy_ms": 3252120
+        },
+        "nvme0n1": {
+          "reads": 301458101,
+          "read_sectors": 11245364066,
+          "read_ms": 92032563,
+          "writes": 96708647,
+          "write_sectors": 2436843352,
+          "write_ms": 99587147,
+          "busy_ms": 65223894
+        }
+      },
+      "pressure": {
+        "system": {
+          "some": {
+            "avg10": 49.31,
+            "avg60": 64.87,
+            "avg300": 72.96,
+            "total": 82193522069.0
+          },
+          "full": {
+            "avg10": 46.47,
+            "avg60": 60.64,
+            "avg300": 67.94,
+            "total": 76085938061.0
+          }
+        },
+        "viewer": {
+          "some": {
+            "avg10": 28.49,
+            "avg60": 34.62,
+            "avg300": 33.56,
+            "total": 541180796.0
+          },
+          "full": {
+            "avg10": 28.41,
+            "avg60": 34.58,
+            "avg300": 33.5,
+            "total": 539494855.0
+          }
+        }
+      }
+    },
+    {
+      "time": 2009826.619809142,
+      "utc": "2026-09-12T07:48:55.914108+00:00",
+      "datasets": {
+        "myZFS": {
+          "reads": 212,
+          "writes": 71296238,
+          "nread": 16064,
+          "nwritten": 4357639191392
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads": 12095926456,
+          "writes": 306748158,
+          "nread": 49998385089737,
+          "nwritten": 825270852926
+        }
+      },
+      "disks": {
+        "sda": {
+          "reads": 8558985,
+          "read_sectors": 2897592464,
+          "read_ms": 76343256,
+          "writes": 33958236,
+          "write_sectors": 11097757760,
+          "write_ms": 116376066,
+          "busy_ms": 127453123
+        },
+        "sdb": {
+          "reads": 8813407,
+          "read_sectors": 2979306264,
+          "read_ms": 74321318,
+          "writes": 33747007,
+          "write_sectors": 11097751104,
+          "write_ms": 114274383,
+          "busy_ms": 123683992
+        },
+        "sdc": {
+          "reads": 1698521,
+          "read_sectors": 226712972,
+          "read_ms": 1452087,
+          "writes": 2535177,
+          "write_sectors": 78809538,
+          "write_ms": 2176051,
+          "busy_ms": 3252129
+        },
+        "nvme0n1": {
+          "reads": 301458110,
+          "read_sectors": 11245365866,
+          "read_ms": 92032565,
+          "writes": 96708712,
+          "write_sectors": 2436845912,
+          "write_ms": 99587161,
+          "busy_ms": 65223896
+        }
+      },
+      "pressure": {
+        "system": {
+          "some": {
+            "avg10": 53.42,
+            "avg60": 64.63,
+            "avg300": 72.8,
+            "total": 82196683037.0
+          },
+          "full": {
+            "avg10": 50.23,
+            "avg60": 60.42,
+            "avg300": 67.79,
+            "total": 76088896971.0
+          }
+        },
+        "viewer": {
+          "some": {
+            "avg10": 28.5,
+            "avg60": 34.05,
+            "avg300": 33.46,
+            "total": 542937320.0
+          },
+          "full": {
+            "avg10": 28.45,
+            "avg60": 34.01,
+            "avg300": 33.4,
+            "total": 541250278.0
+          }
+        }
+      }
+    },
+    {
+      "time": 2009831.621741617,
+      "utc": "2026-09-12T07:49:00.916042+00:00",
+      "datasets": {
+        "myZFS": {
+          "reads": 216,
+          "writes": 71297860,
+          "nread": 16080,
+          "nwritten": 4357745281186
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads": 12095927142,
+          "writes": 306748158,
+          "nread": 49998387899593,
+          "nwritten": 825270852926
+        }
+      },
+      "disks": {
+        "sda": {
+          "reads": 8559211,
+          "read_sectors": 2897631216,
+          "read_ms": 76348144,
+          "writes": 33959126,
+          "write_sectors": 11098203040,
+          "write_ms": 116379760,
+          "busy_ms": 127457695
+        },
+        "sdb": {
+          "reads": 8813669,
+          "read_sectors": 2979354480,
+          "read_ms": 74326254,
+          "writes": 33747952,
+          "write_sectors": 11098214048,
+          "write_ms": 114277993,
+          "busy_ms": 123688571
+        },
+        "sdc": {
+          "reads": 1698541,
+          "read_sectors": 226713604,
+          "read_ms": 1452096,
+          "writes": 2535181,
+          "write_sectors": 78809914,
+          "write_ms": 2176052,
+          "busy_ms": 3252136
+        },
+        "nvme0n1": {
+          "reads": 301458123,
+          "read_sectors": 11245366090,
+          "read_ms": 92032567,
+          "writes": 96708757,
+          "write_sectors": 2436848032,
+          "write_ms": 99587171,
+          "busy_ms": 65223902
+        }
+      },
+      "pressure": {
+        "system": {
+          "some": {
+            "avg10": 57.23,
+            "avg60": 64.38,
+            "avg300": 72.58,
+            "total": 82199796249.0
+          },
+          "full": {
+            "avg10": 53.41,
+            "avg60": 60.12,
+            "avg300": 67.57,
+            "total": 76091772429.0
+          }
+        },
+        "viewer": {
+          "some": {
+            "avg10": 29.54,
+            "avg60": 34.0,
+            "avg300": 33.46,
+            "total": 544419248.0
+          },
+          "full": {
+            "avg10": 29.51,
+            "avg60": 33.96,
+            "avg300": 33.4,
+            "total": 542727278.0
+          }
+        }
+      }
+    },
+    {
+      "time": 2009836.623692311,
+      "utc": "2026-09-12T07:49:05.917992+00:00",
+      "datasets": {
+        "myZFS": {
+          "reads": 216,
+          "writes": 71297860,
+          "nread": 16080,
+          "nwritten": 4357745281186
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads": 12095927523,
+          "writes": 306748158,
+          "nread": 49998389460169,
+          "nwritten": 825270852926
+        }
+      },
+      "disks": {
+        "sda": {
+          "reads": 8559489,
+          "read_sectors": 2897666872,
+          "read_ms": 76353033,
+          "writes": 33959805,
+          "write_sectors": 11098510592,
+          "write_ms": 116383579,
+          "busy_ms": 127462281
+        },
+        "sdb": {
+          "reads": 8813976,
+          "read_sectors": 2979391848,
+          "read_ms": 74331463,
+          "writes": 33748620,
+          "write_sectors": 11098510592,
+          "write_ms": 114281060,
+          "busy_ms": 123692892
+        },
+        "sdc": {
+          "reads": 1698565,
+          "read_sectors": 226714828,
+          "read_ms": 1452107,
+          "writes": 2535185,
+          "write_sectors": 78810026,
+          "write_ms": 2176057,
+          "busy_ms": 3252147
+        },
+        "nvme0n1": {
+          "reads": 301458130,
+          "read_sectors": 11245367754,
+          "read_ms": 92032568,
+          "writes": 96708808,
+          "write_sectors": 2436849376,
+          "write_ms": 99587177,
+          "busy_ms": 65223905
+        }
+      },
+      "pressure": {
+        "system": {
+          "some": {
+            "avg10": 59.07,
+            "avg60": 64.29,
+            "avg300": 72.45,
+            "total": 82202862201.0
+          },
+          "full": {
+            "avg10": 55.52,
+            "avg60": 60.11,
+            "avg300": 67.47,
+            "total": 76094670908.0
+          }
+        },
+        "viewer": {
+          "some": {
+            "avg10": 28.56,
+            "avg60": 33.44,
+            "avg300": 33.36,
+            "total": 545771752.0
+          },
+          "full": {
+            "avg10": 28.54,
+            "avg60": 33.41,
+            "avg300": 33.29,
+            "total": 544077387.0
+          }
+        }
+      }
+    },
+    {
+      "time": 2009841.625953472,
+      "utc": "2026-09-12T07:49:10.920252+00:00",
+      "datasets": {
+        "myZFS": {
+          "reads": 216,
+          "writes": 71297860,
+          "nread": 16080,
+          "nwritten": 4357745281186
+        },
+        "myZFS/subvol-101-disk-0": {
+          "reads": 12095927979,
+          "writes": 306748158,
+          "nread": 49998391327945,
+          "nwritten": 825270852926
+        }
+      },
+      "disks": {
+        "sda": {
+          "reads": 8559556,
+          "read_sectors": 2897673808,
+          "read_ms": 76355807,
+          "writes": 33960334,
+          "write_sectors": 11098657280,
+          "write_ms": 116386375,
+          "busy_ms": 127465286
+        },
+        "sdb": {
+          "reads": 8814046,
+          "read_sectors": 2979399208,
+          "read_ms": 74333977,
+          "writes": 33749152,
+          "write_sectors": 11098657792,
+          "write_ms": 114283746,
+          "busy_ms": 123695978
+        },
+        "sdc": {
+          "reads": 1698630,
+          "read_sectors": 226717020,
+          "read_ms": 1452132,
+          "writes": 2535193,
+          "write_sectors": 78810346,
+          "write_ms": 2176065,
+          "busy_ms": 3252174
+        },
+        "nvme0n1": {
+          "reads": 301475781,
+          "read_sectors": 11245511442,
+          "read_ms": 92041555,
+          "writes": 96709194,
+          "write_sectors": 2436863548,
+          "write_ms": 99587227,
+          "busy_ms": 65224073
+        }
+      },
+      "pressure": {
+        "system": {
+          "some": {
+            "avg10": 62.27,
+            "avg60": 64.4,
+            "avg300": 72.3,
+            "total": 82206336169.0
+          },
+          "full": {
+            "avg10": 58.32,
+            "avg60": 60.18,
+            "avg300": 67.33,
+            "total": 76097896790.0
+          }
+        },
+        "viewer": {
+          "some": {
+            "avg10": 40.07,
+            "avg60": 35.46,
+            "avg300": 33.79,
+            "total": 548913185.0
+          },
+          "full": {
+            "avg10": 39.91,
+            "avg60": 35.39,
+            "avg300": 33.72,
+            "total": 547206354.0
+          }
+        }
+      }
+    }
+  ]
+}

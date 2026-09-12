@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..command_render import render_command_markup
 from ..markdown_utils import render_markdown
-from ..db import connect
+from ..db import connection_scope
 from ..projects import build_project_access_context
 from ..saved_turns import count_saved_turns, owner_scope_from_request
 from ..session_view import full_timestamp, humanize_timestamp
@@ -58,7 +58,7 @@ def review_queue_open_count(request: Request) -> int:
         context = get_app_context(request)
     except RuntimeError:
         return 0
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),

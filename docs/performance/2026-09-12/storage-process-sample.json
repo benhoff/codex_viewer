@@ -1,0 +1,375 @@
+{
+  "seconds": 4.01,
+  "readable_processes": 21,
+  "denied_processes": 150,
+  "top_physical_io": [
+    {
+      "pid": "497802",
+      "name": "python3",
+      "cgroup": "0::/system.slice/codex-session-viewer.service",
+      "read_bytes_per_second": 2959580.5,
+      "write_bytes_per_second": 510448.5,
+      "rchar_per_second": 510448.5,
+      "wchar_per_second": 510448.5,
+      "syscr_per_second": 124.6,
+      "syscw_per_second": 124.6
+    },
+    {
+      "pid": "479522",
+      "name": "codex",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-f6a06ea3-1e46-4920-b2dc-404756581519.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 115361.4,
+      "rchar_per_second": 884523.3,
+      "wchar_per_second": 113589.3,
+      "syscr_per_second": 335.7,
+      "syscw_per_second": 210.1
+    },
+    {
+      "pid": "1432",
+      "name": "atuin-server",
+      "cgroup": "0::/system.slice/docker-28e3f091abb03e89d11b1d2764d2989a6001154207e236fa0e8362dbe0f54a4d.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 0.0,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 0.0,
+      "syscw_per_second": 0.0
+    },
+    {
+      "pid": "438485",
+      "name": "bash",
+      "cgroup": "0::/user.slice/user-1000.slice/session-c640.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 0.0,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 0.0,
+      "syscw_per_second": 0.0
+    },
+    {
+      "pid": "459031",
+      "name": "tmux: client",
+      "cgroup": "0::/user.slice/user-1000.slice/session-c640.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 0.0,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 0.0,
+      "syscw_per_second": 0.0
+    },
+    {
+      "pid": "459032",
+      "name": "bash",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-79ad9ff1-3974-422c-b28e-b09d5ff5e1b3.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 0.0,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 0.0,
+      "syscw_per_second": 0.0
+    },
+    {
+      "pid": "459794",
+      "name": "bash",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-f6a06ea3-1e46-4920-b2dc-404756581519.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 0.0,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 0.0,
+      "syscw_per_second": 0.0
+    },
+    {
+      "pid": "479515",
+      "name": "node-MainThread",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-f6a06ea3-1e46-4920-b2dc-404756581519.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 0.0,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 0.0,
+      "syscw_per_second": 0.0
+    },
+    {
+      "pid": "480655",
+      "name": "codex-code-mode",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-f6a06ea3-1e46-4920-b2dc-404756581519.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 524.2,
+      "wchar_per_second": 885.3,
+      "syscr_per_second": 0.5,
+      "syscw_per_second": 9.5
+    },
+    {
+      "pid": "506480",
+      "name": "node-MainThread",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-79ad9ff1-3974-422c-b28e-b09d5ff5e1b3.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 0.0,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 0.0,
+      "syscw_per_second": 0.0
+    },
+    {
+      "pid": "506487",
+      "name": "codex",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-79ad9ff1-3974-422c-b28e-b09d5ff5e1b3.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 153215.6,
+      "wchar_per_second": 702.9,
+      "syscr_per_second": 340.2,
+      "syscw_per_second": 70.0
+    },
+    {
+      "pid": "507082",
+      "name": "python3",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-f6a06ea3-1e46-4920-b2dc-404756581519.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 5488.3,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 54.1,
+      "syscw_per_second": 0.0
+    }
+  ],
+  "top_read_calls": [
+    {
+      "pid": "506487",
+      "name": "codex",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-79ad9ff1-3974-422c-b28e-b09d5ff5e1b3.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 153215.6,
+      "wchar_per_second": 702.9,
+      "syscr_per_second": 340.2,
+      "syscw_per_second": 70.0
+    },
+    {
+      "pid": "479522",
+      "name": "codex",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-f6a06ea3-1e46-4920-b2dc-404756581519.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 115361.4,
+      "rchar_per_second": 884523.3,
+      "wchar_per_second": 113589.3,
+      "syscr_per_second": 335.7,
+      "syscw_per_second": 210.1
+    },
+    {
+      "pid": "497802",
+      "name": "python3",
+      "cgroup": "0::/system.slice/codex-session-viewer.service",
+      "read_bytes_per_second": 2959580.5,
+      "write_bytes_per_second": 510448.5,
+      "rchar_per_second": 510448.5,
+      "wchar_per_second": 510448.5,
+      "syscr_per_second": 124.6,
+      "syscw_per_second": 124.6
+    },
+    {
+      "pid": "2564505",
+      "name": "codex",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-4e3b5be9-59e0-4328-8024-6d421299d9a3.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 1220.3,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 75.8,
+      "syscw_per_second": 0.0
+    },
+    {
+      "pid": "507082",
+      "name": "python3",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-f6a06ea3-1e46-4920-b2dc-404756581519.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 5488.3,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 54.1,
+      "syscw_per_second": 0.0
+    },
+    {
+      "pid": "2564380",
+      "name": "tmux: server",
+      "cgroup": "0::/user.slice/user-1000.slice/session-c580.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 3668.4,
+      "wchar_per_second": 28075.2,
+      "syscr_per_second": 25.7,
+      "syscw_per_second": 22.7
+    },
+    {
+      "pid": "480655",
+      "name": "codex-code-mode",
+      "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-f6a06ea3-1e46-4920-b2dc-404756581519.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 524.2,
+      "wchar_per_second": 885.3,
+      "syscr_per_second": 0.5,
+      "syscw_per_second": 9.5
+    },
+    {
+      "pid": "1432",
+      "name": "atuin-server",
+      "cgroup": "0::/system.slice/docker-28e3f091abb03e89d11b1d2764d2989a6001154207e236fa0e8362dbe0f54a4d.scope",
+      "read_bytes_per_second": 0.0,
+      "write_bytes_per_second": 0.0,
+      "rchar_per_second": 0.0,
+      "wchar_per_second": 0.0,
+      "syscr_per_second": 0.0,
+      "syscw_per_second": 0.0
+    }
+  ],
+  "disks": [
+    {
+      "name": "sda",
+      "read_MBps": 1.21,
+      "write_MBps": 18.13,
+      "read_iops": 16.2,
+      "write_iops": 125.4,
+      "read_await_ms": 33.34,
+      "write_await_ms": 5.22,
+      "busy_percent": 65.1,
+      "inflight": 0
+    },
+    {
+      "name": "sda1",
+      "read_MBps": 1.21,
+      "write_MBps": 18.13,
+      "read_iops": 16.2,
+      "write_iops": 125.4,
+      "read_await_ms": 33.34,
+      "write_await_ms": 5.22,
+      "busy_percent": 66.7,
+      "inflight": 0
+    },
+    {
+      "name": "sdb",
+      "read_MBps": 1.21,
+      "write_MBps": 18.03,
+      "read_iops": 16.2,
+      "write_iops": 124.9,
+      "read_await_ms": 27.63,
+      "write_await_ms": 4.41,
+      "busy_percent": 55.3,
+      "inflight": 1
+    },
+    {
+      "name": "sdb1",
+      "read_MBps": 1.21,
+      "write_MBps": 18.03,
+      "read_iops": 16.2,
+      "write_iops": 124.9,
+      "read_await_ms": 27.63,
+      "write_await_ms": 4.41,
+      "busy_percent": 57.2,
+      "inflight": 1
+    },
+    {
+      "name": "sdc",
+      "read_MBps": 0.13,
+      "write_MBps": 0.0,
+      "read_iops": 1.0,
+      "write_iops": 0.7,
+      "read_await_ms": 1.25,
+      "write_await_ms": 1.67,
+      "busy_percent": 0.2,
+      "inflight": 0
+    },
+    {
+      "name": "sdc3",
+      "read_MBps": 0.13,
+      "write_MBps": 0.0,
+      "read_iops": 1.0,
+      "write_iops": 0.7,
+      "read_await_ms": 1.25,
+      "write_await_ms": 1.67,
+      "busy_percent": 0.2,
+      "inflight": 0
+    },
+    {
+      "name": "nvme0n1",
+      "read_MBps": 0.27,
+      "write_MBps": 0.26,
+      "read_iops": 4.5,
+      "write_iops": 38.6,
+      "read_await_ms": 0.22,
+      "write_await_ms": 0.12,
+      "busy_percent": 3.7,
+      "inflight": 0
+    },
+    {
+      "name": "dm-1",
+      "read_MBps": 0.0,
+      "write_MBps": 0.0,
+      "read_iops": 0.0,
+      "write_iops": 1.0,
+      "read_await_ms": 0.0,
+      "write_await_ms": 1.0,
+      "busy_percent": 0.1,
+      "inflight": 0
+    },
+    {
+      "name": "dm-4",
+      "read_MBps": 0.01,
+      "write_MBps": 0.03,
+      "read_iops": 2.5,
+      "write_iops": 7.2,
+      "read_await_ms": 0.0,
+      "write_await_ms": 0.03,
+      "busy_percent": 0.0,
+      "inflight": 0
+    },
+    {
+      "name": "dm-5",
+      "read_MBps": 0.07,
+      "write_MBps": 0.23,
+      "read_iops": 1.0,
+      "write_iops": 40.9,
+      "read_await_ms": 0.25,
+      "write_await_ms": 0.03,
+      "busy_percent": 0.1,
+      "inflight": 0
+    },
+    {
+      "name": "dm-8",
+      "read_MBps": 0.07,
+      "write_MBps": 0.23,
+      "read_iops": 1.0,
+      "write_iops": 40.4,
+      "read_await_ms": 0.25,
+      "write_await_ms": 0.03,
+      "busy_percent": 0.1,
+      "inflight": 0
+    },
+    {
+      "name": "dm-12",
+      "read_MBps": 0.0,
+      "write_MBps": 0.16,
+      "read_iops": 0.0,
+      "write_iops": 38.6,
+      "read_await_ms": 0.0,
+      "write_await_ms": 0.1,
+      "busy_percent": 3.7,
+      "inflight": 0
+    },
+    {
+      "name": "dm-13",
+      "read_MBps": 0.0,
+      "write_MBps": 0.0,
+      "read_iops": 0.0,
+      "write_iops": 1.0,
+      "read_await_ms": 0.0,
+      "write_await_ms": 0.0,
+      "busy_percent": 0.0,
+      "inflight": 0
+    }
+  ],
+  "pressure": "some avg10=77.72 avg60=72.49 avg300=72.27 total=81644185302\nfull avg10=71.51 avg60=65.94 avg300=66.94 total=75574543228\n"
+}

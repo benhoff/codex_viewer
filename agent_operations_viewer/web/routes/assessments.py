@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from ...db import connect, write_transaction
+from ...db import connection_scope, write_transaction
 from ...projects import build_project_access_context, fetch_session_with_project, row_is_visible_to_project_access
 from ...saved_turns import owner_scope_from_request
 from ...task_assessment import (
@@ -33,7 +33,7 @@ def load_assessment(request: Request, session_id: str, start: int, end: int, rev
     context = get_app_context(request)
     owner = owner_scope_from_request(request)
     try:
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             session = visible_session(connection, request, session_id)
             with connection:  # Pin source and review reads to one SQLite snapshot.
                 connection.execute("BEGIN")
@@ -88,7 +88,7 @@ def persist_assessment(request: Request, session_id: str, fields: dict):
         policy = validate_policy(json.loads(fields.get("policy", "{}")))
         context = get_app_context(request)
         owner = owner_scope_from_request(request)
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 session = visible_session(connection, request, session_id)
                 source = task_source(connection, session, start, end)

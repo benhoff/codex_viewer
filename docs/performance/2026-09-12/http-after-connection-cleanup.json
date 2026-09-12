@@ -1,0 +1,864 @@
+{
+  "service_restart_utc": "2026-09-12T08:09:17Z",
+  "pid": 536131,
+  "summary": [
+    {
+      "path": "/api/health",
+      "attempts": 2,
+      "successes": 2,
+      "median_ms": 4.28,
+      "min_ms": 2.52,
+      "max_ms": 6.03
+    },
+    {
+      "path": "/settings",
+      "attempts": 5,
+      "successes": 5,
+      "median_ms": 60.46,
+      "min_ms": 57.66,
+      "max_ms": 838.65
+    },
+    {
+      "path": "/machines",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 959.96,
+      "min_ms": 954.54,
+      "max_ms": 1027.56
+    },
+    {
+      "path": "/queue",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 1722.61,
+      "min_ms": 1577.54,
+      "max_ms": 1777.27
+    },
+    {
+      "path": "/",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 1510.65,
+      "min_ms": 1225.28,
+      "max_ms": 1670.82
+    },
+    {
+      "path": "/benhoff/background-recorder",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 1657.83,
+      "min_ms": 1653.73,
+      "max_ms": 2396.63
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+      "attempts": 1,
+      "successes": 1,
+      "median_ms": 1235.85,
+      "min_ms": 1235.85,
+      "max_ms": 1235.85
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae/assessment",
+      "attempts": 1,
+      "successes": 1,
+      "median_ms": 227.4,
+      "min_ms": 227.4,
+      "max_ms": 227.4
+    },
+    {
+      "path": "/assessments",
+      "attempts": 1,
+      "successes": 1,
+      "median_ms": 16687.32,
+      "min_ms": 16687.32,
+      "max_ms": 16687.32
+    },
+    {
+      "path": "/benhoff/background-recorder/stream",
+      "attempts": 1,
+      "successes": 1,
+      "median_ms": 2295.19,
+      "min_ms": 2295.19,
+      "max_ms": 2295.19
+    },
+    {
+      "path": "/search?q=test",
+      "attempts": 1,
+      "successes": 0,
+      "median_ms": null,
+      "min_ms": null,
+      "max_ms": null
+    }
+  ],
+  "runs": {
+    "settings": {
+      "base": "http://127.0.0.1:8001",
+      "pid": "536131",
+      "before": {
+        "utc": "2026-09-12T08:10:04.677098+00:00",
+        "fd_counts": {
+          "database": 3,
+          "wal": 2,
+          "shm": 1,
+          "other": 11
+        },
+        "thread_count": 6,
+        "io_pressure": "some avg10=0.46 avg60=2.87 avg300=1.04 total=3691991\nfull avg10=0.46 avg60=2.87 avg300=1.04 total=3691991"
+      },
+      "samples": [
+        {
+          "path": "/api/health",
+          "before": {
+            "utc": "2026-09-12T08:10:04.677679+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 11
+            },
+            "thread_count": 6,
+            "io_pressure": "some avg10=0.46 avg60=2.87 avg300=1.04 total=3691991\nfull avg10=0.46 avg60=2.87 avg300=1.04 total=3691991"
+          },
+          "status": 200,
+          "ttfb_ms": 5.92,
+          "location": null,
+          "bytes": 93,
+          "total_ms": 6.03,
+          "after": {
+            "utc": "2026-09-12T08:10:04.984423+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 6,
+            "io_pressure": "some avg10=0.46 avg60=2.87 avg300=1.04 total=3691991\nfull avg10=0.46 avg60=2.87 avg300=1.04 total=3691991"
+          }
+        },
+        {
+          "path": "/settings",
+          "before": {
+            "utc": "2026-09-12T08:10:04.985210+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 6,
+            "io_pressure": "some avg10=0.46 avg60=2.87 avg300=1.04 total=3691991\nfull avg10=0.46 avg60=2.87 avg300=1.04 total=3691991"
+          },
+          "status": 200,
+          "ttfb_ms": 838.55,
+          "location": null,
+          "bytes": 61711,
+          "total_ms": 838.65,
+          "after": {
+            "utc": "2026-09-12T08:10:06.124590+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=5.99 avg60=3.79 avg300=1.25 total=4345831\nfull avg10=5.99 avg60=3.79 avg300=1.25 total=4345831"
+          }
+        },
+        {
+          "path": "/settings",
+          "before": {
+            "utc": "2026-09-12T08:10:06.125373+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=5.99 avg60=3.79 avg300=1.25 total=4345831\nfull avg10=5.99 avg60=3.79 avg300=1.25 total=4345831"
+          },
+          "status": 200,
+          "ttfb_ms": 59.39,
+          "location": null,
+          "bytes": 61715,
+          "total_ms": 59.5,
+          "after": {
+            "utc": "2026-09-12T08:10:06.485829+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=5.99 avg60=3.79 avg300=1.25 total=4345831\nfull avg10=5.99 avg60=3.79 avg300=1.25 total=4345831"
+          }
+        },
+        {
+          "path": "/settings",
+          "before": {
+            "utc": "2026-09-12T08:10:06.486847+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=5.99 avg60=3.79 avg300=1.25 total=4345831\nfull avg10=5.99 avg60=3.79 avg300=1.25 total=4345831"
+          },
+          "status": 200,
+          "ttfb_ms": 60.34,
+          "location": null,
+          "bytes": 61715,
+          "total_ms": 60.46,
+          "after": {
+            "utc": "2026-09-12T08:10:06.848326+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=5.99 avg60=3.79 avg300=1.25 total=4345831\nfull avg10=5.99 avg60=3.79 avg300=1.25 total=4345831"
+          }
+        }
+      ]
+    },
+    "pages": {
+      "base": "http://127.0.0.1:8001",
+      "pid": "536131",
+      "before": {
+        "utc": "2026-09-12T08:10:37.532651+00:00",
+        "fd_counts": {
+          "database": 2,
+          "wal": 2,
+          "shm": 1,
+          "other": 10
+        },
+        "thread_count": 7,
+        "io_pressure": "some avg10=0.95 avg60=2.53 avg300=1.18 total=4552396\nfull avg10=0.95 avg60=2.53 avg300=1.18 total=4552396"
+      },
+      "samples": [
+        {
+          "path": "/machines",
+          "before": {
+            "utc": "2026-09-12T08:10:37.533100+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 2,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.95 avg60=2.53 avg300=1.18 total=4552396\nfull avg10=0.95 avg60=2.53 avg300=1.18 total=4552396"
+          },
+          "status": 200,
+          "ttfb_ms": 954.41,
+          "location": null,
+          "bytes": 67247,
+          "total_ms": 954.54,
+          "after": {
+            "utc": "2026-09-12T08:10:38.788386+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.78 avg60=2.45 avg300=1.17 total=4552396\nfull avg10=0.78 avg60=2.45 avg300=1.17 total=4552396"
+          }
+        },
+        {
+          "path": "/queue",
+          "before": {
+            "utc": "2026-09-12T08:10:38.789225+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.78 avg60=2.45 avg300=1.17 total=4552396\nfull avg10=0.78 avg60=2.45 avg300=1.17 total=4552396"
+          },
+          "status": 200,
+          "ttfb_ms": 1577.4,
+          "location": null,
+          "bytes": 52002,
+          "total_ms": 1577.54,
+          "after": {
+            "utc": "2026-09-12T08:10:40.667616+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 1,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.64 avg60=2.37 avg300=1.16 total=4552396\nfull avg10=0.64 avg60=2.37 avg300=1.16 total=4552396"
+          }
+        },
+        {
+          "path": "/",
+          "before": {
+            "utc": "2026-09-12T08:10:40.668446+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 1,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.64 avg60=2.37 avg300=1.16 total=4552396\nfull avg10=0.64 avg60=2.37 avg300=1.16 total=4552396"
+          },
+          "status": 200,
+          "ttfb_ms": 1225.04,
+          "location": null,
+          "bytes": 177048,
+          "total_ms": 1225.28,
+          "after": {
+            "utc": "2026-09-12T08:10:42.194443+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 1,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.52 avg60=2.29 avg300=1.16 total=4552396\nfull avg10=0.52 avg60=2.29 avg300=1.16 total=4552396"
+          }
+        },
+        {
+          "path": "/benhoff/background-recorder",
+          "before": {
+            "utc": "2026-09-12T08:10:42.195256+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 1,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.52 avg60=2.29 avg300=1.16 total=4552396\nfull avg10=0.52 avg60=2.29 avg300=1.16 total=4552396"
+          },
+          "status": 200,
+          "ttfb_ms": 2396.54,
+          "location": null,
+          "bytes": 34451,
+          "total_ms": 2396.63,
+          "after": {
+            "utc": "2026-09-12T08:10:44.892524+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.42 avg60=2.21 avg300=1.15 total=4552396\nfull avg10=0.42 avg60=2.21 avg300=1.15 total=4552396"
+          }
+        },
+        {
+          "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+          "before": {
+            "utc": "2026-09-12T08:10:44.893200+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.42 avg60=2.21 avg300=1.15 total=4552396\nfull avg10=0.42 avg60=2.21 avg300=1.15 total=4552396"
+          },
+          "status": 200,
+          "ttfb_ms": 1230.52,
+          "location": null,
+          "bytes": 4823495,
+          "total_ms": 1235.85,
+          "after": {
+            "utc": "2026-09-12T08:10:46.429687+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.35 avg60=2.14 avg300=1.14 total=4552396\nfull avg10=0.35 avg60=2.14 avg300=1.14 total=4552396"
+          }
+        },
+        {
+          "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae/assessment",
+          "before": {
+            "utc": "2026-09-12T08:10:46.430437+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.35 avg60=2.14 avg300=1.14 total=4552396\nfull avg10=0.35 avg60=2.14 avg300=1.14 total=4552396"
+          },
+          "status": 200,
+          "ttfb_ms": 226.87,
+          "location": null,
+          "bytes": 935131,
+          "total_ms": 227.4,
+          "after": {
+            "utc": "2026-09-12T08:10:46.958499+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.35 avg60=2.14 avg300=1.14 total=4552396\nfull avg10=0.35 avg60=2.14 avg300=1.14 total=4552396"
+          }
+        },
+        {
+          "path": "/assessments",
+          "before": {
+            "utc": "2026-09-12T08:10:46.959463+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=0.35 avg60=2.14 avg300=1.14 total=4552396\nfull avg10=0.35 avg60=2.14 avg300=1.14 total=4552396"
+          },
+          "status": 200,
+          "ttfb_ms": 16687.21,
+          "location": null,
+          "bytes": 59424,
+          "total_ms": 16687.32,
+          "after": {
+            "utc": "2026-09-12T08:11:03.948628+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=9.17 avg60=4.37 avg300=1.70 total=6477545\nfull avg10=9.07 avg60=4.34 avg300=1.69 total=6464012"
+          }
+        },
+        {
+          "path": "/benhoff/background-recorder/stream",
+          "before": {
+            "utc": "2026-09-12T08:11:03.950289+00:00",
+            "fd_counts": {
+              "database": 2,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=9.17 avg60=4.37 avg300=1.70 total=6477545\nfull avg10=9.07 avg60=4.34 avg300=1.69 total=6464012"
+          },
+          "status": 200,
+          "ttfb_ms": 2295.02,
+          "location": null,
+          "bytes": 170991,
+          "total_ms": 2295.19,
+          "after": {
+            "utc": "2026-09-12T08:11:06.546468+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=6.15 avg60=4.08 avg300=1.68 total=6477545\nfull avg10=6.08 avg60=4.06 avg300=1.67 total=6464012"
+          }
+        },
+        {
+          "path": "/search?q=test",
+          "before": {
+            "utc": "2026-09-12T08:11:06.547582+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=6.15 avg60=4.08 avg300=1.68 total=6477545\nfull avg10=6.08 avg60=4.06 avg300=1.67 total=6464012"
+          },
+          "error": "timed out",
+          "total_ms": 20020.06,
+          "after": {
+            "utc": "2026-09-12T08:11:26.868495+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 3,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=16.07 avg60=7.22 avg300=2.54 total=9700757\nfull avg10=15.76 avg60=7.13 avg300=2.52 total=9645573"
+          }
+        }
+      ]
+    },
+    "repeat": {
+      "base": "http://127.0.0.1:8001",
+      "pid": "536131",
+      "before": {
+        "utc": "2026-09-12T08:12:00.839018+00:00",
+        "fd_counts": {
+          "database": 3,
+          "wal": 2,
+          "shm": 1,
+          "other": 8
+        },
+        "thread_count": 7,
+        "io_pressure": "some avg10=46.14 avg60=23.36 avg300=7.07 total=24617117\nfull avg10=46.13 avg60=23.31 avg300=7.06 total=24554004"
+      },
+      "samples": [
+        {
+          "path": "/settings",
+          "before": {
+            "utc": "2026-09-12T08:12:00.839509+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 7,
+            "io_pressure": "some avg10=46.14 avg60=23.36 avg300=7.07 total=24617117\nfull avg10=46.13 avg60=23.31 avg300=7.06 total=24554004"
+          },
+          "status": 200,
+          "ttfb_ms": 64.72,
+          "location": null,
+          "bytes": 61708,
+          "total_ms": 64.85,
+          "after": {
+            "utc": "2026-09-12T08:12:01.204954+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=46.14 avg60=23.36 avg300=7.07 total=24677175\nfull avg10=46.13 avg60=23.31 avg300=7.06 total=24613508"
+          }
+        },
+        {
+          "path": "/machines",
+          "before": {
+            "utc": "2026-09-12T08:12:01.205710+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 2,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=46.14 avg60=23.36 avg300=7.07 total=24677175\nfull avg10=46.13 avg60=23.31 avg300=7.06 total=24613508"
+          },
+          "status": 200,
+          "ttfb_ms": 959.81,
+          "location": null,
+          "bytes": 67248,
+          "total_ms": 959.96,
+          "after": {
+            "utc": "2026-09-12T08:12:02.466389+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=40.50 avg60=23.08 avg300=7.13 total=24915370\nfull avg10=40.49 avg60=23.04 avg300=7.11 total=24851622"
+          }
+        },
+        {
+          "path": "/queue",
+          "before": {
+            "utc": "2026-09-12T08:12:02.467150+00:00",
+            "fd_counts": {
+              "database": 3,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=40.50 avg60=23.08 avg300=7.13 total=24915370\nfull avg10=40.49 avg60=23.04 avg300=7.11 total=24851622"
+          },
+          "status": 200,
+          "ttfb_ms": 1777.18,
+          "location": null,
+          "bytes": 52002,
+          "total_ms": 1777.27,
+          "after": {
+            "utc": "2026-09-12T08:12:04.545139+00:00",
+            "fd_counts": {
+              "database": 4,
+              "wal": 2,
+              "shm": 1,
+              "other": 11
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=35.69 avg60=22.79 avg300=7.18 total=25178204\nfull avg10=35.69 avg60=22.74 avg300=7.16 total=25112693"
+          }
+        },
+        {
+          "path": "/",
+          "before": {
+            "utc": "2026-09-12T08:12:04.545947+00:00",
+            "fd_counts": {
+              "database": 4,
+              "wal": 2,
+              "shm": 1,
+              "other": 11
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=35.69 avg60=22.79 avg300=7.18 total=25178204\nfull avg10=35.69 avg60=22.74 avg300=7.16 total=25112693"
+          },
+          "status": 200,
+          "ttfb_ms": 1670.65,
+          "location": null,
+          "bytes": 177049,
+          "total_ms": 1670.82,
+          "after": {
+            "utc": "2026-09-12T08:12:06.517545+00:00",
+            "fd_counts": {
+              "database": 4,
+              "wal": 3,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=31.40 avg60=22.43 avg300=7.21 total=25448685\nfull avg10=31.21 avg60=22.36 avg300=7.18 total=25380963"
+          }
+        },
+        {
+          "path": "/benhoff/background-recorder",
+          "before": {
+            "utc": "2026-09-12T08:12:06.518428+00:00",
+            "fd_counts": {
+              "database": 4,
+              "wal": 3,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=31.40 avg60=22.43 avg300=7.21 total=25448685\nfull avg10=31.21 avg60=22.36 avg300=7.18 total=25380963"
+          },
+          "status": 200,
+          "ttfb_ms": 1657.42,
+          "location": null,
+          "bytes": 34451,
+          "total_ms": 1657.83,
+          "after": {
+            "utc": "2026-09-12T08:12:08.476919+00:00",
+            "fd_counts": {
+              "database": 4,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=28.79 avg60=22.26 avg300=7.28 total=25928631\nfull avg10=28.46 avg60=22.15 avg300=7.25 total=25846340"
+          }
+        },
+        {
+          "path": "/settings",
+          "before": {
+            "utc": "2026-09-12T08:12:08.477766+00:00",
+            "fd_counts": {
+              "database": 4,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=28.79 avg60=22.26 avg300=7.28 total=25928631\nfull avg10=28.46 avg60=22.15 avg300=7.25 total=25846340"
+          },
+          "status": 200,
+          "ttfb_ms": 57.56,
+          "location": null,
+          "bytes": 61704,
+          "total_ms": 57.66,
+          "after": {
+            "utc": "2026-09-12T08:12:08.836025+00:00",
+            "fd_counts": {
+              "database": 4,
+              "wal": 1,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=28.79 avg60=22.26 avg300=7.28 total=26271723\nfull avg10=28.46 avg60=22.15 avg300=7.25 total=26189432"
+          }
+        },
+        {
+          "path": "/machines",
+          "before": {
+            "utc": "2026-09-12T08:12:08.836892+00:00",
+            "fd_counts": {
+              "database": 4,
+              "wal": 1,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=28.79 avg60=22.26 avg300=7.28 total=26271723\nfull avg10=28.46 avg60=22.15 avg300=7.25 total=26189432"
+          },
+          "status": 200,
+          "ttfb_ms": 1027.44,
+          "location": null,
+          "bytes": 67248,
+          "total_ms": 1027.56,
+          "after": {
+            "utc": "2026-09-12T08:12:10.165130+00:00",
+            "fd_counts": {
+              "database": 5,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=30.46 avg60=22.77 avg300=7.49 total=26555031\nfull avg10=30.18 avg60=22.67 avg300=7.46 total=26466937"
+          }
+        },
+        {
+          "path": "/queue",
+          "before": {
+            "utc": "2026-09-12T08:12:10.166030+00:00",
+            "fd_counts": {
+              "database": 5,
+              "wal": 1,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=30.46 avg60=22.77 avg300=7.49 total=26555031\nfull avg10=30.18 avg60=22.67 avg300=7.46 total=26466937"
+          },
+          "status": 200,
+          "ttfb_ms": 1722.47,
+          "location": null,
+          "bytes": 52002,
+          "total_ms": 1722.61,
+          "after": {
+            "utc": "2026-09-12T08:12:12.189395+00:00",
+            "fd_counts": {
+              "database": 5,
+              "wal": 2,
+              "shm": 1,
+              "other": 11
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=27.66 avg60=22.52 avg300=7.54 total=26804536\nfull avg10=27.43 avg60=22.42 avg300=7.51 total=26714844"
+          }
+        },
+        {
+          "path": "/",
+          "before": {
+            "utc": "2026-09-12T08:12:12.190288+00:00",
+            "fd_counts": {
+              "database": 5,
+              "wal": 2,
+              "shm": 1,
+              "other": 11
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=27.66 avg60=22.52 avg300=7.54 total=26804536\nfull avg10=27.43 avg60=22.42 avg300=7.51 total=26714844"
+          },
+          "status": 200,
+          "ttfb_ms": 1510.51,
+          "location": null,
+          "bytes": 177049,
+          "total_ms": 1510.65,
+          "after": {
+            "utc": "2026-09-12T08:12:14.001708+00:00",
+            "fd_counts": {
+              "database": 5,
+              "wal": 3,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=27.66 avg60=22.52 avg300=7.54 total=27224287\nfull avg10=27.43 avg60=22.42 avg300=7.51 total=27131174"
+          }
+        },
+        {
+          "path": "/benhoff/background-recorder",
+          "before": {
+            "utc": "2026-09-12T08:12:14.002566+00:00",
+            "fd_counts": {
+              "database": 5,
+              "wal": 3,
+              "shm": 1,
+              "other": 10
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=27.66 avg60=22.52 avg300=7.54 total=27224287\nfull avg10=27.43 avg60=22.42 avg300=7.51 total=27131174"
+          },
+          "status": 200,
+          "ttfb_ms": 1653.63,
+          "location": null,
+          "bytes": 34451,
+          "total_ms": 1653.73,
+          "after": {
+            "utc": "2026-09-12T08:12:15.956936+00:00",
+            "fd_counts": {
+              "database": 5,
+              "wal": 2,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=26.99 avg60=22.56 avg300=7.65 total=27614451\nfull avg10=26.63 avg60=22.43 avg300=7.61 total=27515979"
+          }
+        },
+        {
+          "path": "/api/health",
+          "before": {
+            "utc": "2026-09-12T08:12:15.957936+00:00",
+            "fd_counts": {
+              "database": 5,
+              "wal": 2,
+              "shm": 1,
+              "other": 9
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=26.99 avg60=22.56 avg300=7.65 total=27614451\nfull avg10=26.63 avg60=22.43 avg300=7.61 total=27515979"
+          },
+          "status": 200,
+          "ttfb_ms": 2.43,
+          "location": null,
+          "bytes": 93,
+          "total_ms": 2.52,
+          "after": {
+            "utc": "2026-09-12T08:12:16.261096+00:00",
+            "fd_counts": {
+              "database": 5,
+              "wal": 1,
+              "shm": 1,
+              "other": 8
+            },
+            "thread_count": 8,
+            "io_pressure": "some avg10=25.91 avg60=22.51 avg300=7.74 total=27817651\nfull avg10=25.43 avg60=22.35 avg300=7.70 total=27714132"
+          }
+        }
+      ]
+    }
+  }
+}

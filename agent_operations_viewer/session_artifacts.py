@@ -152,14 +152,14 @@ def prune_orphaned_session_artifacts(settings: Settings) -> int:
     commits. Holding the write lock while unlinking prevents another writer from
     adopting an artifact between the reference check and file removal.
     """
-    from .db import connect, write_transaction
+    from .db import connection_scope, write_transaction
 
     removed_rows = 0
     removed_files = 0
     removed_untracked_files = 0
     artifact_root = settings.data_dir / ARTIFACT_ROOT
 
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         with write_transaction(connection):
             orphan_rows = connection.execute(
                 """

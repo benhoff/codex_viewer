@@ -1,0 +1,27 @@
+[
+  {
+    "label": "all_session_metadata",
+    "seconds": 0.7741,
+    "ok": true
+  },
+  {
+    "label": "group_projects",
+    "seconds": 0.0983,
+    "ok": true
+  },
+  {
+    "label": "resolve_project_url",
+    "seconds": 0.8907,
+    "ok": true
+  },
+  {
+    "label": "project_detail",
+    "seconds": 3.1429,
+    "ok": true
+  },
+  {
+    "label": "project_stream",
+    "seconds": 12.3329,
+    "ok": true
+  }
+]

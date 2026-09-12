@@ -1,0 +1,52 @@
+Thread 0x0000723373fff6c0 [AnyIO worker th] (most recent call first):
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/search.py", line 892 in _search_stage_counts
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/search.py", line 1656 in search_turn_hits_raw
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/projects.py", line 1670 in search_turn_hits
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/pages.py", line 1566 in search_results
+  File "/home/hoff/agent_operations_viewer/.deps/anyio/_backends/_asyncio.py", line 1002 in run
+  File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+  File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Thread 0x0000723389efb6c0 [session-upload-] (most recent call first):
+  File "/usr/lib/python3.14/pathlib/__init__.py", line ??? in _format_parsed_parts
+  <invalid frame>
+Thread 0x000072338a6fc6c0 [history-api-wor] (most recent call first):
+  File "/usr/lib/python3.14/threading.py", line 369 in wait
+  File "/usr/lib/python3.14/queue.py", line 199 in get
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/concurrency.py", line 64 in _worker
+  File "/usr/lib/python3.14/threading.py", line 1024 in run
+  File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+  File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Thread 0x000072338aefd6c0 [history-api-wor] (most recent call first):
+  File "/usr/lib/python3.14/threading.py", line 369 in wait
+  File "/usr/lib/python3.14/queue.py", line 199 in get
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/concurrency.py", line 64 in _worker
+  File "/usr/lib/python3.14/threading.py", line 1024 in run
+  File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+  File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Thread 0x000072338b6fe6c0 [history-api-wor] (most recent call first):
+  File "/usr/lib/python3.14/threading.py", line 369 in wait
+  File "/usr/lib/python3.14/queue.py", line 199 in get
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/concurrency.py", line 64 in _worker
+  File "/usr/lib/python3.14/threading.py", line 1024 in run
+  File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+  File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Thread 0x000072338beff6c0 [history-api-wor] (most recent call first):
+  File "/usr/lib/python3.14/threading.py", line 369 in wait
+  File "/usr/lib/python3.14/queue.py", line 199 in get
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/concurrency.py", line 64 in _worker
+  File "/usr/lib/python3.14/threading.py", line 1024 in run
+  File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+  File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Current thread 0x000072338fe99b80 [python3] (most recent call first):
+  File "/usr/lib/python3.14/selectors.py", line 452 in select
+  File "/usr/lib/python3.14/asyncio/base_events.py", line 2019 in _run_once
+  File "/usr/lib/python3.14/asyncio/base_events.py", line 678 in run_forever
+  File "/usr/lib/python3.14/asyncio/base_events.py", line 707 in run_until_complete
+  File "/usr/lib/python3.14/asyncio/runners.py", line 128 in run
+  File "/usr/lib/python3.14/asyncio/runners.py", line 205 in run
+  File "/home/hoff/agent_operations_viewer/.deps/uvicorn/server.py", line 75 in run
+  File "/home/hoff/agent_operations_viewer/.deps/uvicorn/main.py", line 606 in run
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/commands.py", line 111 in cli
+  File "/home/hoff/agent_operations_viewer/agent_operations_viewer/__main__.py", line 5 in <module>
+  File "<frozen runpy>", line 88 in _run_code
+  File "<frozen runpy>", line 203 in _run_module_as_main

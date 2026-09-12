@@ -1,0 +1,133 @@
+{
+  "seconds": 5.003205404151231,
+  "threads": [
+    {
+      "tid": "497802",
+      "name": "python3",
+      "wchan": "do_epoll_wait",
+      "per_second": {
+        "rchar": 0.0,
+        "wchar": 0.0,
+        "read_bytes": 0.0,
+        "write_bytes": 0.0,
+        "syscr": 0.0,
+        "syscw": 0.0
+      }
+    },
+    {
+      "tid": "497855",
+      "name": "history-api-wor",
+      "wchan": "cv_wait_common",
+      "per_second": {
+        "rchar": 2416737.7,
+        "wchar": 0.0,
+        "read_bytes": 2983260.9,
+        "write_bytes": 0.0,
+        "syscr": 590.2,
+        "syscw": 0.0
+      }
+    },
+    {
+      "tid": "497856",
+      "name": "history-api-wor",
+      "wchan": "cv_wait_common",
+      "per_second": {
+        "rchar": 2416737.7,
+        "wchar": 0.0,
+        "read_bytes": 2951332.6,
+        "write_bytes": 0.0,
+        "syscr": 590.2,
+        "syscw": 0.0
+      }
+    },
+    {
+      "tid": "497857",
+      "name": "history-api-wor",
+      "wchan": "__cv_timedwait_common",
+      "per_second": {
+        "rchar": 2416737.7,
+        "wchar": 0.0,
+        "read_bytes": 2987354.3,
+        "write_bytes": 0.0,
+        "syscr": 590.2,
+        "syscw": 0.0
+      }
+    },
+    {
+      "tid": "497858",
+      "name": "history-api-wor",
+      "wchan": "cv_wait_common",
+      "per_second": {
+        "rchar": 2416737.7,
+        "wchar": 0.0,
+        "read_bytes": 2860459.6,
+        "write_bytes": 0.0,
+        "syscr": 590.2,
+        "syscw": 0.0
+      }
+    },
+    {
+      "tid": "497859",
+      "name": "session-upload-",
+      "wchan": "futex_wait_queue",
+      "per_second": {
+        "rchar": 0.0,
+        "wchar": 0.0,
+        "read_bytes": 0.0,
+        "write_bytes": 0.0,
+        "syscr": 0.0,
+        "syscw": 0.0
+      }
+    },
+    {
+      "tid": "498257",
+      "name": "history-post-st",
+      "wchan": "blk_mq_get_tag",
+      "per_second": {
+        "rchar": 2970972.2,
+        "wchar": 0.0,
+        "read_bytes": 4232550.6,
+        "write_bytes": 0.0,
+        "syscr": 725.3,
+        "syscw": 0.0
+      }
+    },
+    {
+      "tid": "500741",
+      "name": "AnyIO worker th",
+      "wchan": "__cv_timedwait_common",
+      "per_second": {
+        "rchar": 3140548.1,
+        "wchar": 0.0,
+        "read_bytes": 5513068.7,
+        "write_bytes": 0.0,
+        "syscr": 790.1,
+        "syscw": 0.0
+      }
+    }
+  ],
+  "datasets": [
+    {
+      "name": "myZFS",
+      "per_second": {
+        "reads": 0.0,
+        "writes": 0.0,
+        "nread": 0.0,
+        "nwritten": 0.0,
+        "zil_commit_count": 0.0
+      }
+    },
+    {
+      "name": "myZFS/subvol-101-disk-0",
+      "per_second": {
+        "reads": 3890.1,
+        "writes": 0.0,
+        "nread": 16012071.0,
+        "nwritten": 0.0,
+        "zil_commit_count": 0.0
+      }
+    }
+  ],
+  "database_descriptor_count": 70,
+  "sample_note": "Five-second snapshot ending approximately 07:40 UTC; process 497802."
+}

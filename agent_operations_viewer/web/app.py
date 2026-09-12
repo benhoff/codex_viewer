@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import Settings
-from ..db import connect, init_db, run_db_backfills
+from ..db import connection_scope, init_db, run_db_backfills
 from ..importer import sync_sessions
 from ..local_auth import fetch_auth_status
 from ..saved_turns import migrate_global_saved_turns_to_owner
@@ -78,7 +78,7 @@ def create_app(
     # Endpoints require current tables and columns, but derived session data is
     # resumable and can be expensive enough to trip container health checks.
     init_db(app_settings.database_path, defer_backfills=True)
-    with connect(app_settings.database_path) as connection:
+    with connection_scope(app_settings.database_path) as connection:
         with connection:
             apply_server_settings(
                 connection,

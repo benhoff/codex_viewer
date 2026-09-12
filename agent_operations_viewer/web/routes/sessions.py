@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from ...db import connect
+from ...db import connection_scope
 from ...projects import (
     build_project_access_context,
     effective_project_fields,
@@ -124,7 +124,7 @@ def session_detail(
     owner_scope = owner_scope_from_request(request)
     session_view_mode = "audit" if str(view or "").strip().lower() == "audit" else "conversation"
     requested_turn = turn
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -303,7 +303,7 @@ def session_detail(
 @router.get("/sessions/{session_id}/export/raw")
 def export_raw(request: Request, session_id: str) -> PlainTextResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -324,7 +324,7 @@ def export_raw(request: Request, session_id: str) -> PlainTextResponse:
 @router.get("/sessions/{session_id}/export/json")
 def export_json(request: Request, session_id: str) -> JSONResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -344,7 +344,7 @@ def export_json(request: Request, session_id: str) -> JSONResponse:
 @router.get("/sessions/{session_id}/export/markdown")
 def export_session_markdown(request: Request, session_id: str) -> PlainTextResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -363,7 +363,7 @@ def export_session_markdown(request: Request, session_id: str) -> PlainTextRespo
 @router.get("/sessions/{session_id}/export/bundle")
 def export_session_bundle(request: Request, session_id: str) -> Response:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),

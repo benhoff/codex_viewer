@@ -1,0 +1,89 @@
+{
+  "base": "http://127.0.0.1:8001",
+  "measured_at": "2026-09-12T07:26:45Z",
+  "results": [
+    {
+      "path": "/api/health",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 3.59,
+          "total_ms": 3.67,
+          "bytes": 93,
+          "location": null
+        }
+      ],
+      "median_ms": 3.67,
+      "max_ms": 3.67
+    },
+    {
+      "path": "/settings",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 6269.82,
+          "total_ms": 6269.9,
+          "bytes": 61303,
+          "location": null
+        }
+      ],
+      "median_ms": 6269.9,
+      "max_ms": 6269.9
+    },
+    {
+      "path": "/machines",
+      "samples": [
+        {
+          "error": "timed out",
+          "total_ms": 20012.9
+        }
+      ],
+      "median_ms": null,
+      "max_ms": null
+    },
+    {
+      "path": "/queue",
+      "samples": [
+        {
+          "error": "timed out",
+          "total_ms": 20020.77
+        }
+      ],
+      "median_ms": null,
+      "max_ms": null
+    },
+    {
+      "path": "/",
+      "samples": [
+        {
+          "error": "timed out",
+          "total_ms": 20020.27
+        }
+      ],
+      "median_ms": null,
+      "max_ms": null
+    },
+    {
+      "path": "/assessments",
+      "samples": [
+        {
+          "error": "timed out",
+          "total_ms": 20020.63
+        }
+      ],
+      "median_ms": null,
+      "max_ms": null
+    },
+    {
+      "path": "/benhoff/background-recorder",
+      "samples": [
+        {
+          "error": "timed out",
+          "total_ms": 20020.57
+        }
+      ],
+      "median_ms": null,
+      "max_ms": null
+    }
+  ]
+}

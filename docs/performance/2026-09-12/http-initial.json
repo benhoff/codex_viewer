@@ -1,0 +1,154 @@
+{
+  "base": "http://127.0.0.1:8001",
+  "measured_at": "2026-09-12T07:07:10Z",
+  "results": [
+    {
+      "path": "/api/health",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 4.13,
+          "total_ms": 4.22,
+          "bytes": 93,
+          "location": null
+        }
+      ],
+      "median_ms": 4.22,
+      "max_ms": 4.22
+    },
+    {
+      "path": "/settings",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 2618.2,
+          "total_ms": 2618.43,
+          "bytes": 61289,
+          "location": null
+        }
+      ],
+      "median_ms": 2618.43,
+      "max_ms": 2618.43
+    },
+    {
+      "path": "/machines",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 934.17,
+          "total_ms": 934.31,
+          "bytes": 67679,
+          "location": null
+        }
+      ],
+      "median_ms": 934.31,
+      "max_ms": 934.31
+    },
+    {
+      "path": "/queue",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 2324.87,
+          "total_ms": 2324.95,
+          "bytes": 52002,
+          "location": null
+        }
+      ],
+      "median_ms": 2324.95,
+      "max_ms": 2324.95
+    },
+    {
+      "path": "/",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 4095.69,
+          "total_ms": 4100.89,
+          "bytes": 176673,
+          "location": null
+        }
+      ],
+      "median_ms": 4100.89,
+      "max_ms": 4100.89
+    },
+    {
+      "path": "/assessments",
+      "samples": [
+        {
+          "error": "timed out",
+          "total_ms": 20005.69
+        }
+      ],
+      "median_ms": null,
+      "max_ms": null
+    },
+    {
+      "path": "/benhoff/background-recorder",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 1675.46,
+          "total_ms": 1675.53,
+          "bytes": 34451,
+          "location": null
+        }
+      ],
+      "median_ms": 1675.53,
+      "max_ms": 1675.53
+    },
+    {
+      "path": "/benhoff/background-recorder/stream",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 2043.34,
+          "total_ms": 2043.49,
+          "bytes": 170991,
+          "location": null
+        }
+      ],
+      "median_ms": 2043.49,
+      "max_ms": 2043.49
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 1437.72,
+          "total_ms": 1438.83,
+          "bytes": 1226091,
+          "location": null
+        }
+      ],
+      "median_ms": 1438.83,
+      "max_ms": 1438.83
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae/assessment",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 197.65,
+          "total_ms": 198.33,
+          "bytes": 934791,
+          "location": null
+        }
+      ],
+      "median_ms": 198.33,
+      "max_ms": 198.33
+    },
+    {
+      "path": "/search?q=test",
+      "samples": [
+        {
+          "error": "timed out",
+          "total_ms": 20004.19
+        }
+      ],
+      "median_ms": null,
+      "max_ms": null
+    }
+  ]
+}

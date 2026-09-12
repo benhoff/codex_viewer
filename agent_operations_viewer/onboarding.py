@@ -54,8 +54,9 @@ def ensure_onboarding_state_row(connection: sqlite3.Connection) -> None:
         )
 
 
-def fetch_onboarding_state(connection: sqlite3.Connection) -> dict[str, Any]:
-    ensure_onboarding_state_row(connection)
+def fetch_onboarding_state(connection: sqlite3.Connection, *, create: bool = True) -> dict[str, Any]:
+    if create:
+        ensure_onboarding_state_row(connection)
     row = connection.execute(
         """
         SELECT
@@ -134,8 +135,17 @@ def record_first_session_ingested(
     )
 
 
-def _backfill_onboarding_timestamps(connection: sqlite3.Connection) -> None:
-    state = fetch_onboarding_state(connection)
+def _apply_state_updates(
+    connection: sqlite3.Connection, state: dict[str, Any], *, persist: bool, **fields: str | None,
+) -> dict[str, Any]:
+    if persist:
+        _update_onboarding_state(connection, **fields)
+        return fetch_onboarding_state(connection)
+    return {**state, **fields}
+
+
+def _backfill_onboarding_timestamps(connection: sqlite3.Connection, *, persist: bool = True) -> dict[str, Any]:
+    state = fetch_onboarding_state(connection, create=persist)
     if not state["first_heartbeat_at"]:
         heartbeat_row = connection.execute(
             """
@@ -147,21 +157,21 @@ def _backfill_onboarding_timestamps(connection: sqlite3.Connection) -> None:
             """
         ).fetchone()
         if heartbeat_row is not None:
-            _update_onboarding_state(
-                connection,
+            state = _apply_state_updates(
+                connection, state, persist=persist,
                 first_heartbeat_at=trimmed(heartbeat_row["last_seen_at"]),
                 first_heartbeat_source_host=trimmed(heartbeat_row["source_host"]),
             )
-            state = fetch_onboarding_state(connection)
 
     if not state["first_session_ingested_at"]:
         session_row = _fetch_first_session_row(connection, remote_only=True)
         if session_row is not None:
-            _update_onboarding_state(
-                connection,
+            state = _apply_state_updates(
+                connection, state, persist=persist,
                 first_session_ingested_at=trimmed(session_row["first_timestamp"]),
                 first_session_source_host=trimmed(session_row["source_host"]),
             )
+    return state
 
 
 def _fetch_first_session_row(
@@ -244,9 +254,15 @@ def _status_label(status: str) -> str:
     }.get(status, status.replace("_", " ").title())
 
 
-def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Settings) -> dict[str, Any]:
-    ensure_onboarding_state_row(connection)
-    _backfill_onboarding_timestamps(connection)
+def read_onboarding_status(connection: sqlite3.Connection, settings: Settings) -> dict[str, Any]:
+    """Compute current setup/health status without competing with sync writers."""
+    return reconcile_onboarding_state(connection, settings, persist=False)
+
+
+def reconcile_onboarding_state(
+    connection: sqlite3.Connection, settings: Settings, *, persist: bool = True,
+) -> dict[str, Any]:
+    state = _backfill_onboarding_timestamps(connection, persist=persist)
 
     local_mode = settings.sync_mode == "local"
     auth_status = fetch_auth_status(connection)
@@ -265,16 +281,14 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
     imported_session_count = _count_imported_sessions(connection, remote_only=not local_mode)
     session_root_labels = [str(root) for root in settings.session_roots]
     existing_session_root_count = sum(1 for root in settings.session_roots if root.exists())
-    state = fetch_onboarding_state(connection)
     if local_mode and not state["first_session_ingested_at"]:
         first_local_session = _fetch_first_session_row(connection, remote_only=False)
         if first_local_session is not None:
-            _update_onboarding_state(
-                connection,
+            state = _apply_state_updates(
+                connection, state, persist=persist,
                 first_session_ingested_at=trimmed(first_local_session["first_timestamp"]),
                 first_session_source_host=trimmed(first_local_session["source_host"]),
             )
-            state = fetch_onboarding_state(connection)
 
     auth_ready = (not settings.auth_enabled()) or bool(settings.session_secret)
     if local_mode:
@@ -433,11 +447,9 @@ def reconcile_onboarding_state(connection: sqlite3.Connection, settings: Setting
             next_action = "Opening the dashboard."
 
     if overall_state == "complete" and not state["completed_at"]:
-        _update_onboarding_state(connection, completed_at=utc_now_iso())
-        state = fetch_onboarding_state(connection)
+        state = _apply_state_updates(connection, state, persist=persist, completed_at=utc_now_iso())
     elif reason and state["last_failure_reason"] != reason:
-        _update_onboarding_state(connection, last_failure_reason=reason)
-        state = fetch_onboarding_state(connection)
+        state = _apply_state_updates(connection, state, persist=persist, last_failure_reason=reason)
 
     if local_mode:
         checks = [

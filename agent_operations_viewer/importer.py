@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from .config import Settings
-from .db import connect, write_transaction
+from .db import connection_scope, write_transaction
 from .projects import project_is_ignored
 from .session_artifacts import (
     load_session_artifact_text,
@@ -610,7 +610,7 @@ def sync_sessions(settings: Settings, force: bool = False) -> dict[str, int]:
     skipped = 0
     project_registry_changed = False
 
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         with write_transaction(connection):
             from .projects import sync_project_registry
 

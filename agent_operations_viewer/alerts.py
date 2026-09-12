@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from .agents import fetch_remote_agent_health, fetch_remote_agent_status, remote_health_issues, trimmed
 from .config import Settings
-from .db import connect, write_transaction
+from .db import connection_scope, write_transaction
 from .server_settings import apply_server_settings
 
 
@@ -667,7 +667,7 @@ def deliver_pending_alerts(
     if not _delivery_available(settings):
         return {"claimed": 0, "sent": 0, "failed": 0}
 
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         with write_transaction(connection):
             deliveries = claim_due_alert_deliveries(connection, limit=limit)
 
@@ -683,7 +683,7 @@ def deliver_pending_alerts(
             _send_webhook(settings, payload)
         except Exception as exc:
             stats["failed"] += 1
-            with connect(settings.database_path) as connection:
+            with connection_scope(settings.database_path) as connection:
                 with write_transaction(connection):
                     mark_alert_delivery_failed(
                         connection,
@@ -692,7 +692,7 @@ def deliver_pending_alerts(
                         error=str(exc),
                     )
             continue
-        with connect(settings.database_path) as connection:
+        with connection_scope(settings.database_path) as connection:
             with write_transaction(connection):
                 mark_alert_delivery_sent(connection, int(delivery["id"]))
         stats["sent"] += 1
@@ -721,9 +721,9 @@ def run_alert_worker(
         reconcile_stats = {"opened": 0, "updated": 0, "resolved": 0, "queued": 0}
         delivery_stats = {"claimed": 0, "sent": 0, "failed": 0}
         try:
-            with connect(settings.database_path) as connection:
+            with connection_scope(settings.database_path) as connection:
                 apply_server_settings(connection, settings)
-            with connect(settings.database_path) as connection:
+            with connection_scope(settings.database_path) as connection:
                 with write_transaction(connection):
                     reconcile_stats = reconcile_all_remote_alerts(connection, settings)
             delivery_stats = deliver_pending_alerts(settings)

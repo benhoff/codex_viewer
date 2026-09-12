@@ -25,7 +25,7 @@ from ...action_queue_state import (
     default_snoozed_until,
     set_action_queue_state,
 )
-from ...db import connect, write_transaction
+from ...db import connection_scope, write_transaction
 from ...environment_audit import fetch_host_environment_audit
 from ...importer import sync_sessions
 from ...local_auth import (
@@ -50,7 +50,7 @@ from ...machine_aliases import (
     set_machine_display_alias,
 )
 from ...machine_credentials import list_machine_credentials, revoke_machine_credential
-from ...onboarding import effective_bootstrap_required, reconcile_onboarding_state
+from ...onboarding import effective_bootstrap_required, read_onboarding_status, reconcile_onboarding_state
 from ...projects import (
     build_project_access_context,
     build_session_signal_badges,
@@ -252,9 +252,8 @@ def render_settings_page(
         (not context.settings.auth_enabled())
         or (current_user and current_user.get("is_admin"))
     )
-    with connect(context.settings.database_path) as connection:
-        with write_transaction(connection):
-            onboarding = reconcile_onboarding_state(connection, context.settings)
+    with connection_scope(context.settings.database_path) as connection:
+        onboarding = read_onboarding_status(connection, context.settings)
         server_settings = apply_server_settings(connection, context.settings)
         api_tokens = list_api_tokens(connection) if can_manage_admin else []
         machine_credentials = list_machine_credentials(connection) if can_manage_admin else []
@@ -325,7 +324,7 @@ def render_queue_page(
     queue_sort = normalize_saved_turn_sort(sort)
     queue_group_mode = normalize_queue_group_mode(group_mode)
     queue_project = None
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -478,9 +477,8 @@ def render_setup_page(
 ) -> HTMLResponse:
     context = get_app_context(request)
     server_url = context.settings.server_base_url or str(request.base_url).rstrip("/")
-    with connect(context.settings.database_path) as connection:
-        with write_transaction(connection):
-            onboarding = reconcile_onboarding_state(connection, context.settings)
+    with connection_scope(context.settings.database_path) as connection:
+        onboarding = read_onboarding_status(connection, context.settings)
         api_tokens = list_api_tokens(connection)
     snippet = None
     windows_snippet = None
@@ -547,7 +545,7 @@ def queue_action_response(
     if "application/json" in request.headers.get("accept", "") or request.headers.get("x-codex-viewer-fetch") == "1":
         context = get_app_context(request)
         owner_scope = owner_scope_from_request(request)
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             project_access = build_project_access_context(
                 connection,
                 auth_user=getattr(request.state, "auth_user", None),
@@ -994,9 +992,8 @@ def build_error_sessions_panel(
 
 def render_onboarding_status_fragment(request: Request) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
-        with write_transaction(connection):
-            onboarding = reconcile_onboarding_state(connection, context.settings)
+    with connection_scope(context.settings.database_path) as connection:
+        onboarding = read_onboarding_status(connection, context.settings)
     setup_steps, setup_completed_steps, setup_step_count, setup_progress_percent = setup_progress_state(onboarding)
     active_setup_step, current_setup_step = resolve_setup_wizard_step(onboarding)
     wizard_active = setup_wizard_active(
@@ -1033,9 +1030,8 @@ def setup_page(request: Request) -> Response:
     redirect = redirect_unauthenticated_setup_request(request, settings=context.settings)
     if redirect is not None:
         return redirect
-    with connect(context.settings.database_path) as connection:
-        with write_transaction(connection):
-            onboarding = reconcile_onboarding_state(connection, context.settings)
+    with connection_scope(context.settings.database_path) as connection:
+        onboarding = read_onboarding_status(connection, context.settings)
     if not setup_wizard_active(request, settings=context.settings, onboarding=onboarding):
         if getattr(request.state, "auth_user", None):
             return RedirectResponse(url="/", status_code=303)
@@ -1069,7 +1065,7 @@ async def setup_submit(request: Request) -> Response:
         validate_new_password(password)
         if password != confirm_password:
             raise ValueError("Passwords do not match.")
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 user = create_initial_admin(
                     connection,
@@ -1110,7 +1106,7 @@ async def setup_claim_admin(request: Request) -> Response:
         )
 
     try:
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 user = claim_initial_admin(connection, str(current_user["user_id"]))
                 migrate_global_saved_turns_to_owner(
@@ -1161,7 +1157,7 @@ async def setup_create_token(request: Request) -> HTMLResponse:
         return RedirectResponse(url="/setup", status_code=303)
     fields = await parse_form_fields(request)
     label = fields.get("label", "").strip() or "First machine token"
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             created_token = create_api_token(connection, label)
             reconcile_onboarding_state(connection, context.settings)
@@ -1177,9 +1173,8 @@ def login_page(request: Request) -> Response:
     if getattr(request.state, "bootstrap_required", False):
         return RedirectResponse(url="/setup", status_code=303)
     if getattr(request.state, "auth_user", None):
-        with connect(context.settings.database_path) as connection:
-            with write_transaction(connection):
-                onboarding = reconcile_onboarding_state(connection, context.settings)
+        with connection_scope(context.settings.database_path) as connection:
+            onboarding = read_onboarding_status(connection, context.settings)
         return RedirectResponse(
             url=authenticated_destination(
                 next_path,
@@ -1236,7 +1231,7 @@ async def login_submit(request: Request) -> Response:
     password = fields.get("password", "")
     next_path = safe_next_path(fields.get("next"))
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         user = verify_local_password_login(connection, username, password)
         if user is None:
             return render_login_page(request, error="Invalid username or password.", username=username)
@@ -1253,7 +1248,7 @@ async def login_submit(request: Request) -> Response:
         is_admin=bool(user["is_admin"]),
     )
     set_password_session(request, auth_user)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             onboarding = reconcile_onboarding_state(connection, context.settings)
     return RedirectResponse(
@@ -1300,7 +1295,7 @@ async def queue_action(request: Request) -> Response:
     if action not in {"save", "resolve", "reopen"}:
         raise HTTPException(status_code=400, detail="Unsupported queue action")
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -1371,7 +1366,7 @@ async def action_queue_action(request: Request) -> Response:
     if action not in {"resolve", "snooze", "ignore", "reopen"}:
         raise HTTPException(status_code=400, detail="Unsupported action-queue action")
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             if action == "reopen":
                 clear_action_queue_state(
@@ -1428,15 +1423,14 @@ def index(
     host: str | None = Query(default=None),
 ) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
-        with write_transaction(connection):
-            onboarding = reconcile_onboarding_state(connection, context.settings)
+    with connection_scope(context.settings.database_path) as connection:
+        onboarding = read_onboarding_status(connection, context.settings)
     if guided_setup_required(request, settings=context.settings, onboarding=onboarding):
         return RedirectResponse(url="/setup", status_code=303)
     now = datetime.now().astimezone()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     hot_window_start = (now - timedelta(days=7)).isoformat()
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         owner_scope = owner_scope_from_request(request)
         project_access = build_project_access_context(
             connection,
@@ -1555,7 +1549,7 @@ def search_results(
     if not search_query:
         return RedirectResponse(url="/", status_code=303)
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -1595,9 +1589,8 @@ def machines_health(request: Request) -> HTMLResponse:
         (not context.settings.auth_enabled())
         or (current_user and current_user.get("is_admin"))
     )
-    with connect(context.settings.database_path) as connection:
-        with write_transaction(connection):
-            onboarding = reconcile_onboarding_state(connection, context.settings)
+    with connection_scope(context.settings.database_path) as connection:
+        onboarding = read_onboarding_status(connection, context.settings)
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -1642,7 +1635,7 @@ def remote_environment_audit_legacy(request: Request, source_host: str) -> Redir
 @router.get("/machines/{source_host}/audit", response_class=HTMLResponse)
 def machine_environment_audit(request: Request, source_host: str) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -1681,7 +1674,7 @@ async def settings_create_search_api_token(request: Request) -> HTMLResponse:
     current_user = require_authenticated_user(request)
     fields = await parse_form_fields(request)
     try:
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 created_token = create_search_api_token(
                     connection,
@@ -1705,7 +1698,7 @@ async def settings_search_api_token_action(request: Request) -> RedirectResponse
     if action not in {"revoke", "delete"}:
         raise HTTPException(status_code=400, detail="Unsupported token action")
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             if action == "revoke":
                 changed = revoke_search_api_token(
@@ -1740,7 +1733,7 @@ async def settings_change_password(request: Request) -> HTMLResponse:
         validate_new_password(new_password)
         if new_password != confirm_password:
             raise ValueError("New passwords do not match.")
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             if not verify_local_password_for_user(connection, str(current_user["user_id"]), current_password):
                 raise ValueError("Current password is incorrect.")
             with write_transaction(connection):
@@ -1769,7 +1762,7 @@ async def settings_create_user(request: Request) -> HTMLResponse:
         validate_new_password(password)
         if password != confirm_password:
             raise ValueError("Passwords do not match.")
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 create_local_user(
                     connection,
@@ -1796,7 +1789,7 @@ async def settings_user_action(request: Request) -> HTMLResponse:
         raise HTTPException(status_code=400, detail="Missing user id")
 
     try:
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 if action == "set_role":
                     update_user_role(connection, target_user_id, fields.get("role", "viewer"))
@@ -1841,7 +1834,7 @@ async def settings_update_server(request: Request) -> HTMLResponse:
             fields.get("alerts_realert_minutes", "")
         )
         alerts_send_resolutions = parse_bool_value(fields.get("alerts_send_resolutions"), False)
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 snapshot = update_server_settings(
                     connection,
@@ -1877,7 +1870,7 @@ async def create_settings_api_token(request: Request) -> HTMLResponse:
     context = get_app_context(request)
     fields = await parse_form_fields(request)
     label = fields.get("label", "")
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             created_token = create_api_token(connection, label)
     return render_settings_page(request, created_token=created_token)
@@ -1895,7 +1888,7 @@ async def settings_api_token_action(request: Request) -> RedirectResponse:
     if action not in {"revoke", "delete"}:
         raise HTTPException(status_code=400, detail="Unsupported token action")
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             if action == "revoke":
                 revoke_api_token(connection, token_id)
@@ -1917,7 +1910,7 @@ async def settings_machine_action(request: Request) -> RedirectResponse:
     if action != "revoke":
         raise HTTPException(status_code=400, detail="Unsupported machine action")
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             revoke_machine_credential(connection, machine_id)
 
@@ -1938,7 +1931,7 @@ async def remote_action(request: Request) -> RedirectResponse:
         raise HTTPException(status_code=400, detail="Unsupported remote action")
 
     try:
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 if action == "request_raw_resend":
                     request_remote_raw_resend(

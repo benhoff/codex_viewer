@@ -1,0 +1,47 @@
+{
+  "base": "http://127.0.0.1:8001",
+  "measured_at": "2026-09-12T07:09:14Z",
+  "results": [
+    {
+      "path": "/settings",
+      "samples": [
+        {
+          "status": 200,
+          "ttfb_ms": 6317.5,
+          "total_ms": 6317.62,
+          "bytes": 61293,
+          "location": null
+        },
+        {
+          "error": "timed out",
+          "total_ms": 20020.21
+        },
+        {
+          "error": "timed out",
+          "total_ms": 20017.75
+        }
+      ],
+      "median_ms": 6317.62,
+      "max_ms": 6317.62
+    },
+    {
+      "path": "/machines",
+      "samples": [
+        {
+          "error": "timed out",
+          "total_ms": 20017.17
+        },
+        {
+          "error": "timed out",
+          "total_ms": 20020.62
+        },
+        {
+          "error": "timed out",
+          "total_ms": 20003.21
+        }
+      ],
+      "median_ms": null,
+      "max_ms": null
+    }
+  ]
+}

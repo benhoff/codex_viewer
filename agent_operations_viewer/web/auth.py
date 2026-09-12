@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from ..api_tokens import find_active_api_token, touch_api_token_usage
 from ..config import Settings
-from ..db import connect, try_write_transaction, write_transaction
+from ..db import connection_scope, try_write_transaction, write_transaction
 from ..machine_auth import (
     MACHINE_BODY_SHA256_HEADER,
     MACHINE_ID_HEADER,
@@ -112,7 +112,7 @@ def _require_sync_api_auth(
     machine_signature: str,
     machine_body_sha256: str,
 ) -> dict[str, object]:
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         if bearer_token:
             token_row = find_active_api_token(connection, bearer_token)
             if token_row is not None:
@@ -355,7 +355,7 @@ def _resolve_request_auth_state(
     request: Request,
     settings: Settings,
 ) -> tuple[Any, dict[str, object] | None, str | None]:
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         auth_status = fetch_auth_status(connection)
         user = proxy_auth_user(request, settings, connection) or session_auth_user(
             request,

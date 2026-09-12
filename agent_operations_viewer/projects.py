@@ -1710,7 +1710,7 @@ def resolve_project_detail_hrefs(
     keys = {trimmed(key) for key in group_keys if trimmed(key)}
     if not keys:
         return {}
-    groups = build_grouped_projects(query_group_rows(connection, project_access=project_access))
+    groups = _project_route_groups(connection, project_access=project_access)
     return {
         group.key: group.detail_href
         for group in groups
@@ -2725,13 +2725,40 @@ def fetch_group_detail(
     }
 
 
+def _project_route_groups(
+    connection: sqlite3.Connection,
+    *,
+    project_access: ProjectAccessContext | None = None,
+) -> list[GroupedProject]:
+    """Resolve routes without loading session previews, usage or other large text.
+
+    Keep every visible session's routing fields and the usual row ordering:
+    grouping uses the first row's identity, all hosts, and cross-project slug
+    collisions. These groups are only for routing, not dashboard summaries.
+    """
+    rows = connection.execute(joined_session_query(
+        visible_session_where(),
+        "ORDER BY COALESCE(s.session_timestamp, s.started_at, s.imported_at) DESC",
+        f"""
+        s.id, s.source_host, s.cwd, s.cwd_name,
+        s.git_repository_url, s.github_remote_url, s.github_org, s.github_repo, s.github_slug,
+        s.inferred_project_key, s.inferred_project_kind, s.inferred_project_label,
+        s.session_timestamp, s.started_at, s.imported_at, s.last_turn_timestamp,
+        p.id AS project_id, p.visibility AS project_visibility,
+        {OVERRIDE_SELECT},
+        NULL AS latest_turn_summary, NULL AS summary, 0 AS turn_count, 0 AS event_count
+        """,
+    )).fetchall()
+    return build_grouped_projects(filter_rows_for_project_access(rows, project_access))
+
+
 def resolve_project_detail_href(
     connection: sqlite3.Connection,
     group_key: str,
     *,
     project_access: ProjectAccessContext | None = None,
 ) -> str:
-    groups = build_grouped_projects(query_group_rows(connection, project_access=project_access))
+    groups = _project_route_groups(connection, project_access=project_access)
     for group in groups:
         if group.key == group_key:
             return group.detail_href
@@ -2752,7 +2779,7 @@ def resolve_github_project_detail_href(
 
     target_slug = f"{target_org}/{target_repo}".lower()
     target_group_key = f"github:{target_slug}"
-    groups = build_grouped_projects(query_group_rows(connection, project_access=project_access))
+    groups = _project_route_groups(connection, project_access=project_access)
 
     for group in groups:
         if group.key == target_group_key:
@@ -2780,7 +2807,7 @@ def resolve_group_key_from_detail_path(
     project_access: ProjectAccessContext | None = None,
 ) -> str | None:
     target = project_detail_href_for_route(owner_slug, project_slug)
-    groups = build_grouped_projects(query_group_rows(connection, project_access=project_access))
+    groups = _project_route_groups(connection, project_access=project_access)
     for group in groups:
         if group.detail_href == target:
             return group.key

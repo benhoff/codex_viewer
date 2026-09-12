@@ -1,0 +1,6 @@
+[
+  {
+    "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+    "error": "page.goto: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:8001/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae\", waiting until \"load\"\u001b[22m\n"
+  }
+]

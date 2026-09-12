@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from ...db import connect, write_transaction
+from ...db import connection_scope, write_transaction
 from ...machine_credentials import (
     approve_pairing_session,
     create_pairing_session,
@@ -42,7 +42,7 @@ def _lookup_pairing_session(
     secret: str,
 ):
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         row = fetch_pairing_session_for_secret(connection, session_id, secret)
     if row is None:
         raise HTTPException(status_code=404, detail="Pairing request not found")
@@ -58,7 +58,7 @@ def render_machine_pairing_page(
     success: str | None = None,
 ) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         pairing = fetch_pairing_session_for_secret(connection, session_id, secret)
     if pairing is None:
         raise HTTPException(status_code=404, detail="Pairing request not found")
@@ -91,7 +91,7 @@ async def create_machine_pairing_session(request: Request) -> JSONResponse:
     label = str(payload.get("label") or "").strip() or source_host or "Paired machine"
     if not public_key or not secret_hash:
         raise HTTPException(status_code=400, detail="Pairing payload is missing required fields")
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             pairing = create_pairing_session(
                 connection,
@@ -123,7 +123,7 @@ def machine_pairing_start(
     if not clean_session_id or not clean_secret or not clean_public_key:
         raise HTTPException(status_code=400, detail="Missing pairing start parameters")
     try:
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 ensure_pairing_session(
                     connection,
@@ -144,7 +144,7 @@ def machine_pairing_start(
 @router.get("/api/machine-pairing/sessions/{session_id}")
 def machine_pairing_session_status(request: Request, session_id: str, secret: str) -> JSONResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         row = fetch_pairing_session_for_secret(connection, session_id, secret)
     if row is None:
         raise HTTPException(status_code=404, detail="Pairing request not found")
@@ -171,7 +171,7 @@ async def machine_pairing_session_finalize(request: Request, session_id: str) ->
     secret = str(payload.get("secret") or "").strip()
     if not secret:
         raise HTTPException(status_code=400, detail="Finalize payload is missing secret")
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         try:
             with write_transaction(connection):
                 pairing = finalize_pairing_session(
@@ -191,7 +191,7 @@ async def revoke_machine_auth(request: Request) -> JSONResponse:
         raise HTTPException(status_code=403, detail="Machine credential required")
     context = get_app_context(request)
     machine_id = str(auth_result["machine_id"])
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             revoke_machine_credential(connection, machine_id)
     return JSONResponse({"status": "ok", "machine_id": machine_id})
@@ -212,7 +212,7 @@ async def machine_pairing_approve(request: Request, session_id: str) -> HTMLResp
     if not secret:
         raise HTTPException(status_code=400, detail="Missing pairing secret")
     try:
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 approve_pairing_session(
                     connection,
@@ -239,7 +239,7 @@ async def machine_pairing_decline(request: Request, session_id: str) -> HTMLResp
     if not secret:
         raise HTTPException(status_code=400, detail="Missing pairing secret")
     try:
-        with connect(context.settings.database_path) as connection:
+        with connection_scope(context.settings.database_path) as connection:
             with write_transaction(connection):
                 decline_pairing_session(
                     connection,

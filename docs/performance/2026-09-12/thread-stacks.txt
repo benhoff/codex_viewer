@@ -1,0 +1,92 @@
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a84817776c0 [AnyIO worker th] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 369 in wait
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/queue.py", line 199 in get
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/.deps/anyio/_backends/_asyncio.py", line 991 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a847baff6c0 [AnyIO worker th] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/db.py", line 1164 in write_transaction
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/contextlib.py", line 141 in __enter__
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/pages.py", line 258 in render_settings_page
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/pages.py", line 1683 in settings_page
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/.deps/anyio/_backends/_asyncio.py", line 1002 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a84827796c0 [AnyIO worker th] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/task_assessment.py", line 323 in _turn_start
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/task_assessment.py", line 343 in task_source
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/assessment_dashboard.py", line 92 in dashboard_data
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/assessments.py", line 43 in assessment_dashboard
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/.deps/anyio/_backends/_asyncio.py", line 1002 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a8481f786c0 [Thread-1 (execu] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/db.py", line 1164 in write_transaction
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/contextlib.py", line 141 in __enter__
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/assessments.py", line 300 in checkpoint
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/llm_grader.py", line 641 in grade_stage
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/llm_grader.py", line 715 in grade
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/assessments.py", line 305 in execute_grader
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1024 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a84837fe6c0 [AnyIO worker th] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/search.py", line 740 in _search_coverage
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/search.py", line 1631 in search_turn_hits_raw
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/projects.py", line 1670 in search_turn_hits
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/pages.py", line 1572 in search_results
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/.deps/anyio/_backends/_asyncio.py", line 1002 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a84995fb6c0 [session-upload-] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/importer.py", line 115 in upsert_parsed_session
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/sync_api.py", line 575 in store_raw_sync_sessions_batch
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/sync_api.py", line 296 in _process_raw_sync_session
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/concurrency.py", line 66 in _worker
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1024 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a8499dfc6c0 [history-api-wor] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/importer.py", line 603 in fetch_host_sync_manifest
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/sync_api.py", line 118 in _build_sync_manifest
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/concurrency.py", line 66 in _worker
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1024 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a849a5fd6c0 [history-api-wor] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/db.py", line 1164 in write_transaction
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/contextlib.py", line 141 in __enter__
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/routes/sync_api.py", line 177 in _process_sync_heartbeat
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/concurrency.py", line 66 in _worker
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1024 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a849adfe6c0 [history-api-wor] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 369 in wait
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/queue.py", line 199 in get
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/concurrency.py", line 64 in _worker
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1024 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Thread 0x00007a849b5ff6c0 [history-api-wor] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 369 in wait
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/queue.py", line 199 in get
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/web/concurrency.py", line 64 in _worker
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1024 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1082 in _bootstrap_inner
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/threading.py", line 1044 in _bootstrap
+Sep 12 07:07:38 arch start-server.sh[478584]: Current thread 0x00007a849f506b80 [python3] (most recent call first):
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/selectors.py", line 452 in select
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/asyncio/base_events.py", line 2019 in _run_once
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/asyncio/base_events.py", line 678 in run_forever
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/asyncio/base_events.py", line 707 in run_until_complete
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/asyncio/runners.py", line 128 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/usr/lib/python3.14/asyncio/runners.py", line 205 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/.deps/uvicorn/server.py", line 75 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/.deps/uvicorn/main.py", line 606 in run
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/commands.py", line 111 in cli
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "/home/hoff/agent_operations_viewer/agent_operations_viewer/__main__.py", line 5 in <module>
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "<frozen runpy>", line 88 in _run_code
+Sep 12 07:07:38 arch start-server.sh[478584]:   File "<frozen runpy>", line 203 in _run_module_as_main
+Sep 12 07:07:38 arch start-server.sh[478584]: INFO:     192.168.1.116:0 - "GET /sessions/01a0945a-f1e7-7a63-9be8-749ad466f68b/assessment/grader/4/status HTTP/1.1" 200 OK
+Sep 12 07:07:38 arch start-server.sh[478584]: INFO:     192.168.1.25:40310 - "GET /api/sync/manifest-v2?host=my-laptop HTTP/1.1" 200 OK

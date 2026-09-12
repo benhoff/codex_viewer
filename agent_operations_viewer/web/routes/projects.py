@@ -5,7 +5,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from ...db import connect, write_transaction
+from ...db import connection_scope, write_transaction
 from ...environment_audit import fetch_project_environment_audit
 from ...git_utils import normalize_github_remote
 from ...local_auth import list_users
@@ -56,7 +56,7 @@ def render_group_detail(request: Request, key: str, *, sessions_page: int = 1) -
     context = get_app_context(request)
     owner_scope = owner_scope_from_request(request)
     detail_path = str(request.url.path).rstrip("/")
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -122,7 +122,7 @@ def render_group_files(
 ) -> HTMLResponse:
     context = get_app_context(request)
     detail_path = str(request.url.path).rsplit("/files", 1)[0]
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -167,7 +167,7 @@ def render_group_file_activity(
 ) -> HTMLResponse:
     context = get_app_context(request)
     detail_path = str(request.url.path).split("/files/", 1)[0]
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -205,7 +205,7 @@ def render_group_file_activity(
 def render_group_edit(request: Request, key: str) -> HTMLResponse:
     require_admin_user(request)
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -240,7 +240,7 @@ def render_group_edit(request: Request, key: str) -> HTMLResponse:
 @router.get("/groups", response_class=HTMLResponse)
 def group_detail_legacy(request: Request, key: str = Query(...)) -> RedirectResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -255,7 +255,7 @@ def group_detail_legacy(request: Request, key: str = Query(...)) -> RedirectResp
 @router.get("/projects/key/{key:path}", response_class=HTMLResponse)
 def group_detail_by_key(request: Request, key: str) -> RedirectResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -270,7 +270,7 @@ def group_detail_by_key(request: Request, key: str) -> RedirectResponse:
 @router.get("/projects/edit", response_class=HTMLResponse)
 def group_edit_query_legacy(request: Request, key: str = Query(...)) -> RedirectResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -285,7 +285,7 @@ def group_edit_query_legacy(request: Request, key: str = Query(...)) -> Redirect
 @router.get("/projects/github/{org}/{repo:path}", response_class=HTMLResponse)
 def group_detail_github_legacy(request: Request, org: str, repo: str) -> RedirectResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -305,7 +305,7 @@ def group_detail_github_legacy(request: Request, org: str, repo: str) -> Redirec
 @router.get("/projects/directory/{host}/{directory:path}", response_class=HTMLResponse)
 def group_detail_directory_legacy(request: Request, host: str, directory: str) -> RedirectResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         group_key = f"directory:{host}:/{directory.lstrip('/')}"
         project_access = build_project_access_context(
             connection,
@@ -321,7 +321,7 @@ def group_detail_directory_legacy(request: Request, host: str, directory: str) -
 @router.get("/projects/{owner_slug}/{project_slug}/edit", response_class=HTMLResponse)
 def group_edit_legacy(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -354,7 +354,7 @@ def group_detail_path_legacy(
     sessions_page: int = Query(default=1),
 ) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -381,7 +381,7 @@ def group_detail_path_legacy(
 @router.get("/projects/{owner_slug}/{project_slug}/queue", response_class=HTMLResponse)
 def group_queue_legacy(request: Request, owner_slug: str, project_slug: str) -> RedirectResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -401,7 +401,7 @@ def group_queue_legacy(request: Request, owner_slug: str, project_slug: str) -> 
 @router.get("/projects/{owner_slug}/{project_slug}/environment", response_class=HTMLResponse)
 def group_environment_legacy(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -437,7 +437,7 @@ def group_environment_legacy(request: Request, owner_slug: str, project_slug: st
 @router.get("/projects/{owner_slug}/{project_slug}/stream", response_class=HTMLResponse)
 def group_stream_legacy(request: Request, owner_slug: str, project_slug: str, page: int = Query(default=1)) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -488,7 +488,7 @@ def group_files_legacy(
     sort: str | None = Query(default=None),
 ) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -525,7 +525,7 @@ def group_file_activity_legacy(
     page: int = Query(default=1),
 ) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -549,7 +549,7 @@ def group_file_activity_legacy(
 @router.get("/{owner_slug}/{project_slug}/edit", response_class=HTMLResponse)
 def group_edit(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -574,7 +574,7 @@ def group_detail(
     sessions_page: int = Query(default=1),
 ) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -594,7 +594,7 @@ def group_detail(
 @router.get("/{owner_slug}/{project_slug}/queue", response_class=HTMLResponse)
 def group_queue(request: Request, owner_slug: str, project_slug: str) -> RedirectResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -614,7 +614,7 @@ def group_queue(request: Request, owner_slug: str, project_slug: str) -> Redirec
 @router.get("/{owner_slug}/{project_slug}/environment", response_class=HTMLResponse)
 def group_environment(request: Request, owner_slug: str, project_slug: str) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -646,7 +646,7 @@ def group_environment(request: Request, owner_slug: str, project_slug: str) -> H
 @router.get("/{owner_slug}/{project_slug}/stream", response_class=HTMLResponse)
 def group_stream(request: Request, owner_slug: str, project_slug: str, page: int = Query(default=1)) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -693,7 +693,7 @@ def group_files(
     sort: str | None = Query(default=None),
 ) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -726,7 +726,7 @@ def group_file_activity(
     page: int = Query(default=1),
 ) -> HTMLResponse:
     context = get_app_context(request)
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -756,7 +756,7 @@ async def save_override(request: Request) -> RedirectResponse:
     if not match_project_key:
         raise HTTPException(status_code=400, detail="Missing project key")
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -806,7 +806,7 @@ async def save_project_github_url(request: Request) -> RedirectResponse:
     if normalized is None:
         raise HTTPException(status_code=400, detail="GitHub URL must be an HTTPS or SSH github.com remote")
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         project_access = build_project_access_context(
             connection,
             auth_user=getattr(request.state, "auth_user", None),
@@ -851,7 +851,7 @@ async def project_access_action(request: Request) -> RedirectResponse:
     if not group_key:
         raise HTTPException(status_code=400, detail="Missing project group key")
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         detail = fetch_group_detail(connection, group_key)
         if detail is None or not detail["group"].project_id:
             raise HTTPException(status_code=404, detail="Project group not found")
@@ -900,7 +900,7 @@ async def project_action(request: Request) -> RedirectResponse:
     if action not in {"delete", "ignore"}:
         raise HTTPException(status_code=400, detail="Unsupported project action")
 
-    with connect(context.settings.database_path) as connection:
+    with connection_scope(context.settings.database_path) as connection:
         with write_transaction(connection):
             project_keys = fetch_group_source_project_keys(connection, group_key)
             if not project_keys:

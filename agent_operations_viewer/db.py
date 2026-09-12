@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 import sqlite3
 import threading
 from pathlib import Path
@@ -1134,12 +1135,29 @@ SESSION_BACKFILL_BATCH_SIZE = 10
 
 def connect(database_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(database_path, timeout=30.0)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 30000")
-    connection.execute("PRAGMA journal_mode = WAL")
-    connection.execute("PRAGMA synchronous = NORMAL")
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
+    except BaseException:
+        connection.close()
+        raise
     return connection
+
+
+@contextmanager
+def connection_scope(database_path: Path) -> Iterator[sqlite3.Connection]:
+    """Commit or roll back a unit of work, then always close its connection.
+
+    SQLite's connection context manager only handles the transaction. Keep
+    that behavior inside a separate lifetime scope so inner transaction scopes and
+    callers that explicitly own a raw connection retain their existing API.
+    """
+    with closing(connect(database_path)) as connection:
+        with connection:
+            yield connection
 
 
 @contextmanager
@@ -1786,7 +1804,7 @@ def ensure_auth_state_row(connection: sqlite3.Connection) -> None:
 
 def run_db_backfills(database_path: Path) -> None:
     """Bring derived session data up to date without gating schema readiness."""
-    with connect(database_path) as connection:
+    with connection_scope(database_path) as connection:
         with write_transaction(connection):
             backfill_session_agent_metadata(connection)
             backfill_session_rollups(connection)
@@ -1840,7 +1858,7 @@ def run_db_backfills(database_path: Path) -> None:
 
 
 def init_db(database_path: Path, *, defer_backfills: bool = False) -> None:
-    with connect(database_path) as connection:
+    with connection_scope(database_path) as connection:
         connection.execute("PRAGMA foreign_keys = OFF")
         with write_transaction(connection):
             connection.execute(SESSION_TABLE_SQL)

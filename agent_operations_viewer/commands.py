@@ -9,7 +9,7 @@ from pathlib import Path
 from .alerts import DEFAULT_ALERT_WORKER_INTERVAL, run_alert_worker
 from .backup_restore import create_instance_backup, restore_instance_backup, verify_backup_archive
 from .config import Settings
-from .db import connect, init_db
+from .db import connection_scope, init_db
 from .importer import sync_sessions
 from .machine_setup import (
     machine_repair,
@@ -181,7 +181,7 @@ def cli() -> int:
     if args.command == "export":
         settings.ensure_directories()
         init_db(settings.database_path)
-        with connect(settings.database_path) as connection:
+        with connection_scope(settings.database_path) as connection:
             session = fetch_session_with_project(connection, args.session_id)
             if session is None:
                 raise SystemExit(f"Unknown session: {args.session_id}")

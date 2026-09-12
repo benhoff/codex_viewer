@@ -1,0 +1,28 @@
+         2784 function calls in 12.333 seconds
+
+   Ordered by: cumulative time
+   List reduced from 63 to 22 due to restriction <22>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   12.333   12.333 aov_latency_profile.py:39(<lambda>)
+        1    0.000    0.000   12.333   12.333 projects.py:1723(fetch_turn_stream)
+        2   12.330    6.165   12.330    6.165 {method 'execute' of 'sqlite3.Connection' objects}
+       10    0.000    0.000    0.001    0.000 projects.py:231(build_session_signal_badges)
+       10    0.000    0.000    0.001    0.000 projects.py:580(effective_project_fields)
+       10    0.000    0.000    0.001    0.000 session_insights.py:255(usage_pressure_snapshot)
+       10    0.000    0.000    0.000    0.000 session_insights.py:228(usage_metrics)
+      220    0.000    0.000    0.000    0.000 session_insights.py:31(_value)
+      301    0.000    0.000    0.000    0.000 projects.py:168(trimmed)
+      220    0.000    0.000    0.000    0.000 session_insights.py:20(_event_value)
+       10    0.000    0.000    0.000    0.000 projects.py:335(_project_session_preview_title)
+       10    0.000    0.000    0.000    0.000 projects.py:218(build_agent_lineage_badges)
+        1    0.000    0.000    0.000    0.000 {method 'fetchall' of 'sqlite3.Cursor' objects}
+       10    0.000    0.000    0.000    0.000 git_utils.py:118(normalize_git_remote)
+       10    0.000    0.000    0.000    0.000 session_insights.py:348(session_agent_snapshot)
+       10    0.000    0.000    0.000    0.000 text_utils.py:13(strip_codex_wrappers)
+      791    0.000    0.000    0.000    0.000 {built-in method builtins.isinstance}
+       20    0.000    0.000    0.000    0.000 parse.py:902(quote)
+       20    0.000    0.000    0.000    0.000 __init__.py:183(sub)
+      110    0.000    0.000    0.000    0.000 session_insights.py:35(trimmed)
+       60    0.000    0.000    0.000    0.000 projects.py:662(<genexpr>)
+       20    0.000    0.000    0.000    0.000 parse.py:978(quote_from_bytes)

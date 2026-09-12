@@ -13,7 +13,7 @@ from ...agents import (
 )
 from ...alerts import reconcile_remote_alerts_for_host
 from ...config import Settings
-from ...db import connect, write_transaction
+from ...db import connection_scope, write_transaction
 from ...importer import (
     append_parsed_session_tail,
     fetch_host_sync_manifest,
@@ -114,7 +114,7 @@ async def sync_manifest(request: Request, host: str = Query(...)) -> JSONRespons
 
 
 def _build_sync_manifest(settings: Settings, host: str, protocol_v2: bool) -> dict[str, object]:
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         sessions = fetch_host_sync_manifest(connection, host)
         ignored_keys = sorted(ignored_project_keys(connection))
         actions = fetch_pending_remote_actions(connection, host)
@@ -173,7 +173,7 @@ def _process_sync_heartbeat(
     payload: dict[str, object],
     source_host: str,
 ) -> dict[str, object]:
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         with write_transaction(connection):
             upsert_remote_agent_status(
                 connection,
@@ -231,7 +231,7 @@ def _process_sync_session(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         with write_transaction(connection):
             if parsed.inferred_project_key in ignored_project_keys(connection):
                 return {
@@ -291,7 +291,7 @@ def _process_raw_sync_session(
         header_host=header_host,
     )
 
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         with write_transaction(connection):
             results = store_raw_sync_sessions_batch(connection, settings, [(parsed, raw_jsonl)])
 
@@ -335,7 +335,7 @@ def _process_raw_sync_sessions_batch(
     header_host: str,
 ) -> dict[str, object]:
     results: list[dict[str, object]] = []
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         # Bound each transaction to one session. A large batch can then make
         # durable progress without holding the SQLite writer and WAL for every
         # item in the request at once.
@@ -383,7 +383,7 @@ def _process_raw_sync_session_tail(
     *,
     header_host: str,
 ) -> dict[str, object]:
-    with connect(settings.database_path) as connection:
+    with connection_scope(settings.database_path) as connection:
         with write_transaction(connection):
             result = store_raw_sync_session_tail(
                 connection,

@@ -1,0 +1,28 @@
+         437294 function calls (436815 primitive calls) in 3.143 seconds
+
+   Ordered by: cumulative time
+   List reduced from 558 to 22 due to restriction <22>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    3.143    3.143 aov_latency_profile.py:38(<lambda>)
+        1    0.011    0.011    3.143    3.143 projects.py:2447(fetch_group_detail)
+        8    2.803    0.350    2.803    0.350 {method 'execute' of 'sqlite3.Connection' objects}
+        1    0.003    0.003    2.381    2.381 action_queue.py:368(build_project_action_queue)
+        2    0.000    0.000    2.060    1.030 action_queue.py:897(_fetch_materialized_signal_rows)
+        2    0.006    0.003    0.300    0.150 action_queue.py:1049(_collect_materialized_verification_successes)
+        1    0.000    0.000    0.291    0.291 projects.py:1465(fetch_recent_session_turn_activity_windows)
+        2    0.000    0.000    0.231    0.115 action_queue.py:925(_fetch_materialized_verification_success_rows)
+        1    0.000    0.000    0.225    0.225 projects.py:1639(query_group_rows_for_key)
+     2178    0.050    0.000    0.129    0.000 projects.py:580(effective_project_fields)
+        1    0.003    0.003    0.092    0.092 action_queue.py:536(build_repo_action_signal_map)
+    54919    0.025    0.000    0.041    0.000 projects.py:168(trimmed)
+      890    0.010    0.000    0.038    0.000 action_queue.py:998(_hydrate_materialized_issue)
+     18/2    0.000    0.000    0.034    0.017 <frozen importlib._bootstrap>:1360(_find_and_load)
+     18/2    0.000    0.000    0.034    0.017 <frozen importlib._bootstrap>:1308(_find_and_load_unlocked)
+     18/2    0.000    0.000    0.033    0.017 <frozen importlib._bootstrap>:914(_load_unlocked)
+     15/2    0.000    0.000    0.033    0.017 <frozen importlib._bootstrap_external>:753(exec_module)
+     38/4    0.000    0.000    0.033    0.008 <frozen importlib._bootstrap>:483(_call_with_frames_removed)
+     25/2    0.007    0.000    0.033    0.016 {built-in method builtins.exec}
+        1    0.000    0.000    0.032    0.032 action_queue.py:1(<module>)
+        1    0.000    0.000    0.031    0.031 action_queue_state.py:1(<module>)
+      536    0.005    0.000    0.031    0.000 session_insights.py:255(usage_pressure_snapshot)

@@ -1,0 +1,36 @@
+{
+  "turn_start": [
+    [
+      5,
+      0,
+      49,
+      "SEARCH events USING INDEX idx_events_session_index (session_id=? AND event_index>? AND event_index<?)"
+    ]
+  ],
+  "evidence_exists": [
+    [
+      2,
+      0,
+      46,
+      "SEARCH e USING COVERING INDEX idx_events_session_index (session_id=? AND event_index>? AND event_index<?)"
+    ]
+  ],
+  "delete_events_plan_only": [
+    [
+      4,
+      0,
+      53,
+      "SEARCH events USING INDEX idx_events_session_index (session_id=?)"
+    ]
+  ],
+  "event_indexes": [
+    [
+      "idx_events_session_index",
+      "CREATE UNIQUE INDEX idx_events_session_index\nON events(session_id, event_index)"
+    ],
+    [
+      "idx_events_session_kind",
+      "CREATE INDEX idx_events_session_kind\nON events(session_id, kind)"
+    ]
+  ]
+}
