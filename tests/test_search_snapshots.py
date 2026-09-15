@@ -1,6 +1,8 @@
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+import json
+import os
 import tempfile
 import time
 from types import SimpleNamespace
@@ -48,12 +50,13 @@ class SearchSnapshotTests(unittest.TestCase):
             )
         self.user = {"user_id": "reader", "role": "viewer"}
 
-    def snapshot(self, snapshot_id=None, user=None):
+    def snapshot(self, snapshot_id=None, user=None, *, fresh_snapshot=False):
         return evidence_snapshot(
             self.settings,
             auth_user=user or self.user,
             auth_enabled=True,
             snapshot_id=snapshot_id,
+            fresh_snapshot=fresh_snapshot,
         )
 
     def test_reopen_does_not_require_process_cache_and_enforces_owner(self):
@@ -102,8 +105,10 @@ class SearchSnapshotTests(unittest.TestCase):
                 snapshot_id = metadata["snapshot_id"]
             with self.snapshot(snapshot_id):
                 pass
+            with self.snapshot() as (_, _, reused, _, _):
+                self.assertEqual(reused["index_generation"], metadata["index_generation"])
             with self.assertRaises(HTTPException) as caught:
-                with self.snapshot():
+                with self.snapshot(fresh_snapshot=True):
                     pass
             self.assertEqual(caught.exception.status_code, 503)
             with patch(
@@ -181,6 +186,7 @@ class SearchSnapshotTests(unittest.TestCase):
             def authorize(action, table, column, database, trigger):
                 if action == sqlite3.SQLITE_READ and table not in {
                     "sqlite_master",
+                    "sqlite_temp_master",
                     "evidence_snapshot_metadata",
                 }:
                     return sqlite3.SQLITE_DENY
@@ -338,7 +344,7 @@ class SearchSnapshotTests(unittest.TestCase):
         with (directory / "lock").open("a+b") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self.assertRaises(HTTPException) as caught:
-                with self.snapshot():
+                with self.snapshot(fresh_snapshot=True):
                     pass
             self.assertEqual(caught.exception.detail["code"], "snapshot_building")
             self.assertEqual(caught.exception.headers["Retry-After"], "2")
@@ -419,3 +425,409 @@ class SearchSnapshotTests(unittest.TestCase):
             self.assertTrue(job.done.wait(3))
         with self.snapshot(snapshot_id) as (_, _, metadata, _, _):
             self.assertEqual(metadata["snapshot_id"], snapshot_id)
+
+    def test_poll_elapsed_advances_while_inventory_has_no_progress_callbacks(self):
+        clock = [time.monotonic()]
+        entered, release = threading.Event(), threading.Event()
+
+        def stalled_inventory(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("Test did not release inventory")
+            return prepare_coverage_inventory(*args, **kwargs)
+
+        with patch("agent_operations_viewer.search_snapshots.time.monotonic", side_effect=lambda: clock[0]), \
+             patch("agent_operations_viewer.search_snapshots.prepare_coverage_inventory", side_effect=stalled_inventory), \
+             patch("agent_operations_viewer.search_snapshots.SNAPSHOT_REQUEST_WAIT_SECONDS", 0.01):
+            try:
+                with self.assertRaises(HTTPException) as first:
+                    with self.snapshot():
+                        pass
+                snapshot_id = first.exception.detail["snapshot_id"]
+                job = _BUILDS[(str(self.settings.database_path.resolve()), "reader")]
+                self.assertTrue(entered.wait(2))
+                for elapsed in (17, 83):
+                    clock[0] = job.started + elapsed
+                    with self.assertRaises(HTTPException) as poll:
+                        with self.snapshot(snapshot_id):
+                            pass
+                    detail = poll.exception.detail
+                    self.assertEqual(detail["stage"], "coverage_inventory")
+                    self.assertEqual(detail["elapsed_seconds"], elapsed)
+                    self.assertEqual(detail["stage_elapsed_seconds"], elapsed)
+                    self.assertEqual(detail["progress_age_seconds"], elapsed)
+                    self.assertEqual(detail["backup_pages_copied"], detail["backup_pages_total"])
+                    self.assertEqual(detail["backup_progress_scope"], "database_copy_only")
+                    self.assertNotIn("_recorded_monotonic", detail)
+            finally:
+                release.set()
+            self.assertTrue(job.done.wait(3))
+        with self.snapshot(snapshot_id) as (_, _, metadata, _, _):
+            self.assertEqual(metadata["preparation"]["elapsed_seconds"], 83)
+
+    def test_final_timings_include_commit_close_and_publication_and_remain_frozen(self):
+        from agent_operations_viewer.search_snapshots import _build_snapshot
+        clock, wall = [time.monotonic()], [time.time()]
+        start = wall[0]
+        original_connect, original_replace = sqlite3.connect, os.replace
+
+        def advance(seconds):
+            clock[0] += seconds
+            wall[0] += seconds
+
+        class SlowFinalization(sqlite3.Connection):
+            def commit(self):
+                super().commit()
+                advance(5)
+
+            def close(self):
+                super().close()
+                advance(3)
+
+        def connect_with_slow_finalization(database, *args, **kwargs):
+            if str(database).endswith(".creating"):
+                kwargs["factory"] = SlowFinalization
+            return original_connect(database, *args, **kwargs)
+
+        def slow_publication(source, destination):
+            if str(destination).endswith(".sqlite3"):
+                advance(7)
+            return original_replace(source, destination)
+
+        def delayed_worker(*args, **kwargs):
+            advance(4)
+            return _build_snapshot(*args, **kwargs)
+
+        with patch("agent_operations_viewer.search_snapshots.time.monotonic", side_effect=lambda: clock[0]), \
+             patch("agent_operations_viewer.search_snapshots.time.time", side_effect=lambda: wall[0]), \
+             patch("agent_operations_viewer.search_snapshots.sqlite3.connect", side_effect=connect_with_slow_finalization), \
+             patch("agent_operations_viewer.search_snapshots._build_snapshot", side_effect=delayed_worker), \
+             patch("agent_operations_viewer.search_snapshots.os.replace", side_effect=slow_publication):
+            with self.snapshot() as (_, _, metadata, _, _):
+                snapshot_id = metadata["snapshot_id"]
+                preparation = metadata["preparation"]
+                self.assertEqual(preparation["elapsed_seconds"], 19)
+                self.assertEqual(preparation["stage_timings_seconds"]["queued"], 4)
+                self.assertEqual(preparation["stage_timings_seconds"]["metadata"], 8)
+                self.assertEqual(preparation["stage_timings_seconds"]["publish"], 7)
+                self.assertEqual(sum(preparation["stage_timings_seconds"].values()), 19)
+                self.assertAlmostEqual(datetime.fromisoformat(metadata["ready_at"]).timestamp(), start + 19, places=5)
+                self.assertAlmostEqual(datetime.fromisoformat(metadata["expires_at"]).timestamp(), start + 919, places=5)
+            advance(60)
+            with self.snapshot(snapshot_id) as (_, _, reused, _, _):
+                self.assertEqual(reused["preparation"], preparation)
+                self.assertEqual(reused["ready_at"], metadata["ready_at"])
+
+    def test_partial_publication_is_not_ready_without_final_manifest(self):
+        from agent_operations_viewer.search_snapshots import _write_status
+        entered, release = threading.Event(), threading.Event()
+
+        def hold_manifest(path, detail):
+            if path.suffix == ".ready":
+                entered.set()
+                if not release.wait(5):
+                    raise RuntimeError("Test did not release publication")
+            _write_status(path, detail)
+
+        with patch("agent_operations_viewer.search_snapshots._write_status", side_effect=hold_manifest), \
+             patch("agent_operations_viewer.search_snapshots.SNAPSHOT_REQUEST_WAIT_SECONDS", 0.01):
+            try:
+                with self.assertRaises(HTTPException) as first:
+                    with self.snapshot():
+                        pass
+                snapshot_id = first.exception.detail["snapshot_id"]
+                job = _BUILDS[(str(self.settings.database_path.resolve()), "reader")]
+                self.assertTrue(entered.wait(2))
+                with self.assertRaises(HTTPException) as poll:
+                    with self.snapshot(snapshot_id):
+                        pass
+                self.assertEqual(poll.exception.detail["code"], "snapshot_building")
+                self.assertEqual(poll.exception.detail["stage"], "publish")
+            finally:
+                release.set()
+            self.assertTrue(job.done.wait(3))
+        with self.snapshot(snapshot_id):
+            pass
+        ready = self.settings.database_path.parent / "search-snapshots" / f"{job.generation}.ready"
+        ready.unlink()
+        with self.assertRaises(HTTPException) as missing:
+            with self.snapshot(snapshot_id):
+                pass
+        self.assertEqual(missing.exception.detail["code"], "snapshot_build_interrupted")
+
+    def test_legacy_snapshots_without_timing_manifest_remain_readable(self):
+        with self.snapshot() as (_, _, metadata, signer, _):
+            token = signer.loads(metadata["snapshot_id"])
+        directory = self.settings.database_path.parent / "search-snapshots"
+        generation = metadata["index_generation"]
+        stored = json.loads((directory / f"{generation}.{token['handle']}.handle").read_text())
+        token.pop("handle")
+        snapshot_id = signer.dumps(token)
+        stored["metadata"].pop("preparation_status_version")
+        stored["metadata"].pop("preparation")
+        # Build a genuine legacy owner-bound metadata record in the physical DB.
+        with closing(sqlite3.connect(directory / f"{generation}.sqlite3")) as frozen, frozen:
+            stored["access"] = {"auth_enabled": True, "bypass": False, "user_id": "reader", "project_roles": {}}
+            frozen.execute("CREATE TABLE evidence_snapshot_metadata (payload TEXT NOT NULL)")
+            frozen.execute("INSERT INTO evidence_snapshot_metadata VALUES (?)", (json.dumps(stored),))
+        (directory / f"{generation}.ready").unlink()
+        with self.snapshot(snapshot_id) as (_, _, legacy, _, _):
+            self.assertNotIn("preparation", legacy)
+            self.assertEqual(legacy["expires_at"], metadata["expires_at"])
+
+    def test_failure_after_database_publication_never_returns_partial_snapshot(self):
+        from agent_operations_viewer.search_snapshots import _write_status
+
+        def fail_manifest(path, detail):
+            if path.suffix == ".ready":
+                raise OSError("private filesystem details")
+            _write_status(path, detail)
+
+        with patch("agent_operations_viewer.search_snapshots._write_status", side_effect=fail_manifest), \
+             self.assertLogs("agent_operations_viewer.search_snapshots", level="ERROR"):
+            with self.assertRaises(HTTPException) as failed:
+                with self.snapshot():
+                    pass
+        self.assertEqual(failed.exception.detail["code"], "snapshot_build_failed")
+        self.assertEqual(failed.exception.detail["stage"], "publish")
+        self.assertIn("publish", failed.exception.detail["stage_timings_seconds"])
+        self.assertNotIn("private", json.dumps(failed.exception.detail))
+        self.assertNotIn("_recorded_monotonic", failed.exception.detail)
+
+    def test_poll_reports_timeout_while_builder_is_still_blocked(self):
+        clock = [time.monotonic()]
+        entered, release = threading.Event(), threading.Event()
+
+        def blocked_inventory(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("Test did not release inventory")
+            return prepare_coverage_inventory(*args, **kwargs)
+
+        with patch("agent_operations_viewer.search_snapshots.time.monotonic", side_effect=lambda: clock[0]), \
+             patch("agent_operations_viewer.search_snapshots.prepare_coverage_inventory", side_effect=blocked_inventory), \
+             patch("agent_operations_viewer.search_snapshots.SNAPSHOT_REQUEST_WAIT_SECONDS", 0.01), \
+             self.assertLogs("agent_operations_viewer.search_snapshots", level="ERROR"):
+            try:
+                with self.assertRaises(HTTPException) as first:
+                    with self.snapshot():
+                        pass
+                snapshot_id = first.exception.detail["snapshot_id"]
+                job = _BUILDS[(str(self.settings.database_path.resolve()), "reader")]
+                self.assertTrue(entered.wait(2))
+                clock[0] = job.started + 605
+                with self.assertRaises(HTTPException) as overdue:
+                    with self.snapshot(snapshot_id):
+                        pass
+                self.assertEqual(overdue.exception.detail["code"], "snapshot_build_failed")
+                self.assertEqual(overdue.exception.detail["reason"], "deadline_exceeded")
+                self.assertEqual(overdue.exception.detail["elapsed_seconds"], 605)
+                self.assertEqual(overdue.exception.detail["stage_timings_seconds"]["coverage_inventory"], 605)
+                self.assertTrue(overdue.exception.detail["worker_stopping"])
+                self.assertFalse(job.done.is_set())
+                clock[0] += 10
+                with self.assertRaises(HTTPException) as repeat:
+                    with self.snapshot(snapshot_id):
+                        pass
+                self.assertEqual(repeat.exception.detail, overdue.exception.detail)
+            finally:
+                release.set()
+            self.assertTrue(job.done.wait(3))
+        with self.assertRaises(HTTPException) as finished:
+            with self.snapshot(snapshot_id):
+                pass
+        self.assertEqual(finished.exception.detail["code"], "snapshot_build_failed")
+        self.assertEqual(finished.exception.detail["reason"], "deadline_exceeded")
+
+    def test_faster_snapshot_directory_preserves_old_ids_and_signing_key(self):
+        with self.snapshot() as (_, _, old, _, _):
+            old_id = old["snapshot_id"]
+        legacy = self.settings.database_path.parent / "search-snapshots"
+        key = (legacy / "signing-key").read_bytes()
+        self.settings.search_snapshot_dir = Path(self.directory.name) / "fast-snapshots"
+        with self.snapshot(old_id) as (_, _, reused, _, _):
+            self.assertEqual(reused, old)
+        with self.snapshot() as (_, _, new, _, _):
+            self.assertNotEqual(new["snapshot_id"], old_id)
+        generation = new["index_generation"]
+        self.assertTrue((self.settings.search_snapshot_dir / f"{generation}.sqlite3").exists())
+        self.assertFalse((legacy / f"{generation}.sqlite3").exists())
+        self.assertEqual((legacy / "signing-key").read_bytes(), key)
+        self.assertFalse((self.settings.search_snapshot_dir / "signing-key").exists())
+        with patch("agent_operations_viewer.search_snapshots.MAX_SNAPSHOTS", 2):
+            with self.assertRaises(HTTPException) as full:
+                with self.snapshot(fresh_snapshot=True):
+                    pass
+            self.assertEqual(full.exception.detail["code"], "snapshot_capacity")
+        with patch("agent_operations_viewer.search_snapshots.time.time", return_value=time.time() + 1000):
+            with self.snapshot():
+                pass
+        self.assertFalse(list(legacy.glob("*.sqlite3")))
+
+    def test_relocated_snapshot_builder_still_uses_shared_creation_lock(self):
+        from agent_operations_viewer.search_snapshots import _signer
+        _, _ = _signer(self.settings)
+        legacy = self.settings.database_path.parent / "search-snapshots"
+        self.settings.search_snapshot_dir = Path(self.directory.name) / "fast-snapshots"
+        with (legacy / "lock").open("a+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(HTTPException) as busy:
+                with self.snapshot():
+                    pass
+            self.assertEqual(busy.exception.detail["code"], "snapshot_building")
+        with self.snapshot():
+            pass
+
+    def test_shared_generation_has_private_handles_and_no_owner_in_physical_file(self):
+        with patch('agent_operations_viewer.search_snapshots.prepare_coverage_inventory', wraps=prepare_coverage_inventory) as inventory:
+            with self.snapshot() as (_, _, first, _, _):
+                pass
+            with self.snapshot(user={'user_id': 'administrator', 'role': 'admin'}) as (connection, access, admin, _, _):
+                self.assertEqual(search_turn_hits_raw(connection, 'needle', project_access=access)['session_count'], 2)
+                self.assertEqual(admin['coverage']['sessions_total'], 2)
+            with self.snapshot(user={'user_id': 'another-reader', 'role': 'viewer'}) as (connection, access, reader, _, _):
+                self.assertEqual(search_turn_hits_raw(connection, 'needle', project_access=access)['session_count'], 1)
+                self.assertEqual(reader['coverage']['sessions_total'], 1)
+                self.assertEqual(connection.execute('SELECT COUNT(*) FROM sessions').fetchone()[0], 1)
+            self.assertEqual(inventory.call_count, 1)
+        self.assertEqual(first['index_generation'], admin['index_generation'])
+        self.assertEqual(first['index_generation'], reader['index_generation'])
+        self.assertEqual(len({first['snapshot_id'], admin['snapshot_id'], reader['snapshot_id']}), 3)
+        self.assertEqual(reader['generation_reuse'], 'ready')
+        self.assertEqual(first['preparation'], reader['preparation'])
+        directory = self.settings.database_path.parent / 'search-snapshots'
+        self.assertEqual(len(list(directory.glob('*.sqlite3'))), 1)
+        with closing(sqlite3.connect(next(directory.glob('*.sqlite3')))) as connection:
+            stored = json.loads(connection.execute('SELECT payload FROM evidence_generation_metadata').fetchone()[0])
+            self.assertNotIn('access', stored)
+            self.assertNotIn('owner', stored)
+            self.assertNotIn('coverage', stored['metadata'])
+            self.assertIsNone(connection.execute("SELECT name FROM sqlite_master WHERE name='evidence_snapshot_metadata'").fetchone())
+        for path in directory.glob('*.handle'):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_fresh_request_refreshes_content_without_changing_existing_handles(self):
+        with self.snapshot() as (_, _, original, _, _):
+            pass
+        with closing(connect(self.settings.database_path)) as connection, connection:
+            connection.execute("UPDATE session_turn_search SET prompt_text='newcapture' WHERE session_id='public'")
+        with self.snapshot() as (connection, access, reused, _, _):
+            self.assertEqual(reused['index_generation'], original['index_generation'])
+            self.assertEqual(search_turn_hits_raw(connection, 'newcapture', fields=('prompt',), project_access=access)['total_count'], 0)
+        with self.snapshot(fresh_snapshot=True) as (connection, access, fresh, _, _):
+            self.assertNotEqual(fresh['index_generation'], original['index_generation'])
+            self.assertEqual(fresh['generation_reuse'], 'created')
+            self.assertEqual(search_turn_hits_raw(connection, 'newcapture', fields=('prompt',), project_access=access)['total_count'], 1)
+        with self.snapshot(original['snapshot_id']) as (_, _, reopened, _, _):
+            self.assertEqual(reopened, original)
+
+    def test_revocation_does_not_poison_other_handles_and_new_scope_excludes_removed_sessions(self):
+        with self.snapshot(user={'user_id': 'reader', 'role': 'admin'}) as (_, _, admin, _, _):
+            pass
+        with self.snapshot() as (_, _, reader, _, _):
+            pass
+        with self.assertRaises(HTTPException) as denied:
+            with self.snapshot(admin['snapshot_id']):
+                pass
+        self.assertEqual(denied.exception.detail['code'], 'snapshot_access_revoked')
+        with self.snapshot(reader['snapshot_id']):
+            pass
+        with closing(connect(self.settings.database_path)) as connection, connection:
+            connection.execute("UPDATE project_sources SET project_id='private' WHERE match_project_key='public'")
+        with self.assertRaises(HTTPException) as remapped:
+            with self.snapshot(reader['snapshot_id']):
+                pass
+        self.assertEqual(remapped.exception.detail['code'], 'snapshot_access_revoked')
+        with self.snapshot() as (connection, access, restricted, _, _):
+            self.assertEqual(restricted['index_generation'], reader['index_generation'])
+            self.assertEqual(restricted['coverage']['sessions_total'], 0)
+            self.assertEqual(search_turn_hits_raw(connection, 'needle', project_access=access)['total_count'], 0)
+            self.assertEqual(connection.execute('SELECT COUNT(*) FROM sessions').fetchone()[0], 0)
+
+    def test_join_in_progress_generation_uses_separate_handle(self):
+        entered, release = threading.Event(), threading.Event()
+        def slow_inventory(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError('Test did not release inventory')
+            return prepare_coverage_inventory(*args, **kwargs)
+        with patch('agent_operations_viewer.search_snapshots.prepare_coverage_inventory', side_effect=slow_inventory) as inventory, \
+             patch('agent_operations_viewer.search_snapshots.SNAPSHOT_REQUEST_WAIT_SECONDS', 0.01):
+            try:
+                with self.assertRaises(HTTPException) as first:
+                    with self.snapshot():
+                        pass
+                first_id = first.exception.detail['snapshot_id']
+                job = _BUILDS[(str(self.settings.database_path.resolve()), 'reader')]
+                self.assertTrue(entered.wait(2))
+                with self.assertRaises(HTTPException) as joined:
+                    with self.snapshot(user={'user_id': 'other', 'role': 'admin'}, fresh_snapshot=True):
+                        pass
+                other_id = joined.exception.detail['snapshot_id']
+                self.assertNotEqual(first_id, other_id)
+                self.assertEqual(joined.exception.detail['build_id'], first.exception.detail['build_id'])
+            finally:
+                release.set()
+            self.assertTrue(job.done.wait(3))
+            self.assertEqual(inventory.call_count, 1)
+        with self.snapshot(first_id) as (_, _, first, _, _):
+            pass
+        with self.snapshot(other_id, user={'user_id': 'other', 'role': 'admin'}) as (_, _, joined, _, _):
+            self.assertEqual(joined['index_generation'], first['index_generation'])
+            self.assertEqual(joined['generation_reuse'], 'building')
+            self.assertEqual(joined['coverage']['sessions_total'], 2)
+            self.assertEqual(first['coverage']['sessions_total'], 1)
+
+    def test_reuse_window_and_generation_expiry_never_extend(self):
+        with self.snapshot() as (_, _, original, _, _):
+            pass
+        ready = datetime.fromisoformat(original['ready_at']).timestamp()
+        with patch('agent_operations_viewer.search_snapshots.time.time', return_value=ready + 299):
+            with self.snapshot() as (_, _, last_reuse, _, _):
+                self.assertEqual(last_reuse['index_generation'], original['index_generation'])
+                self.assertEqual(last_reuse['expires_at'], original['expires_at'])
+        with patch('agent_operations_viewer.search_snapshots.time.time', return_value=ready + 301):
+            with self.snapshot() as (_, _, fresh, _, _):
+                self.assertNotEqual(fresh['index_generation'], original['index_generation'])
+            with self.snapshot(last_reuse['snapshot_id']):
+                pass
+        with patch('agent_operations_viewer.search_snapshots.time.time', return_value=ready + 901):
+            with self.assertRaises(HTTPException) as expired:
+                with self.snapshot(last_reuse['snapshot_id']):
+                    pass
+            self.assertEqual(expired.exception.status_code, 410)
+
+    def test_another_process_reuses_ready_generation(self):
+        import subprocess
+        import sys
+        with self.snapshot() as (_, _, original, _, _):
+            pass
+        code = '''
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+from agent_operations_viewer.search_snapshots import evidence_snapshot
+settings = SimpleNamespace(database_path=Path(sys.argv[1]))
+with patch('agent_operations_viewer.search_snapshots._build_snapshot', side_effect=AssertionError('Unexpected backup')):
+    with evidence_snapshot(settings, auth_user={'user_id':'other-process', 'role':'viewer'}, auth_enabled=True) as (_, _, metadata, _, _):
+        assert metadata['index_generation'] == sys.argv[2]
+        assert metadata['coverage']['sessions_total'] == 1
+        assert metadata['generation_reuse'] == 'ready'
+'''
+        result = subprocess.run([sys.executable, '-c', code, str(self.settings.database_path), original['index_generation']], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_visible_reassignment_requires_fresh_capture_instead_of_incomplete_results(self):
+        admin = {'user_id': 'administrator', 'role': 'admin'}
+        with self.snapshot(user=admin):
+            pass
+        with closing(connect(self.settings.database_path)) as connection, connection:
+            connection.execute("UPDATE project_sources SET project_id='private' WHERE match_project_key='public'")
+        with self.assertRaises(HTTPException) as changed:
+            with self.snapshot(user=admin):
+                pass
+        self.assertEqual(changed.exception.detail['code'], 'snapshot_scope_changed')
+        with self.snapshot(user=admin, fresh_snapshot=True) as (connection, access, metadata, _, _):
+            self.assertEqual(metadata['coverage']['sessions_total'], 2)
+            self.assertEqual(search_turn_hits_raw(connection, 'needle', project_access=access)['session_count'], 2)

@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from .projects import (
     TURN_SEARCH_HIGHLIGHT_END,
@@ -128,6 +129,10 @@ def _search_match_spec(
 
 def _empty_search_coverage(*, state: str = "empty") -> dict[str, Any]:
     return {
+        "issues": [],
+        "issues_total": 0,
+        "issues_returned": 0,
+        "issues_truncated": False,
         "first_session_at": None,
         "last_session_at": None,
         "last_indexed_at": None,
@@ -595,13 +600,16 @@ def _search_coverage(
     *,
     base_conditions: list[str],
     base_params: list[Any],
+    issues_page: int | None = None,
+    issues_limit: int = 50,
 ) -> dict[str, Any]:
     mark_search_stage("coverage")
     # The builder already computed coverage for the frozen authorization scope.
     # Reuse it only for that exact scope: query text/fields do not narrow corpus
     # coverage, but project/date/exclusion filters and different ACLs do.
-    if connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE name = 'evidence_snapshot_metadata'"
+    if issues_page is None and connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'evidence_snapshot_metadata' "
+        "UNION ALL SELECT 1 FROM sqlite_temp_master WHERE name = 'evidence_snapshot_metadata'"
     ).fetchone():
         stored = json.loads(connection.execute(
             "SELECT payload FROM evidence_snapshot_metadata"
@@ -718,6 +726,7 @@ def _search_coverage(
             SELECT DISTINCT session_id FROM indexed_turns
         )
         SELECT s.id, MAX(s.turn_count) AS known_turns,
+               s.import_warning, s.search_indexed_at,
                COUNT(st.turn_number) AS indexed_turn_rows,
                CASE WHEN {fully_indexed_sql} THEN 1 ELSE 0 END AS current,
                indexed_sessions.session_id IS NOT NULL AS has_search,
@@ -736,6 +745,7 @@ def _search_coverage(
         LEFT JOIN project_overrides o ON o.match_project_key = s.inferred_project_key
         {visible_session_where(base_conditions)}
         GROUP BY s.id
+        ORDER BY s.id
         """, base_params,
     ).fetchall()
     # With time bounds, unknown turn timestamps cannot safely be assigned outside
@@ -744,6 +754,35 @@ def _search_coverage(
     missing_turns = sum(max(0, int(row["known_turns"] or 0) - int(row["indexed_turn_rows"])) for row in states) if not has_time_bounds else 0
     stale_sessions = sum(1 for row in states if not row["current"] and row["has_search"])
     stale_turns = sum(int(row["indexed_turn_rows"]) for row in states if not row["current"] and row["has_search"])
+    issues = []
+    for row in states:
+        reasons = []
+        if not row["current"]:
+            reasons.append("sessions_stale" if row["has_search"] else "sessions_pending")
+        elif not str(row["search_indexed_at"] or "").strip():
+            reasons.append("index_timestamp_unknown")
+        if not row["indexed_turn_rows"]:
+            reasons.append("sessions_without_turns")
+        missing = max(0, int(row["known_turns"] or 0) - int(row["indexed_turn_rows"])) if not has_time_bounds else None
+        if missing:
+            reasons.append("turns_missing_index")
+        for field, code in (("warning", "sessions_import_warnings"), ("missing_search", "turns_missing_search_rows"), ("missing_evidence", "turns_missing_evidence")):
+            if row[field]:
+                reasons.append(code)
+        if reasons:
+            warning = str(row["import_warning"] or "")
+            issues.append({
+                "session_id": row["id"], "reasons": reasons,
+                "import_warning": warning[:2000] or None,
+                "import_warning_truncated": len(warning) > 2000,
+                "indexed_turn_rows": int(row["indexed_turn_rows"]),
+                "missing_turn_count": missing,
+                "missing_search_rows": int(row["missing_search"]),
+                "missing_evidence_turns": int(row["missing_evidence"]),
+                "links": {"session": f"/sessions/{quote(str(row['id']), safe='')}"},
+            })
+    offset = ((issues_page or 1) - 1) * issues_limit
+    selected_issues = issues[offset:offset + issues_limit]
 
     sessions_total = sum(int(row["sessions_total"] or 0) for row in rows)
     sessions_indexed = sum(int(row["sessions_indexed"] or 0) for row in rows)
@@ -802,6 +841,10 @@ def _search_coverage(
         )
 
     return {
+        "issues": selected_issues,
+        "issues_total": len(issues),
+        "issues_returned": len(selected_issues),
+        "issues_truncated": offset + len(selected_issues) < len(issues),
         "first_session_at": min(first_timestamps) if first_timestamps else None,
         "last_session_at": max(last_timestamps) if last_timestamps else None,
         "last_indexed_at": max(indexed_timestamps) if indexed_timestamps else None,

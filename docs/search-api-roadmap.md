@@ -1,5 +1,9 @@
 # Search API Implementation Roadmap
 
+For the current, narrower evidence-retrieval scope and delivered additions, see
+[Recorded-evidence API scope](search-evidence-scope.md). The future options below
+are historical planning, not commitments for that implementation.
+
 This roadmap breaks the search API improvements into independently deployable slices. The ordering prioritizes evidence reconstruction and trustworthy negative results before adding broader retrieval techniques.
 
 ## Slice 1: Complete Evidence and Provenance (Implemented)

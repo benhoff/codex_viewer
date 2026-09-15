@@ -57,6 +57,17 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(settings.database_path, override_path)
 
+    def test_snapshot_storage_can_be_separate_from_live_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "fast-snapshots"
+            with patch.dict(os.environ, {"CODEX_VIEWER_SEARCH_SNAPSHOT_DIR": str(target)}, clear=True):
+                settings = Settings.from_env(project_root=root)
+            self.assertEqual(settings.search_snapshot_dir, target)
+            self.assertEqual(settings.database_path.parent, root / "data")
+            with patch.dict(os.environ, {}, clear=True):
+                self.assertIsNone(Settings.from_env(project_root=root).search_snapshot_dir)
+
 
 if __name__ == "__main__":
     unittest.main()

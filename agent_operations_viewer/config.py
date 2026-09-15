@@ -187,6 +187,7 @@ class Settings:
     remote_watch_mode: str = "auto"
     remote_watch_debounce_seconds: float = 1.0
     remote_watch_poll_seconds: float = 1.0
+    search_snapshot_dir: Path | None = None
 
     @classmethod
     def from_env(cls, project_root: Path | None = None) -> "Settings":
@@ -247,6 +248,10 @@ class Settings:
             environment_name=environment_name,
             data_dir=data_dir,
             database_path=database_path,
+            search_snapshot_dir=(
+                Path(os.environ["CODEX_VIEWER_SEARCH_SNAPSHOT_DIR"]).expanduser()
+                if os.getenv("CODEX_VIEWER_SEARCH_SNAPSHOT_DIR", "").strip() else None
+            ),
             session_roots=session_roots,
             sync_mode=sync_mode,
             app_version=app_version,

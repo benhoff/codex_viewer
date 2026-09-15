@@ -1164,7 +1164,12 @@ class SearchApiTests(unittest.TestCase):
             sort="time_asc",
         ).json()
         snapshot = initial["snapshot_id"]
+        preparation = initial["snapshot"]["preparation"]
+        self.assertEqual(preparation["timing_scope"], "accepted_build_to_database_publication")
+        self.assertIn("publish", preparation["stage_timings_seconds"])
+        self.assertGreaterEqual(preparation["elapsed_seconds"], 0)
         old_turn = self._turn(token=self.viewer_token, snapshot_id=snapshot).json()
+        self.assertEqual(old_turn["snapshot"]["preparation"], preparation)
         with connect(self.settings.database_path) as connection:
             with write_transaction(connection):
                 connection.execute(
@@ -1190,11 +1195,17 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(
             self._turn(token=self.viewer_token, snapshot_id=snapshot).json(), old_turn
         )
+        reused = self._search(
+            token=self.viewer_token, q="shared api needle", fields="prompt", sort="time_asc",
+        ).json()
+        self.assertEqual(reused["snapshot"]["index_generation"], initial["snapshot"]["index_generation"])
+        self.assertEqual(reused["hits"], initial["hits"])
         live = self._search(
             token=self.viewer_token,
             q="shared api needle",
             fields="prompt",
             sort="time_asc",
+            fresh_snapshot=True,
         ).json()
         self.assertNotEqual(live["snapshot_id"], snapshot)
         self.assertLess(live["total_count"], initial["total_count"])
@@ -1544,6 +1555,10 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(coverage["sessions_pending"], 1)
         self.assertEqual(coverage["turns_pending"], 4)
         self.assertFalse(coverage["exhaustive_ready"])
+        issue = next(issue for issue in coverage["issues"] if issue["session_id"] == "public-two")
+        self.assertEqual(issue["missing_turn_count"], 4)
+        self.assertIn("sessions_without_turns", issue["reasons"])
+        self.assertIn("turns_missing_index", issue["reasons"])
 
     def test_search_sort_and_group_parameters_are_validated(self) -> None:
         invalid_sort = self._search(token=self.viewer_token, sort="newest")
@@ -1563,6 +1578,92 @@ class SearchApiTests(unittest.TestCase):
         self.assertEqual(invalid_mode.status_code, 422)
         self.assertEqual(invalid_fields.status_code, 422)
         self.assertEqual(invalid_facets.status_code, 422)
+
+
+    def test_recorded_output_linkage_and_reference_client(self):
+        from agent_operations_viewer.search_client import SearchClient
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                connection.execute(
+                    "UPDATE events SET record_json = ? WHERE session_id = 'public-one' AND event_index = 4",
+                    (json.dumps({"payload": {"aggregated_output": "", "exit_code": 0}}),),
+                )
+        client = SearchClient(self.base_url, self.viewer_token)
+        pages = list(client.search("grouping api needle", fields="prompt", limit=1))
+        self.assertGreater(len(pages), 1)
+        hits = [hit for page in pages for hit in page["hits"]]
+        hit = next(hit for hit in hits if hit["session_id"] == "public-one" and hit["turn_number"] == 2)
+        result = client.turn(hit["session_id"], hit["turn_number"], expected_digest=hit["content_digest"])
+        turn = result["turns"][0]
+        self.assertEqual(turn["normalization_version"], "evidence-2")
+        command = next(command for command in turn["commands"] if command["event_index"] == 3)
+        self.assertEqual(command["output"], "")
+        self.assertEqual(command["output_availability"], "captured_empty")
+        self.assertEqual(command["result_event_ids"], ["session:public-one:event:4", "session:public-one:event:5"])
+        sources = {event["event_index"]: event for event in turn["source_events"]}
+        self.assertEqual(sources[4]["output"]["representation"], "")
+        self.assertEqual(sources[4]["command_event_id"], command["event_id"])
+        self.assertEqual(sources[2]["provenance"], "user_message")
+        self.assertEqual(client.activity("public-one", 2, limit=1, expected_digest=turn["activity_digest"]), turn["activity"])
+
+    def test_coverage_issue_pages_keep_acl_filters_and_snapshot(self):
+        from agent_operations_viewer.search_client import SearchClient
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                connection.execute("UPDATE sessions SET import_warning = 'record omitted during import'")
+                connection.execute("UPDATE sessions SET import_warning = 'private warning' WHERE id = 'private-one'")
+        client = SearchClient(self.base_url, self.viewer_token)
+        pages = list(client.coverage(limit=1, exclude_session_id=["public-two"]))
+        issues = [issue for page in pages for issue in page["coverage"]["issues"]]
+        self.assertGreater(len(pages), 1)
+        self.assertEqual(len(issues), pages[0]["coverage"]["issues_total"])
+        self.assertEqual(len({issue["session_id"] for issue in issues}), len(issues))
+        self.assertNotIn("private warning", str(pages))
+        self.assertNotIn("private-one", str(pages))
+        self.assertNotIn("public-two", {issue["session_id"] for issue in issues})
+        for issue in issues:
+            self.assertIn("sessions_import_warnings", issue["reasons"])
+            self.assertTrue(issue["links"]["session"].startswith("/sessions/"))
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                connection.execute("UPDATE sessions SET import_warning = NULL")
+        self.assertEqual(list(client.coverage(limit=1, exclude_session_id=["public-two"])), pages)
+        headers = {"Authorization": f"Bearer {self.viewer_token}"}
+        response = requests.get(self.base_url + "/api/v1/search/coverage", headers=headers,
+                                params={"limit": 1, "cursor": pages[0]["next_cursor"]}, timeout=2)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(requests.get(self.base_url + "/api/v1/search/coverage", headers=headers,
+                                     params={"bogus": 1}, timeout=2).status_code, 422)
+
+
+    def test_shared_generation_keeps_admin_and_reader_http_scopes_separate(self):
+        with connect(self.settings.database_path) as connection:
+            with write_transaction(connection):
+                admin_token = create_search_api_token(
+                    connection, owner_user_id=self.admin["id"], label="Shared-generation test",
+                )["token"]
+        admin_response = self._search(token=admin_token, q="shared api needle", fields="prompt")
+        self.assertEqual(admin_response.status_code, 200, admin_response.text)
+        admin = admin_response.json()
+        reader = self._search(token=self.viewer_token, q="shared api needle", fields="prompt").json()
+        self.assertEqual(admin["snapshot"]["index_generation"], reader["snapshot"]["index_generation"])
+        self.assertNotEqual(admin["snapshot_id"], reader["snapshot_id"])
+        self.assertIn("private-one", str(admin))
+        self.assertNotIn("private-one", str(reader))
+        self.assertEqual(reader["snapshot"]["generation_reuse"], "ready")
+        self.assertEqual(self._search(token=self.viewer_token, snapshot_id=admin["snapshot_id"]).status_code, 403)
+        response = requests.get(
+            self.base_url + "/api/v1/sessions/private-one/turns/1",
+            params={"snapshot_id": reader["snapshot_id"]},
+            headers={"Authorization": f"Bearer {self.viewer_token}"}, timeout=2,
+        )
+        self.assertEqual(response.status_code, 404)
+        projects = self._projects(token=self.viewer_token).json()
+        self.assertEqual(projects["snapshot"]["index_generation"], reader["snapshot"]["index_generation"])
+        self.assertNotIn("private-project", str(projects))
+        batch = self._batch(token=self.viewer_token, queries=[{"q": "shared api needle"}], fresh_snapshot=True).json()
+        self.assertNotEqual(batch["snapshot"]["index_generation"], reader["snapshot"]["index_generation"])
+        self.assertEqual(len(list((self.settings.database_path.parent / "search-snapshots").glob("*.sqlite3"))), 2)
 
 
 if __name__ == "__main__":

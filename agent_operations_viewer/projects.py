@@ -198,6 +198,8 @@ class ProjectAccessContext:
     bypass: bool
     user_id: str | None
     project_roles: dict[str, str]
+    # Shared snapshot connections install an exact, private authorization scope.
+    snapshot_scope: bool = False
 
 
 def build_command_exit_badges(
@@ -738,6 +740,9 @@ def row_is_visible_to_project_access(
 ) -> bool:
     if access is None or access.bypass:
         return True
+    if access.snapshot_scope:
+        project_id = trimmed(row["project_id"])
+        return not project_id or project_id in access.project_roles
     project_visibility = normalize_project_visibility(row["project_visibility"])
     if project_visibility != "private":
         return True
@@ -759,6 +764,11 @@ def project_access_condition_sql(
 ) -> tuple[str | None, list[str]]:
     if project_access is None or project_access.bypass:
         return None, []
+    if project_access.snapshot_scope:
+        return (
+            "(p.id IS NULL OR EXISTS (SELECT 1 FROM evidence_authorized_projects ap WHERE ap.project_id = p.id))",
+            [],
+        )
     allowed_project_ids = sorted(
         project_id
         for project_id in project_access.project_roles

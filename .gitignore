@@ -9,6 +9,7 @@ __pycache__/
 *.pyc
 node_modules/
 data/
+.snapshot-cache/
 agent_operations_viewer/static/app.css
 playwright-report/
 test-results/

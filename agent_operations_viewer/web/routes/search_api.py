@@ -21,6 +21,7 @@ from ...repositories import (
     list_repository_projects,
     normalize_repository_remote_filter,
     normalize_repository_root,
+    resolve_repository_id,
 )
 from ...search import (
     SEARCH_FACETS,
@@ -28,6 +29,8 @@ from ...search import (
     normalize_search_values,
     search_turn_hits_raw,
     coverage_readiness,
+    _base_search_conditions,
+    _search_coverage,
 )
 from ...search_snapshots import (
     NORMALIZATION_VERSION,
@@ -40,6 +43,7 @@ from ...search_snapshots import (
 from ...turn_index import patch_line_ranges
 from ...search_budget import SearchWorkTimeout, mark_search_stage
 from ...session_view import build_turns, parse_timestamp
+from ...search_evidence import annotate_turn
 from ..auth import require_authenticated_user
 from ..context import get_app_context
 
@@ -139,6 +143,7 @@ class BatchSearchRequest(BaseModel):
     queries: list[BatchSearchQuery] = Field(min_length=1, max_length=20)
     max_total_hits: int = Field(default=200, ge=1, le=500)
     snapshot_id: str | None = Field(default=None, min_length=1, max_length=2048)
+    fresh_snapshot: bool = False
 
 
 def _timestamp_param(value: datetime | None) -> str | None:
@@ -392,6 +397,17 @@ def _serialize_turn(
     commands = turn.get("audit_command_events")
     patches = turn.get("audit_patch_events")
     activity = turn.get("merged_detail_events")
+    # The viewer only classifies merged calls as commands. Retain shell calls
+    # with no recorded result too, so their missing output can be reported.
+    commands = list(commands or [])
+    command_indexes = {item.get("event_index") for item in commands}
+    commands.extend(item for item in (activity or []) if (
+        item.get("kind") == "tool_call"
+        and item.get("tool_name") in {"exec_command", "write_stdin"}
+        and item.get("event_index") not in command_indexes
+        and not item.get("raw_patch_text")
+        and item.get("group_key") != "patch"
+    ))
     payload: dict[str, object] = {
         "turn_number": int(turn.get("number") or 0),
         "turn_id": turn.get("turn_id"),
@@ -451,7 +467,7 @@ def _parse_turn_includes(value: str | None) -> set[str]:
 
 
 @contextmanager
-def _snapshot(request, snapshot_id=None, cursor=None):
+def _snapshot(request, snapshot_id=None, cursor=None, *, fresh_snapshot=False):
     if bool(getattr(request.state, "auth_enabled", False)):
         require_authenticated_user(request)
     try:
@@ -461,6 +477,7 @@ def _snapshot(request, snapshot_id=None, cursor=None):
             auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
             snapshot_id=snapshot_id,
             cursor=cursor,
+            fresh_snapshot=fresh_snapshot,
         ) as snapshot:
             yield snapshot
     except SearchWorkTimeout as exc:
@@ -538,6 +555,7 @@ def _load_turn(connection, session, row):
     payload = _serialize_turn(
         turns[0], target_turn_number=number, include_activity=True
     )
+    annotate_turn(payload, events, str(session["id"]))
     # Evidence identity is independent of selection/context and HTTP presentation.
     canonical = {key: value for key, value in payload.items() if key != "is_target"}
     mark_search_stage("evidence_digest")
@@ -680,6 +698,58 @@ def _execute_query(
     return payload
 
 
+@router.get("/api/v1/search/coverage", response_class=JSONResponse)
+def search_coverage_api(
+    request: Request,
+    project_id: str | None = Query(default=None, max_length=128),
+    repository_id: str | None = Query(default=None, max_length=128),
+    remote: str | None = Query(default=None, max_length=2048),
+    root: str | None = Query(default=None, max_length=2048),
+    host: str | None = Query(default=None, max_length=255),
+    from_date: datetime | None = Query(default=None, alias="from"),
+    to_date: datetime | None = Query(default=None, alias="to"),
+    exclude_session_id: list[str] = Query(default=[], max_length=100),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, min_length=1, max_length=2048),
+    snapshot_id: str | None = Query(default=None, min_length=1, max_length=2048),
+    fresh_snapshot: bool = Query(default=False),
+):
+    # Reuse the structural query validation and exact ACL/filter SQL from search.
+    query = BatchSearchQuery(
+        q="coverage", project_id=project_id, repository_id=repository_id,
+        remote=remote, root=root, host=host, from_date=from_date, to_date=to_date,
+        exclude_session_id=exclude_session_id, limit=limit,
+    )
+    validated = _normalized_query(query)
+    normalized = {key: validated[key] for key in (
+        "project_id", "repository_id", "remote", "root", "host", "from", "to",
+        "exclude_session_id", "limit",
+    )}
+    fingerprint = digest({"endpoint": "coverage", **normalized})
+    with _snapshot(request, snapshot_id, cursor, fresh_snapshot=fresh_snapshot) as (connection, access, snapshot, signer, cursor_data):
+        page = cursor_page(cursor_data, fingerprint)
+        repository = normalized["repository_id"]
+        if repository:
+            repository = resolve_repository_id(connection, repository) or repository
+        conditions, params = _base_search_conditions(
+            project_id=normalized["project_id"], repository_id=repository,
+            remote=normalized["remote"], root=normalized["root"], host=normalized["host"],
+            from_timestamp=normalized["from"], to_timestamp=normalized["to"],
+            exclude_session_ids=normalized["exclude_session_id"], project_access=access,
+        )
+        coverage = coverage_readiness(_search_coverage(
+            connection, base_conditions=conditions, base_params=params,
+            issues_page=page, issues_limit=limit,
+        ))
+        return JSONResponse({
+            "snapshot_id": snapshot["snapshot_id"], "snapshot": snapshot,
+            "normalized_request": {**normalized, "snapshot_id": snapshot["snapshot_id"]},
+            "coverage": coverage,
+            "next_cursor": encode_cursor(signer, page + 1, fingerprint, snapshot["snapshot_id"])
+                if coverage["issues_truncated"] else None,
+        }, headers={"Cache-Control": "private, no-store"})
+
+
 @router.get("/api/v1/search", response_class=JSONResponse)
 def search_api(
     request: Request,
@@ -701,6 +771,7 @@ def search_api(
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = Query(default=None, min_length=1, max_length=2048),
     snapshot_id: str | None = Query(default=None, min_length=1, max_length=2048),
+    fresh_snapshot: bool = Query(default=False),
 ) -> JSONResponse:
     query = BatchSearchQuery(
         q=q,
@@ -727,7 +798,7 @@ def search_api(
     if "max_hits_per_session" not in request.query_params:
         query.model_fields_set.discard("max_hits_per_session")
     _normalized_query(query)
-    with _snapshot(request, snapshot_id, cursor) as (
+    with _snapshot(request, snapshot_id, cursor, fresh_snapshot=fresh_snapshot) as (
         connection,
         access,
         snapshot,
@@ -754,7 +825,7 @@ def search_batch_api(request: Request, body: BatchSearchRequest) -> JSONResponse
         )
     for query in body.queries:
         _normalized_query(query)
-    with _snapshot(request, body.snapshot_id) as (
+    with _snapshot(request, body.snapshot_id, fresh_snapshot=body.fresh_snapshot) as (
         connection,
         access,
         snapshot,
@@ -811,6 +882,7 @@ def projects_api(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None, min_length=1, max_length=2048),
     snapshot_id: str | None = Query(default=None, min_length=1, max_length=2048),
+    fresh_snapshot: bool = Query(default=False),
 ) -> JSONResponse:
     remote, root = _normalize_repository_filters(remote, root)
     filters = {
@@ -821,7 +893,7 @@ def projects_api(
     }
     normalized = {**filters, "limit": limit}
     fingerprint = digest({"endpoint": "projects", **normalized})
-    with _snapshot(request, snapshot_id, cursor) as (
+    with _snapshot(request, snapshot_id, cursor, fresh_snapshot=fresh_snapshot) as (
         connection,
         access,
         snapshot,
@@ -888,9 +960,10 @@ def session_turn_api(
     context_turns: int = Query(default=0, alias="context", ge=0, le=10),
     include: str | None = Query(default=None, max_length=100),
     snapshot_id: str | None = Query(default=None, min_length=1, max_length=2048),
+    fresh_snapshot: bool = Query(default=False),
 ):
     includes = _parse_turn_includes(include)
-    with _snapshot(request, snapshot_id) as (connection, access, snapshot, _, _):
+    with _snapshot(request, snapshot_id, fresh_snapshot=fresh_snapshot) as (connection, access, snapshot, _, _):
         session = _get_session(connection, access, session_id)
         rows = connection.execute(
             "SELECT * FROM session_turns WHERE session_id = ? AND turn_number BETWEEN ? AND ? ORDER BY turn_number",
@@ -983,6 +1056,7 @@ def turn_activity_api(
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = Query(default=None, min_length=1, max_length=2048),
     snapshot_id: str | None = Query(default=None, min_length=1, max_length=2048),
+    fresh_snapshot: bool = Query(default=False),
     kind: str | None = Query(default=None, min_length=1, max_length=128),
     event_type: str | None = Query(default=None, min_length=1, max_length=128),
     tool_name: str | None = Query(default=None, min_length=1, max_length=128),
@@ -1013,7 +1087,7 @@ def turn_activity_api(
         "to": end,
     }
     fingerprint = digest({"endpoint": "activity", **normalized})
-    with _snapshot(request, snapshot_id, cursor) as (
+    with _snapshot(request, snapshot_id, cursor, fresh_snapshot=fresh_snapshot) as (
         connection,
         access,
         snapshot,

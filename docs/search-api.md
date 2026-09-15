@@ -56,7 +56,8 @@ Use `--data-urlencode` (or an equivalent URL encoder) for every query parameter.
 | `mode` | No | `all` (default), `any`, `phrase`, or `exact`. See [Lexical modes and fields](#lexical-modes-and-fields). |
 | `fields` | No | Comma-separated fields to search: `prompt`, `response`, `activity`, `commands`, `paths`, `commit_ids`, `tool_output`, and `patches`. Omit this parameter to search every indexed field plus project metadata. |
 | `exclude_session_id` | No | Repeatable exact session ID exclusion; at most 100 entries, each 1–128 characters. Values are trimmed, deduplicated, and sorted. Exclusions apply to hits, facets, eligible coverage, and pagination. Batch queries use an array with this same name. |
-| `snapshot_id` | No | Pin a previously returned searchable database generation. Omission creates a snapshot; a cursor implicitly selects its original snapshot. |
+| `snapshot_id` | No | Pin a previously returned user-bound handle. Omission creates a handle using a recent shared generation when available; a cursor implicitly selects its original handle. |
+| `fresh_snapshot` | No | Boolean, default `false`. With no snapshot/cursor, bypass ready-generation reuse and create or join an in-progress build. Ignored when a snapshot or cursor already pins the request. |
 | `facets` | No | Comma-separated result counts to return: `project`, `session`, `date`, `branch`, and `matched_field`. Facets are computed before pagination. |
 | `sort` | No | `relevance` (default), `time_asc` (oldest first), or `time_desc` (newest first). |
 | `group_by` | No | `none` (default) returns flat hits. `session` returns session groups. |
@@ -544,40 +545,50 @@ A search cursor is cryptographically signed and bound to the normalized `q`, fil
 
 For flat requests, each page contains up to `limit` items in `hits`. For grouped requests, each page contains up to `limit` items in `groups`, and each group contains up to `max_hits_per_session` hits. Follow `next_cursor` in the same way for either response shape.
 
-Here is a complete Python example that follows every page using only the standard library:
+The tested standard-library reference client is
+[`agent_operations_viewer.search_client`](../agent_operations_viewer/search_client.py).
+Run this from the repository (or with the package on `PYTHONPATH`):
 
 ```python
-import json
 import os
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from agent_operations_viewer.search_client import SearchClient
 
-endpoint = "https://codex.home.benhoff.net/api/v1/search"
-token = os.environ["CODEX_SEARCH_TOKEN"]
-params = {
-    "q": "authentication failure",
-    "limit": 50,
-}
-
-while True:
-    request = Request(
-        f"{endpoint}?{urlencode(params)}",
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
-    )
-    with urlopen(request, timeout=30) as response:
-        page = json.load(response)
-
+client = SearchClient("https://codex.home.benhoff.net", os.environ["CODEX_SEARCH_TOKEN"])
+for page in client.search("authentication failure", fields="commands,tool_output", limit=50):
+    print(page["coverage"])  # Inspect completeness independently of positive hits.
     for hit in page["hits"]:
-        print(hit["timestamp"], hit["project"]["label"], hit["snippet"])
+        evidence = client.turn(
+            hit["session_id"], hit["turn_number"],
+            expected_digest=hit["content_digest"],
+        )
+        print(evidence)
 
-    cursor = page["next_cursor"]
-    if cursor is None:
-        break
-    params["cursor"] = cursor
+# Same pinned generation and authorization scope:
+for page in client.coverage(limit=50):
+    for issue in page["coverage"]["issues"]:
+        print(issue)
 ```
+
+For a newer capture, create a new client and use `client.search(query, fresh_snapshot=True)`. An already-pinned client keeps its original handle even if that preference is supplied.
+
+The client honors `Retry-After` for `snapshot_building`, retaining the returned
+snapshot ID even while preparing. It preserves query parameters across pages,
+including repeated exclusions, and rejects a changed snapshot or repeated cursor.
+Its configurable preparation wait budget defaults to 660 seconds and each HTTP
+request to 30 seconds. Transport failures propagate to the caller; terminal
+snapshot errors, authorization failures, capacity errors and query timeouts are
+not automatically retried. A new `SearchClient` explicitly starts a new
+investigation after expiry or failure; never combine its pages with the old one.
+Bearer credentials are sent only in headers, and HTTP redirects are rejected.
+
+`client.turn(...)` requests complete activity and verifies both digests, the content
+version, and optionally the original hit's digest. `client.activity(session_id,
+turn_number, limit=50, expected_digest=...)` retrieves every unfiltered activity
+page, checks IDs/counts, restores ordinal order, and verifies the collection digest.
+Grouped searches still cap hits per session: following every group page does not
+remove that cap. Use flat searches when every matching turn must be retrieved.
+A valid digest establishes content identity; it does not establish capture
+completeness or support a hardware conclusion.
 
 ## Errors and Troubleshooting
 
@@ -587,7 +598,7 @@ Errors are JSON objects with a `detail` field when the client sends `Accept: app
 | --- | --- | --- |
 | `400` | The cursor is malformed or does not belong to this query. | Start again without a cursor, or repeat the original query, filters, and limit. |
 | `403` | Snapshot belongs to another user, or its access scope has shrunk. | Obtain a new snapshot using current authorization. |
-| `409` | Invalid snapshot, unsupported snapshot schema/normalization, or indexed evidence cannot be reconstructed. | Inspect `detail.code`; do not silently substitute current evidence. |
+| `409` | Invalid/incompatible snapshot, changed visible project assignments, or unreconstructable evidence. | Inspect `detail.code`. For `snapshot_scope_changed`, request a fresh capture without a snapshot ID/cursor. |
 | `410` | Snapshot expired or is unavailable. | Start a new investigation snapshot. |
 | `401` | Authentication failed. | Confirm the bearer header uses an active personal search token. Sync/daemon tokens are not accepted. |
 | `403` | The server is not ready for normal authenticated use. | An administrator may need to complete initial setup. |
@@ -602,13 +613,97 @@ Search responses expose `normalized_query`, including defaults, canonical exclus
 
 ### Snapshot lifetime and current access
 
-Every discovery, search, batch, complete-turn, and activity response includes `snapshot_id` and `snapshot`. Metadata contains `created_at`, `expires_at`, `index_generation`, `normalization_version`, `index_versions`, and creation-time coverage/freshness. `snapshot.coverage_scope` explicitly identifies the whole authorized corpus before query filters. Use the search response's top-level `coverage` to assess the eligible corpus after repository, source, date, and exclusion filters.
+Every discovery, search, batch, complete-turn, and activity response includes `snapshot_id` and `snapshot`. Metadata contains `created_at`, `ready_at`, `expires_at`, `index_generation`, `normalization_version`, `index_versions`, and creation-time coverage/freshness. New snapshots also include `snapshot.preparation` with the actual `elapsed_seconds`, `stage_timings_seconds` (including `queued` and `publish`), `budget_seconds`, and `timing_scope`. These measurements are saved once and do not change when the snapshot is reused. Older snapshots remain readable but may lack preparation timings. `snapshot.coverage_scope` explicitly identifies the whole authorized corpus before query filters. Use the search response's top-level `coverage` to assess the eligible corpus after repository, source, date, and exclusion filters.
 
-A snapshot is an immutable SQLite backup, including indexed text and captured events. It survives process restarts, expires after 15 minutes, and can be reused across all endpoints. Live indexing never changes its content or ordering. Each batch creates or reuses exactly one backup. Snapshots are bound to the authenticated user; they do not freeze authorization grants. Every request checks current session/project visibility. Any revoked access, removed session, ignored source, or changed project assignment invalidates the old access scope with `403 snapshot_access_revoked`. Newly granted access does not broaden an existing snapshot. Invalid and expired snapshots never fall back to live data.
+A snapshot handle is bound to the authenticated user and refers to an immutable
+SQLite **generation** containing indexed text and captured events. Different
+users can share that physical database copy while receiving separate signed
+handles and private authorization records. Live indexing never changes a pinned
+generation's content or ordering. Handles and generations survive process restarts.
+Each batch uses one handle and one generation.
 
-Large snapshots are prepared by one background builder per database, independently of the client connection. The initial request waits at most one second for preparation; if unfinished, it returns `503` with `detail.code=snapshot_building`, a signed `detail.snapshot_id`, and `Retry-After: 2`. Retry the same request with that ID (at the top level of a batch body). Other workers contending for creation return the same retryable code, potentially without an ID; they do not queue indefinitely. Valid existing snapshots and invalid identifiers never wait for the builder lock. Small snapshots still return an ordinary `200` on the first request. Preparation has a ten-minute work budget, leaving room for inventory/metadata after a large full-database copy; a failed or interrupted build returns an explicit `503` error and requires a new snapshot. This budget is not an expected completion time: production storage can spend approximately five minutes on the backup alone. New snapshots receive a separate 15-minute read lifetime from `ready_at`; `created_at` still records when preparation was requested. `expires_at` is authoritative. Polling and reading never renew pinned content or its lifetime. The same signed ID is retained throughout preparation, with an upper bound of preparation allowance plus read lifetime. Older snapshots retain their original expiration.
+When no `snapshot_id` or cursor is supplied, the default is to reuse the newest
+compatible generation that became ready less than **five minutes** ago. Otherwise,
+one background builder creates a new generation; concurrent callers, including
+other users and worker processes, join that build with separate handles. This
+avoids repeating the full database copy and inventory preparation for each
+investigation. Valid ready generations can be reused while another generation
+builds, or when the physical-copy capacity limit is reached.
 
-Build responses include progress when available: `detail.build_id` for log correlation, `stage` (`cleanup`, `backup`, `coverage_inventory`, `coverage`, `metadata`, or `publish`), `elapsed_seconds`, `stage_elapsed_seconds`, `stage_timings_seconds` for completed stages, and `budget_seconds`. Backup progress adds `backup_pages_copied` and `backup_pages_total`. Pending progress is a last-reported measurement, updated during backup and on stage transitions. A `snapshot_build_failed` response preserves these diagnostics and adds a sanitized `reason` (for example `deadline_exceeded`, `database_busy`, `disk_full`, or `sqlite_error`), `error_type`, and, for SQLite exceptions, `sqlite_errorname`. SQL, private paths, and raw exception messages are not returned. Server logs contain the exception and correlate stage timings by snapshot generation. Older failures created before this instrumentation may lack these fields.
+Pass `fresh_snapshot=true` to bypass ready-generation reuse. It is supported by
+search, project discovery, coverage, complete-turn and activity GET requests, and
+at the top level of a batch body. A fresh request may join an already-running
+compatible build; it does not promise a capture strictly after request arrival.
+`fresh_snapshot` is a creation preference, not an evidence filter or cursor-bound
+parameter. Once a snapshot ID or cursor is supplied, the preference has no effect;
+retrying or paginating never replaces the pinned generation.
+
+Metadata distinguishes the physical capture from the handle:
+
+| Field | Meaning |
+| --- | --- |
+| `created_at` | When generation preparation was accepted. |
+| `captured_at` | When the builder pinned its live-database read transaction. |
+| `ready_at` | When that physical generation was published. |
+| `handle_created_at` | When this user's handle was issued. |
+| `authorized_at` | When its scope was frozen, on first successful use after the generation was ready. |
+| `generation_reuse` | `created`, `building` (joined a build), or `ready` (reused a prepared generation). |
+| `generation_shared` | `true` for the shared-generation format. |
+| `preparation` | Saved physical generation build timings; these are not the latency of issuing or authorizing a reused handle. |
+| `expires_at` | Fixed expiration shared by every handle for that generation. |
+
+Every generation expires **15 minutes after its ready time**. Later handles
+inherit that expiry; issuing or reading handles never extends it. A normally
+reused ready generation therefore has at least about ten minutes of lifetime
+left at issuance. Capture age includes time spent building plus time since
+publication: a five-minute reuse window is not a five-minute maximum capture
+age. Inspect `captured_at`, `ready_at` and `expires_at` when freshness matters.
+
+Each new handle freezes the intersection of sessions/projects present in the
+captured database and the user's **current** visible scope. Sessions removed or no longer visible since capture are excluded from new handles.
+If a still-visible session changed project assignment, handle creation returns
+`409 snapshot_scope_changed` rather than silently omitting that evidence. Request
+`fresh_snapshot=true` without a snapshot ID or cursor to capture the new assignment. No later
+import appears until a newer generation is captured. Per-connection session
+filters and project allowlists keep queries, coverage and evidence retrieval
+inside that exact handle scope. Private authorization records and coverage are
+never written into the shared database file.
+
+Every subsequent request checks the handle against current authorization.
+Revoked access, removed sessions, ignored sources or changed project assignments
+invalidate an affected handle with `403 snapshot_access_revoked`. New grants do
+not broaden an existing handle. Another user's handle cannot be used even if it
+refers to the same generation. A revoked handle does not invalidate other users'
+handles or poison the shared physical copy. Invalid and expired snapshots never
+fall back to live data. Older owner-bound snapshots remain readable until expiry
+when their normalization/index versions are compatible, but are not reused as
+shared generations.
+
+The initial request waits at most one second for a new background build. If it
+is unfinished, it returns `503 snapshot_building`, a user-specific signed
+`detail.snapshot_id`, and `Retry-After: 2`. Retry the same request with that ID
+(at the top level of a batch body). Requests joining a build receive the same
+generation's progress with their own ID. A contender may temporarily get no ID
+when the active worker has not published its pending status, uses an older
+format, or is stopping a failed build. Existing ready handles and invalid IDs
+never wait for the builder lock. Concurrent first uses of the same handle can
+briefly return `snapshot_building` with `stage=authorization` while its private
+scope is being prepared.
+
+The ten-minute build budget is a timeout allowance, not an ETA. The generation's
+separate read lifetime starts at `ready_at`. A failed/interrupted build remains
+terminal for every handle joined to it; starting another investigation can reuse
+a different usable ready generation or start a replacement once builder capacity
+is available. Use `fresh_snapshot=true` to explicitly request a replacement
+capture. The original signed handle is retained during all preparation retries.
+
+Build responses include progress when available: `detail.build_id` for log correlation, `stage` (`queued`, `cleanup`, `backup`, `coverage_inventory`, `coverage`, `metadata`, or `publish`), `elapsed_seconds`, `stage_elapsed_seconds`, `stage_timings_seconds` for completed stages, and `budget_seconds`. Elapsed times advance on every poll using a monotonic clock, including while SQL or disk I/O blocks the builder. `progress_updated_at` and `progress_age_seconds` identify the last worker update; the stage and page counts describe that update, not proof of ongoing throughput. Backup progress adds `backup_pages_copied`, `backup_pages_total`, and `backup_progress_scope=database_copy_only`: copying every page does **not** mean the snapshot is ready. Inventory, coverage, metadata and publication still follow. The budget is a timeout allowance, not an estimated duration, and `Retry-After` is a polling interval, not an ETA.
+
+Preparation timing runs from acceptance of the background build through database publication (`timing_scope=accepted_build_to_database_publication`). It includes worker startup delay, cleanup, database backup, inventory creation, coverage, metadata writes, the final SQLite commit/close, and file publication. `ready_at` is recorded after those operations, and the read lifetime starts there. An atomic completion manifest preserves the measured total and stage breakdown; readers wait for this manifest instead of opening a partially published snapshot. Writing the diagnostic manifest, HTTP authentication/queueing before build acceptance, query execution, response serialization, and network transfer are outside the measured interval. Timing fields are durations in seconds, not a progress percentage or predicted finish time.
+
+For installations where the live database resides on slower storage, set `CODEX_VIEWER_SEARCH_SNAPSHOT_DIR` to a private directory on a fast local disk and restart the server. Snapshot backup writes and subsequent indexing/search reads then use that disk. The default remains `search-snapshots` beside the live database. The signing key and cross-process builder lock remain in the original directory, and previously issued snapshots there stay readable until expiration. Expiry cleanup and the capacity limit cover both directories. This changes storage placement without changing the copied evidence, access checks, or pinned-content guarantees. Use a persistent disk with space for the full database copies; a memory filesystem can exhaust RAM for large corpora. All viewer processes serving the same database should use the same configured snapshot location.
+
+A `snapshot_build_failed` response preserves diagnostics, including the failed stage's duration, and adds a sanitized `reason` (for example `deadline_exceeded`, `database_busy`, `disk_full`, or `sqlite_error`), `error_type` when the worker has failed, and, for SQLite exceptions, `sqlite_errorname`. Polls at or beyond the build budget return this terminal code with `reason=deadline_exceeded`, rather than indefinitely returning `snapshot_building`. If the worker has not yet returned from blocking work, `worker_stopping=true` says that it still holds builder capacity; a client timeout cannot interrupt kernel I/O. This timeout is persisted so later polls cannot revive the expired generation. Timings stay frozen until the worker can publish its final failure diagnostics. Reuse of that failed snapshot never starts a replacement; start a new snapshot once capacity is available. SQL, private paths, raw exception messages, and internal clock anchors are not returned. Server logs contain the exception and correlate stage timings by snapshot generation. Older failures created before this instrumentation may lack these fields.
 
 Snapshot preparation records an indexed inventory of searchable turns and evidence availability, plus compact session/turn metadata tables. Filtered coverage reads use those compact tables instead of the wide captured records; unfiltered coverage can reuse the snapshot's authorized totals. Project discovery counts sessions directly and does not recompute full coverage for every project. Patch evidence retrieval uses the indexed chunk ID and shared full-text row ID, without scanning full-text metadata. A batch reuses turn digests across queries without retaining all reconstructed activity bodies.
 
@@ -616,7 +711,7 @@ After a ready snapshot is opened, each request has a shared 20-second cooperativ
 
 A current index can legitimately contain a session with no turns when its only captured message is an environment-context wrapper. Reindexing cannot invent missing conversation content. Such sessions remain visible in `sessions_without_turns` and keep the conservative exhaustive-readiness gate false; do not silently discard them to claim complete coverage.
 
-Backups and their signing key live in the database directory's private `search-snapshots/` directory (0700; backup/key files 0600). At most 32 unexpired snapshots are retained per database; creation cleans up expired backups and returns `503 snapshot_capacity` if full. Reusing a snapshot avoids another full database copy. Operators should allow disk space for these backups; keep the signing key when restarting workers. Expired backups and abandoned preparation files are removed on subsequent creation, so an idle installation may retain expired files until its next research request. An index or normalization upgrade invalidates incompatible snapshots explicitly.
+Backups use the configured snapshot directory, defaulting to the database directory's private `search-snapshots/` directory (0700; backup/key files 0600). The signing key stays in the default directory. At most 32 unexpired physical generations are retained per database; a new build cleans up expired backups and returns `503 snapshot_capacity` if full. Additional handles on a reusable generation do not consume another physical slot. Handle records are removed after their signed expiration bound; the actual generation expiration can be earlier. No valid handle extends beyond its generation's lifetime, so generation cleanup cannot remove a copy still needed by a valid handle. Operators should allow disk space for these backups; keep the signing key when restarting workers. Expired backups and abandoned preparation files are removed on subsequent creation, so an idle installation may retain expired files until its next research request. An index or normalization upgrade invalidates incompatible snapshots explicitly.
 
 ### Exhaustive readiness
 
@@ -626,9 +721,9 @@ A snapshot can remain incomplete throughout its lifetime. Positive hits can stil
 
 ### Content identity and canonical serialization
 
-Search hits, complete-turn records, and activity pages expose `content_digest`, `content_version`, `normalization_version`, and `activity_digest`. The turn digest covers the same complete normalized turn regardless of context or whether activity was requested. To reproduce it, retrieve with `include=activity`, take the target element of `turns`, and remove `is_target`, `content_digest`, `content_version`, `normalization_version`, and `activity_digest`. The remaining object is `T`. Hash the UTF-8 bytes of canonical JSON for `{"normalization_version":"evidence-1","turn":T}` using SHA-256 and prefix the hexadecimal result with `sha256:`.
+Search hits, complete-turn records, and activity pages expose `content_digest`, `content_version`, `normalization_version`, and `activity_digest`. The turn digest covers the same complete normalized turn regardless of context or whether activity was requested. To reproduce it, retrieve with `include=activity`, take the target element of `turns`, and remove `is_target`, `content_digest`, `content_version`, `normalization_version`, and `activity_digest`. The remaining object is `T`. Hash the UTF-8 bytes of canonical JSON for `{"normalization_version":"evidence-2","turn":T}` using SHA-256 and prefix the hexadecimal result with `sha256:`.
 
-Canonical JSON uses recursively sorted object keys, array order unchanged, no insignificant whitespace (`separators=(",", ":")`), Unicode characters unescaped (`ensure_ascii=False`), and finite JSON numbers serialized as by Python's `json.dumps(..., allow_nan=False)`. The included turn fields are `turn_number`, `turn_id`, `prompt`, `response`, `duration_seconds`, `agent`, `execution_context`, `commands`, `patches`, `files`, `stats`, and `activity`. The activity digest hashes `{"normalization_version":"evidence-1","activity":T.activity}` under the same rules. Activity is the merged normalized detail collection, not every upstream transport record. Links, coverage, snapshot identifiers, requested context, and retrieval timestamps are outside both scopes. `content_version` is the turn digest's hex suffix. Corrections change the digest; changes to normalization semantics require a new normalization version.
+Canonical JSON uses recursively sorted object keys, array order unchanged, no insignificant whitespace (`separators=(",", ":")`), Unicode characters unescaped (`ensure_ascii=False`), and finite JSON numbers serialized as by Python's `json.dumps(..., allow_nan=False)`. The included turn fields are `turn_number`, `turn_id`, `prompt`, `response`, `duration_seconds`, `agent`, `execution_context`, `commands`, `patches`, `files`, `stats`, `source_events`, and `activity`. The activity digest hashes `{"normalization_version":"evidence-2","activity":T.activity}` under the same rules. Activity is the merged normalized detail collection, not every upstream transport record. Links, coverage, snapshot identifiers, requested context, and retrieval timestamps are outside both scopes. `content_version` is the turn digest's hex suffix. Corrections change the digest; changes to normalization semantics require a new normalization version.
 
 Complete-turn retrieval returns a weak ETag equal to the target digest for `context=0&include=activity`; other projections hash the ordered turn-digest list and selected includes. Activity ETags bind the collection digest, filters, limit, and page. Tags are weak because volatile snapshot/retrieval metadata is excluded from the evidence identity. `If-None-Match` supports a matching tag, a list of tags, or `*`, and returns `304` after authorization and snapshot validation. `X-Snapshot-ID` is also returned on `304`.
 
@@ -660,3 +755,85 @@ Common problems:
 - **Only an excerpt is returned:** search returns evidence snippets by design. Pass the hit's `session_id` and `turn_number` to the complete-turn endpoint, or follow `links.conversation` in a browser.
 
 Successful responses include `Cache-Control: private, no-store`; clients and shared proxies should not cache them.
+
+
+## Recorded output and source-event provenance
+
+Normalization `evidence-2` adds `source_events` to complete turns and includes it
+in the turn digest. These are references to persisted events in the indexed turn
+range, including result records consumed by the existing activity merger. They
+are not a claim that every upstream event was imported. Each has a stable
+`event_id` (`session:<URL-encoded-session-id>:event:<event-index>`), event index,
+record/payload type, role, call ID and provenance. IDs identify positions in the
+stored session; use the pinned snapshot and content digest to identify a particular
+version of their contents. Reimports that renumber events can change these IDs.
+
+Provenance is `user_message`, `assistant_response`, `tool_call`, `tool_output`, or
+`other`, derived from the recorded event type/role. Prompt and response explicitly
+identify their roles. Text pasted into a user message remains a user message.
+This API makes no judgment about whether it constitutes terminal evidence.
+
+Commands, patches and activity include their source `event_id`,
+`command_event_id`, `result_event_ids`, and `linkage`. Links use an exact recorded
+call ID within the turn. Missing/reused IDs or a result preceding its call yield
+`linkage=unknown`, without guessing from text or timestamps. `source_events`
+retains the result references even when the UI merges the result into a command.
+Shell calls with no result remain visible in `commands`.
+
+Recorded tool results and command-end records carry an `output` object in
+`source_events`. Unknown result formats report unknown availability:
+
+| Field | Meaning |
+| --- | --- |
+| `availability` | `captured`, `captured_empty`, `truncated`, `unavailable`, or `unknown`. |
+| `basis` | The recorded field or explicit producer flag supporting the status. |
+| `completeness` | `unknown` by default; `complete` only for an explicit `output_complete=true`, or `truncated` for an explicit truncation flag. |
+| `representation_present`, `representation` | Whether the output field existed, and its stored JSON value, including null/empty values. Only an explicitly empty stored string/list is classified as captured-empty. |
+| `decoded_text`, `decoding` | Text decoded from supported text/JSON envelopes, or null when decoding cannot faithfully represent the value. Whitespace is preserved. |
+
+Commands also identify the selected `output_event_id` and its
+`output_completeness`. Their `output_availability` can additionally be `missing` when
+an unambiguous call has no matching result in this turn. Its
+`output_availability_scope=recorded_results_in_turn` limits that statement; it does
+not prove that execution produced no output or that no later turn recorded it.
+`output` uses decoded command-end output when available, otherwise the first linked
+result. All result representations remain separately inspectable in `source_events`.
+Historical rows lacking structured output retain their legacy display text but
+report unknown availability. A zero exit code or the word “truncated” in arbitrary
+text cannot prove output completeness.
+
+The preserved representation is the value stored after ingestion, not necessarily
+the original upstream transport bytes. Decoding supports plain strings, known
+`output`/`text` envelopes, text-block lists and explicit stdout/stderr pairs. It
+never opens referenced files. Mixed text/image blocks remain preserved with no
+lossy text-only decoding. Existing image-generation `saved_path` fields appear as `artifact_references`
+with `content_captured=unknown`; the file is never opened. No build IDs or file
+references are extracted from arbitrary conversation text.
+
+This normalization change explicitly invalidates older server snapshots with
+`snapshot_version_mismatch`; create a new snapshot after deployment. The reference
+client can verify both `evidence-1` and `evidence-2` records using their declared
+version. Existing search indexes require no rebuild for these response annotations.
+
+## Inspecting coverage issues
+
+Search coverage includes up to 50 session-level `issues`, plus `issues_total`,
+`issues_returned` and `issues_truncated`. Each issue identifies the session, a
+browser link, reason codes, import-warning text (limited to 2,000 characters with
+an explicit truncation flag), missing search/evidence counts, and known missing
+turn counts. Unknown turn numbers are not invented. A missing-turn count is null
+under date filters when the rollup cannot establish which missing turns fall in
+that interval. Import warning text is the stored ingestion diagnostic, not an
+interpretation of the session's technical claims.
+
+`GET /api/v1/search/coverage` paginates these issues with `limit` (1–100, default
+50), `cursor` and `snapshot_id`. It accepts the search structural filters
+`project_id`, `repository_id`, `remote`, `root`, `host`, `from`, `to`, and repeated
+`exclude_session_id`. It does not accept a text query: coverage is independent of
+whether text matches. Repeat the same filters/limit on every page and use the
+search snapshot to inspect exactly the same frozen corpus. For natural-language
+project resolution, pass the effective project ID returned by search explicitly.
+The response contains `coverage`, `normalized_request`, snapshot metadata and
+`next_cursor`; coverage totals describe the whole eligible corpus on every page.
+The same search-token ACL and live access-revocation checks apply. Warning details
+and session links from inaccessible projects are not exposed.
