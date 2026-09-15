@@ -301,11 +301,17 @@ scope. Retries skip completed stages only when evidence, criteria, prompt versio
 and configuration still match. Server restarts interrupt workers; retries remain
 explicit. Independent batch outcomes do not establish a whole-task passing grade.
 
-The assessment dashboard at `/assessments` includes all accessible synced sessions.
-Its filter options, counts, machine breakdowns, and JSON export enforce project
-ACLs before pagination. Latest reviews remain scoped to the current user, even
-for admins. Full-session page metrics use the common default resource policy;
-personal review policies are preserved in their individual assessments.
+The assessment dashboard at `/assessments` defaults to the latest personal AI
+grading attempt per session/turn range. It includes running, interrupted, completed,
+failed and cancelled runs; current worker membership distinguishes running from
+interrupted. `/assessments?view=sessions` browses accessible synced sessions.
+JSON exports use the same view parameter. Filters, counts, history pages and exports
+enforce project ACLs and owner scope, even for admins. Run dashboards do not load
+source snapshots to count/filter the fleet. Readable history pages show frozen run
+evidence and link to the current chunk for explicit retry or a new submission.
+Manual review, accounting and batch diagnostics are secondary disclosures.
+Full-session page metrics use the common default resource policy; personal review
+policies are preserved in their individual assessments.
 
 Task assessment revisions use the same personal owner scope as the review queue.
 They are immutable snapshots of a selected turn range, its evidence, cost policy,

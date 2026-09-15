@@ -38,8 +38,9 @@ test("assessment dashboard covers synced machines and opens full-session reviews
   await page.goto(app.url(`/sessions/${first.session_id}`));
   await page.getByRole("link", { name: "Assessments", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Assessment dashboard", exact: true })).toBeVisible();
+  await page.getByRole('link', {name: 'Choose work to grade', exact: true}).first().click();
   await expect(page.locator("article[data-session-id]")).toHaveCount(2);
-  const initial = await (await page.request.get(app.url("/assessments.json"))).json();
+  const initial = await (await page.request.get(app.url("/assessments.json?view=sessions"))).json();
   expect(initial.machine_count).toBe(2);
   expect(initial.reviewed_count).toBe(0);
   await page.getByRole("combobox", { name: "Machine", exact: true }).selectOption("dashboard-machine-a");
@@ -48,12 +49,15 @@ test("assessment dashboard covers synced machines and opens full-session reviews
   await page.getByRole("link", { name: "Assess full session", exact: true }).click();
   await expect(page.locator('input[name="start_turn"]').first()).toHaveValue("1");
   await expect(page.locator('input[name="end_turn"]').first()).toHaveValue("3");
+  await page.getByText('Manual review (optional)', {exact: true}).click();
   await page.getByRole("button", { name: "Save review revision" }).click();
   await page.getByRole("link", { name: "← All assessments", exact: true }).click();
+  await page.getByRole('link', {name: 'Choose work to grade', exact: true}).first().click();
   await expect(page.locator(`[data-session-id="${first.session_id}"]`)).toContainText("Your latest review · Turns 1–3");
   await page.getByRole("combobox", { name: "Your reviews", exact: true }).selectOption("reviewed");
   await page.getByRole("button", { name: "Apply filters" }).click();
   await expect(page.locator("article[data-session-id]")).toHaveCount(1);
+  await page.getByText('Exports and machine health', {exact: true}).click();
   const exportUrl = await page.getByRole("link", { name: "Export this page", exact: true }).getAttribute("href");
   const exported = await (await page.request.get(app.url(exportUrl))).json();
   expect(exported.total).toBe(1);
@@ -83,12 +87,14 @@ test("task assessment saves evidence-backed personal revisions and exports them"
   await page.goto(app.url(`/sessions/${session.session_id}`));
   await page.getByRole("link", { name: "Grade turn", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Task assessment", exact: true })).toBeVisible();
+  await page.getByText('Cost and model details', {exact: true}).click();
   await expect(page.getByRole("heading", { name: "Resource Work Units" })).toBeVisible();
 
   const exportUrl = await page.getByRole("link", { name: "Export JSON" }).getAttribute("href");
   const before = await (await page.request.get(app.url(exportUrl))).json();
   expect(before.review.model_fit).toBe("unestablished");
   const evidenceIndex = before.report.evidence[0].event_index;
+  await page.getByText('Manual review (optional)', {exact: true}).click();
   await page.getByText("Task demand (optional)", { exact: true }).click();
   await page.locator('select[name="complexity"]').selectOption("4");
   await page.locator('select[name="model_fit"]').selectOption("candidate_for_comparison");
@@ -96,6 +102,7 @@ test("task assessment saves evidence-backed personal revisions and exports them"
   await page.getByLabel("Evidence event indexes").fill(String(evidenceIndex));
   await page.getByLabel("Recommended experiment", { exact: true }).fill("Hold the initial state and acceptance checks constant; reduce effort first.");
   await page.getByRole("button", { name: "Save review revision" }).click();
+  await page.getByText('Manual review (optional)', {exact: true}).click();
   await expect(page.getByRole("status")).toContainText("Latest personal review");
   await expect(page.locator('select[name="model_fit"]')).toHaveValue("candidate_for_comparison");
   const after = await (await page.request.get(app.url(exportUrl))).json();

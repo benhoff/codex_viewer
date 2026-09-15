@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
 from ...db import connect, connection_scope, write_transaction
-from ...assessment_dashboard import dashboard_data
+from ...assessment_dashboard import dashboard_data, grading_dashboard_data
 from ... import llm_grader as grader
 from ...projects import build_project_access_context, fetch_session_with_project, row_is_visible_to_project_access
 from ...saved_turns import owner_scope_from_request
@@ -33,6 +33,8 @@ PRIVATE_HEADERS = {"Cache-Control": "private, no-store"}
 def assessment_dashboard(request: Request, machine: str = Query("", max_length=200),
                          project: str = Query("", max_length=500),
                          review: Literal["all", "reviewed", "unreviewed"] = "all",
+                         view: Literal["runs", "sessions"] = "runs",
+                         status: Literal["all", "running", "completed", "failed", "cancelled", "interrupted"] = "all",
                          days: int = Query(0, ge=0, le=3650), page: int = Query(1, ge=1, le=1000000)):
     context = get_app_context(request)
     with closing(connect(context.settings.database_path)) as connection:
@@ -40,11 +42,18 @@ def assessment_dashboard(request: Request, machine: str = Query("", max_length=2
             connection.execute("BEGIN")
             access = build_project_access_context(connection, auth_user=getattr(request.state, "auth_user", None),
                                                   auth_enabled=bool(getattr(request.state, "auth_enabled", False)))
-            data = dashboard_data(connection, owner=owner_scope_from_request(request), access=access,
-                                  machine=machine, project=project, review=review, days=days, page=page)
+            if view == "runs":
+                with grader.ACTIVE_RUNS_LOCK:
+                    active_ids = [run_id for database, run_id in grader.ACTIVE_RUNS if database == str(context.settings.database_path)]
+                data = grading_dashboard_data(connection, owner=owner_scope_from_request(request), access=access,
+                                              machine=machine, project=project, status=status, days=days, page=page,
+                                              active_run_ids=active_ids)
+            else:
+                data = dashboard_data(connection, owner=owner_scope_from_request(request), access=access,
+                                      machine=machine, project=project, review=review, days=days, page=page)
     if request.url.path.endswith(".json"):
         return JSONResponse(data, headers=PRIVATE_HEADERS)
-    return context.templates.TemplateResponse(request, name="assessments.html",
+    return context.templates.TemplateResponse(request, name="grading_dashboard.html" if view == "runs" else "assessments.html",
                                               context={"request": request, **data}, headers=PRIVATE_HEADERS)
 
 
@@ -93,12 +102,14 @@ def load_assessment(request: Request, session_id: str, start: int, end: int, rev
         grade_run["context_outdated"] = grade_run["result"].get("prompt_version") != grader.PROMPT_VERSION
         with grader.ACTIVE_RUNS_LOCK:
             grade_run["active"] = (str(context.settings.database_path), grade_run["id"]) in grader.ACTIVE_RUNS
+        grade_run["completed_batches"] = sum(b["status"] == "completed" for b in grade_run["result"].get("batches", []))
     plan = None
     if grader_config["enabled"] and not revision:
         try:
-            preview = grader.grader_input(report, saved["review"]["acceptance_criteria"] if saved else "", grader_config)
+            preview_criteria = grade_run["result"].get("acceptance_criteria", "") if grade_run else saved["review"]["acceptance_criteria"] if saved else ""
+            preview = grader.grader_input(report, preview_criteria, grader_config)
             plan = {"batches": len(preview.get("demand_batches", [])) or 1,
-                    "synthesis": bool(preview.get("demand_batches"))}
+                    "synthesis": bool(preview.get("demand_batches")), **preview.get("preflight", {})}
         except ValueError as exc:
             plan = {"error": str(exc)}
     return {"report": report, "review": saved["review"] if saved else empty_review(),
@@ -117,8 +128,13 @@ def assessment_page(request: Request, session_id: str, start_turn: int = Query(1
         request, name="assessment.html", context={"request": request, **data,
         "judgments": JUDGMENTS, "demand_fields": DEMAND_FIELDS, "text_fields": TEXT_FIELDS,
         "policy_text": json.dumps(data["report"]["policy"], indent=2),
+        "readable_evidence": evidence_display(data["report"]),
         "session_href": f"/sessions/{quote(session_id, safe='')}",
         }, headers=PRIVATE_HEADERS)
+
+
+def evidence_display(report):
+    return {e["event_index"]: e["text"] for e in grader.clean_events(report["evidence"])}
 
 
 @router.get("/sessions/{session_id}/assessment.json")
@@ -372,8 +388,7 @@ async def grader_cancel(request: Request, session_id: str, run_id: int):
     return JSONResponse({"status": "cancelling" if control else "inactive"}, headers=PRIVATE_HEADERS)
 
 
-@router.get("/sessions/{session_id}/assessment/grader/{run_id}.json")
-def grader_export(request: Request, session_id: str, run_id: int):
+def load_grade_run(request: Request, session_id: str, run_id: int):
     context = get_app_context(request)
     with closing(connect(context.settings.database_path)) as connection:
         with connection:
@@ -390,4 +405,30 @@ def grader_export(request: Request, session_id: str, run_id: int):
             except (ValueError, LookupError):
                 run["stale"] = True
             run["snapshot"] = json.loads(row["snapshot_json"])
+            run["context_outdated"] = run["result"].get("prompt_version") != grader.PROMPT_VERSION
+            run["completed_batches"] = sum(b["status"] == "completed" for b in run["result"].get("batches", []))
+            with grader.ACTIVE_RUNS_LOCK:
+                run["active"] = (str(context.settings.database_path), run_id) in grader.ACTIVE_RUNS
+    return run
+
+
+@router.get("/sessions/{session_id}/assessment/grader/{run_id}.json")
+def grader_export(request: Request, session_id: str, run_id: int):
+    run = load_grade_run(request, session_id, run_id)
     return JSONResponse(run, headers=PRIVATE_HEADERS)
+
+
+@router.get("/sessions/{session_id}/assessment/grader/{run_id}", response_class=HTMLResponse)
+def grader_run_page(request: Request, session_id: str, run_id: int):
+    run = load_grade_run(request, session_id, run_id)
+    report = run["snapshot"]["report"]
+    return get_app_context(request).templates.TemplateResponse(request, name="assessment.html", context={
+        "request": request, "report": report, "grade_run": run, "frozen_grade": True,
+        "grader_config": run["config"], "grade_plan": None, "grade_history": [],
+        "historical": False, "saved": None, "history": [], "review": empty_review(),
+        "current_evidence_digest": run["evidence_digest"], "session_title": f"Saved grading run {run_id}",
+        "session_href": f"/sessions/{quote(session_id, safe='')}",
+        "judgments": JUDGMENTS, "demand_fields": DEMAND_FIELDS, "text_fields": TEXT_FIELDS,
+        "policy_text": json.dumps(report["policy"], indent=2),
+        "readable_evidence": evidence_display(report),
+    }, headers=PRIVATE_HEADERS)

@@ -1,35 +1,66 @@
-<section id="llm-grader" class="mb-6 space-y-4 rounded-2xl border border-stone-200 bg-white p-5">
-  <h2 class="text-xl font-semibold">Grade this chunk with AI</h2>
-  <p class="text-sm text-stone-600">Turns {{ report.start_turn }}–{{ report.end_turn }} · {{ report.turns|length }} turn{{ 's' if report.turns|length != 1 else '' }}. Get an estimated outcome, supporting evidence, and a comparison of required and configured capability.</p>
-  <p class="text-sm text-stone-600">Opening this page does not send anything. Submit the chunk below when you are ready.</p>
-  <details class="rounded-xl border border-stone-200 p-3">
-    <summary class="cursor-pointer text-sm font-semibold">Included turns</summary>
-    <ul class="mt-2 space-y-2 text-sm">{% for turn in report.turns %}<li><strong>Turn {{ turn.turn_number }}:</strong> {{ turn.prompt_excerpt }}</li>{% endfor %}</ul>
-  </details>
-  {% if grade_run %}
-    <p class="text-xs text-stone-500">Grader run {{ grade_run.id }} · {{ grade_run.config.model }} · {{ grade_run.created_at }} · {{ grade_run.status }}</p>
-    <p class="text-xs text-stone-500">Limits used for this run: {{ grade_run.config.timeout_seconds }} seconds per call · {{ grade_run.config.max_input_chars }} input characters · {{ grade_run.config.max_output_tokens }} output tokens.</p>
-    {% if not grade_run.active and grade_run.config != grader_config %}<p class="text-sm text-amber-800">Settings have changed since this run. Submit a new grading run to use the current settings.</p>{% endif %}
-    {% if not grade_run.active and grade_run.context_outdated %}<p class="text-sm text-amber-800">Batch context has been updated. Submit a new grading run to use cleaned evidence and a final whole-task assessment. Earlier results remain available in run history.</p>{% endif %}
-    {{ capability_chart(grade_run) }}
-    {% if grade_run.status == 'completed' %}
-    <p class="text-sm"><strong>Estimated outcome:</strong> {{ grade_run.result.demand.outcome }}. {{ grade_run.result.demand.verification_notes }}</p>
+<section id="llm-grader" style="scroll-margin-top:10rem" class="mb-6 space-y-4 rounded-2xl border border-stone-200 bg-white p-5">
+  {% set completed = grade_run and grade_run.status == 'completed' %}
+  {% set can_retry = grade_run and not grade_run.active and grade_run.status in ('failed', 'running', 'cancelled') and not grade_run.stale and not grade_run.context_outdated and grade_run.config == grader_config %}
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <h2 class="text-xl font-semibold">{{ 'AI grading result' if completed else 'Grade this chunk with AI' }}</h2>
+    {% if grade_run %}<span class="rounded-full bg-stone-100 px-3 py-1 text-sm font-semibold">{{ 'Running' if grade_run.active else 'Interrupted' if grade_run.status == 'running' else grade_run.status|capitalize }}</span>{% endif %}
+  </div>
+  <p class="text-sm text-stone-600">Turns {{ report.start_turn }}–{{ report.end_turn }} · {{ report.turns|length }} turn{{ 's' if report.turns|length != 1 else '' }}{% if grade_run %} · Run {{ grade_run.id }}{% endif %}</p>
+  {% if frozen_grade %}<p class="text-sm text-stone-600">Showing this run’s saved evidence and results. <a href="{{ session_href }}/assessment?start_turn={{ report.start_turn }}&end_turn={{ report.end_turn }}#llm-grader" class="font-semibold text-blue-700 underline">Open current chunk{% if not completed %} to resume or regrade{% endif %}</a></p>{% endif %}
+  {% if grade_run and grade_run.stale %}<p class="text-sm text-amber-800">Evidence has changed since this run. Its conclusions describe the saved evidence. {% if not frozen_grade %}<a href="{{ session_href }}/assessment/grader/{{ grade_run.id }}" class="underline">Inspect the saved result and sources</a> before submitting a new run.{% endif %}</p>{% endif %}
+  {% if grade_run and grade_run.context_outdated %}<p class="text-sm text-amber-800">Batch context has been updated. This run used an earlier grading workflow. Submit a new run to use the current evidence preparation.</p>{% endif %}
+  {% if grade_run and not frozen_grade and grade_run.config != grader_config %}<p class="text-sm text-amber-800">Settings have changed since this run. Submit a new run to use the current settings.</p>{% endif %}
+  {% if completed %}
+    <div id="grading-conclusion" class="space-y-3 rounded-xl border border-stone-200 p-4">
+      <h3 class="text-lg font-semibold">Estimated outcome: {{ grade_run.result.demand.outcome|capitalize }}</h3>
+      <p class="text-sm">{{ grade_run.result.demand.verification_notes }}</p>
+      <p class="text-xs text-stone-600">{{ grade_run.result.demand.confidence|capitalize }} confidence in the capability estimate. This is an AI assessment, not independent verification.</p>
+      <p class="text-sm"><strong>Task goal:</strong> {{ grade_run.result.demand.acceptance_criteria }}</p>
+      <h3 class="text-sm font-semibold">What supports this result</h3>
+      <ul class="space-y-3 text-sm">{% for finding in grade_run.result.demand.findings %}<li>{{ finding.text }} {% for index in finding.event_indexes %}<a href="{% if grade_run.stale and not frozen_grade %}{{ session_href }}/assessment/grader/{{ grade_run.id }}{% endif %}#event-{{ index }}" class="font-semibold text-blue-700 underline">Event {{ index }}</a> {% endfor %}</li>{% endfor %}</ul>
+      <p class="text-sm"><strong>Suggested next step:</strong> {{ grade_run.result.demand.recommended_experiment }}</p>
+    </div>
     {% if grade_run.result.coverage %}
-    <details class="rounded-xl border border-stone-200 p-3"><summary class="cursor-pointer text-sm font-semibold">Evidence coverage and limitations</summary>
-      <p class="mt-2 text-sm">{{ grade_run.result.coverage.source_limitations }}</p>
-      {% if grade_run.result.coverage.conversation_excerpted %}<p class="mt-2 text-sm">The conversation exceeded the final context budget. Marked excerpts and extracted notes were used.</p>{% else %}<p class="mt-2 text-sm">The complete meaningful user/assistant conversation was included in the final assessment.</p>{% endif %}
-      <ul class="mt-2 space-y-2 text-sm">{% for limitation in grade_run.result.coverage.note_limitations %}<li>{{ limitation }}</li>{% endfor %}</ul>
-    </details>
-    {% endif %}
-    <details class="rounded-xl border border-stone-200 p-3"><summary class="cursor-pointer text-sm font-semibold">Grader evidence and experiment</summary>
-      <p class="mt-2 text-sm"><strong>Acceptance criteria:</strong> {{ grade_run.result.demand.acceptance_criteria }}</p>
-      <ul class="mt-2 space-y-2 text-sm">{% for finding in grade_run.result.demand.findings %}<li>{{ finding.text }} {% for index in finding.event_indexes %}<a href="#event-{{ index }}" class="text-blue-700 underline">Event {{ index }}</a> {% endfor %}</li>{% endfor %}</ul>
-      <p class="mt-3 text-sm"><strong>Configured capability basis:</strong> {{ grade_run.result.configuration.basis }}</p>
-      <p class="mt-3 text-sm"><strong>Suggested experiment:</strong> {{ grade_run.result.demand.recommended_experiment }}</p>
-      <p class="mt-2 text-xs text-stone-500">Rubric: 1 simple steps · 2 routine bounded work · 3 interacting constraints · 4 complex ambiguous work · 5 exceptional deep synthesis. Compare these estimates against your independent human review below.</p>
-    </details>
-    {% elif grade_run.status in ('failed', 'cancelled') %}<p role="alert" class="text-sm text-amber-800">{{ grade_run.result.error }}</p>
-    {% else %}<p class="text-sm text-stone-600">Grading is running or was interrupted. Completed batches are saved; you can leave this page and return, or retry unfinished batches after an interruption.</p>{% endif %}
+    <div class="space-y-2 text-sm text-stone-600">
+      {% if grade_run.result.coverage.conversation_excerpted %}<p class="font-semibold text-amber-800">Context was limited: the final assessment used conversation excerpts and extracted evidence notes.</p>{% endif %}
+      <p>{{ grade_run.result.coverage.source_limitations }}</p>
+      <details class="rounded-xl border border-stone-200 p-3"><summary class="cursor-pointer font-semibold">Evidence coverage and limitations</summary>
+        {% if not grade_run.result.coverage.conversation_excerpted %}<p class="mt-2">The complete meaningful user/assistant conversation was included in the final assessment.</p>{% endif %}
+        <ul class="mt-2 space-y-2">{% for limitation in grade_run.result.coverage.note_limitations %}<li>{{ limitation }}</li>{% endfor %}</ul>
+      </details>
+    </div>
+    {% else %}<p class="text-sm text-amber-800">This run does not include a detailed coverage report. Check the cited sources before relying on the result.</p>{% endif %}
+  {% elif grade_run %}
+    {% if grade_run.result.error %}<p role="alert" class="text-sm text-amber-800">{{ grade_run.result.error }}</p>{% endif %}
+    <p class="text-sm text-stone-600">{% if grade_run.result.batches %}{{ grade_run.completed_batches }} of {{ grade_run.result.batches|length }} evidence batches complete. {% endif %}A whole-task grade is available only after all grading stages finish.</p>
+    {% if not grade_run.active and not frozen_grade %}<p class="text-sm text-stone-600">{% if can_retry %}Completed work is saved. Retry unfinished batches to continue this run.{% else %}This run cannot resume with the current evidence, settings or workflow. Submit a new run from the current chunk.{% endif %}</p>{% endif %}
+  {% else %}<p class="text-sm text-stone-600">Review the included turns, then submit for an AI outcome and supporting evidence. Opening this page does not send anything.</p>{% endif %}
+
+  {% if not frozen_grade %}
+  <details class="rounded-xl border border-stone-200 p-3" {% if not grade_run %}open{% endif %}>
+    <summary class="cursor-pointer text-sm font-semibold">Included turns</summary>
+    <ul class="mt-2 max-h-64 space-y-3 overflow-auto text-sm">{% for turn in report.turns %}<li><a href="{{ session_href }}?view=conversation&turn={{ turn.turn_number }}&focus=1" class="font-semibold text-blue-700 underline">Turn {{ turn.turn_number }}</a> · {{ turn.response_state }}<p class="mt-1 whitespace-pre-wrap break-words">{{ turn.prompt_excerpt }}</p></li>{% endfor %}</ul>
+  </details>
+  {% if grader_config.enabled %}
+  <form id="submit-grading" {% if grade_run and grade_run.active %}data-status-url="{{ session_href }}/assessment/grader/{{ grade_run.id }}/status"{% endif %} action="{{ session_href }}/assessment/grade" method="post" class="space-y-3">
+    <input type="hidden" name="start_turn" value="{{ report.start_turn }}"><input type="hidden" name="end_turn" value="{{ report.end_turn }}"><input type="hidden" name="evidence_digest" value="{{ current_evidence_digest }}">
+    <p id="grading-status" aria-live="polite" class="text-sm font-semibold text-stone-700"></p>
+    {% if grade_plan and grade_plan.batches %}<p class="text-sm text-stone-600">Estimated plan: {{ grade_plan.batches }} evidence batch{{ 'es' if grade_plan.batches != 1 else '' }}{% if grade_plan.synthesis %} + a whole-task assessment{% endif %} + one configuration request. {% if grade_plan.synthesis %}Large tasks may need additional summary calls.{% endif %}</p>{% endif %}
+    {% if grade_plan and grade_plan.error %}<p class="text-sm text-amber-800">{{ grade_plan.error }}</p>{% endif %}
+    <details class="rounded-xl border border-stone-200 p-3"><summary class="cursor-pointer text-sm font-semibold">Task goal (optional)</summary><label class="mt-2 block text-sm">What should this chunk accomplish?<textarea name="acceptance_criteria" maxlength="12000" rows="2" placeholder="Leave blank to use the task described in the conversation." class="mt-1 block w-full rounded-xl border border-stone-300 p-2">{{ grade_run.result.acceptance_criteria if grade_run else review.acceptance_criteria }}</textarea></label><p class="mt-2 text-xs text-stone-500">Changing this goal requires a new run.</p></details>
+    <p class="break-words text-xs text-stone-600">Text evidence is sent to {{ grader_config.model }} ({{ grader_config.processing }}). Screenshots and audio are unavailable to this grader.</p>
+    <div class="flex flex-wrap gap-3">
+      <button id="start-grading" {% if grade_plan and grade_plan.error %}disabled{% endif %} class="rounded-xl {% if can_retry %}border border-stone-300 text-stone-700{% else %}bg-blue-700 text-white{% endif %} px-4 py-2 text-sm font-semibold disabled:opacity-50">Submit chunk for AI grading</button>
+      {% if can_retry %}<button name="retry_run_id" value="{{ grade_run.id }}" class="rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white">Retry unfinished batches</button>{% endif %}
+      <button id="cancel-grading" type="button" hidden class="rounded-xl border border-stone-300 px-4 py-2 text-sm font-semibold">Cancel grading</button>
+      <a href="#task-evidence" class="px-2 py-2 text-sm text-blue-700 underline">Browse evidence</a>
+    </div>
+  </form>
+  {% else %}<p class="text-sm text-stone-600">AI grading is disabled. An administrator can enable it in Settings → LLM Configuration.</p>{% endif %}
+  {% endif %}
+
+  {% if completed %}<details class="rounded-xl border border-stone-200 p-3"><summary class="cursor-pointer text-sm font-semibold">Capability comparison</summary><div class="mt-3 space-y-3">{{ capability_chart(grade_run) }}<p class="text-sm">{{ grade_run.result.configuration.basis }}</p><p class="text-xs text-stone-500">1 simple steps · 2 routine bounded work · 3 interacting constraints · 4 complex ambiguous work · 5 exceptional deep synthesis.</p></div></details>{% endif %}
+  {% if grade_run %}<details id="batch-details" class="rounded-xl border border-stone-200 p-3"><summary class="cursor-pointer text-sm font-semibold">Batch details and usage{% if grade_run.result.batches %} · {{ grade_run.result.batches|length }} batches{% endif %}</summary><div class="mt-3 space-y-3">
     {% if grade_run.result.batches %}
       <div id="grading-batches" class="space-y-3">
         <h3 class="text-lg font-semibold">Batch results</h3>
@@ -40,32 +71,25 @@
             {% if batch.demand %}
               <p class="mt-2 text-sm">Required capability: {{ (batch.demand.required_level|string ~ ' / 5') if batch.demand.required_level is not none else 'Unestablished' }} · {{ batch.demand.confidence }} confidence · Slice outcome: {{ batch.demand.outcome }}</p>
               <p class="mt-2 text-sm">{{ batch.demand.verification_notes }}</p>
-              <ul class="mt-2 space-y-2 text-sm">{% for finding in batch.demand.findings %}<li>{{ finding.text }} {% for index in finding.event_indexes %}<a href="#event-{{ index }}" class="text-blue-700 underline">Event {{ index }}</a> {% endfor %}</li>{% endfor %}</ul>
+              <ul class="mt-2 space-y-2 text-sm">{% for finding in batch.demand.findings %}<li>{{ finding.text }} {% for index in finding.event_indexes %}<a href="{% if grade_run.stale and not frozen_grade %}{{ session_href }}/assessment/grader/{{ grade_run.id }}{% endif %}#event-{{ index }}" class="text-blue-700 underline">Event {{ index }}</a> {% endfor %}</li>{% endfor %}</ul>
               <p class="mt-2 text-sm">{{ batch.demand.recommended_experiment }}</p>
             {% endif %}
             {% if batch.evidence %}
               <p class="mt-2 text-sm">{{ batch.evidence.limitations }}</p>
-              <ul class="mt-2 space-y-2 text-sm">{% for finding in batch.evidence.findings %}<li>{{ finding.text }} {% for index in finding.event_indexes %}<a href="#event-{{ index }}" class="text-blue-700 underline">Event {{ index }}</a> {% endfor %}</li>{% endfor %}</ul>
+              <ul class="mt-2 space-y-2 text-sm">{% for finding in batch.evidence.findings %}<li>{{ finding.text }} {% for index in finding.event_indexes %}<a href="{% if grade_run.stale and not frozen_grade %}{{ session_href }}/assessment/grader/{{ grade_run.id }}{% endif %}#event-{{ index }}" class="text-blue-700 underline">Event {{ index }}</a> {% endfor %}</li>{% endfor %}</ul>
             {% endif %}
           </details>
         {% endfor %}
       </div>
     {% endif %}
     <p class="text-xs text-stone-500">Evaluator usage, separate from task cost: {% for call in grade_run.result.calls %}{{ call.stage }}{% if call.batch %} batch {{ call.batch }}{% endif %} — {{ call.usage.total_tokens if call.usage and call.usage.total_tokens is not none else 'unknown' }} tokens{% if not loop.last %}; {% endif %}{% endfor %}. Failed calls may have unreported provider usage.</p>
-  {% else %}<p class="text-sm text-stone-500">No LLM estimate for this turn range yet.</p>{% endif %}
-  {% if grader_config.enabled %}
-  <form id="submit-grading" {% if grade_run and grade_run.active %}data-status-url="{{ session_href }}/assessment/grader/{{ grade_run.id }}/status"{% endif %} action="{{ session_href }}/assessment/grade" method="post" class="space-y-3">
-    <input type="hidden" name="start_turn" value="{{ report.start_turn }}"><input type="hidden" name="end_turn" value="{{ report.end_turn }}"><input type="hidden" name="evidence_digest" value="{{ current_evidence_digest }}">
-    <label class="block text-sm font-semibold">What should this chunk accomplish? (optional)<textarea name="acceptance_criteria" maxlength="12000" rows="2" placeholder="Leave blank to use the task described in the conversation." class="mt-1 block w-full rounded-xl border border-stone-300 p-2">{{ grade_run.result.acceptance_criteria if grade_run and grade_run.status != 'completed' else review.acceptance_criteria }}</textarea></label>
-    <p class="break-words text-xs text-stone-600">Sends selected conversation/activity evidence to {{ grader_config.processing }} endpoint {{ grader_config.base_url }} using {{ grader_config.model }}. Each call has a {{ grader_config.timeout_seconds }}-second timeout. Evidence calls allow {{ grader_config.max_output_tokens }} output tokens; the combined batch assessment allows {{ grader_config.synthesis_output_tokens }}. Screenshots and audio are unavailable to this text-only grader. Your human review is saved separately.</p>
-    {% if grade_plan and grade_plan.batches %}<p class="text-sm text-stone-600">Estimated plan: {{ grade_plan.batches }} evidence batch{{ 'es' if grade_plan.batches != 1 else '' }}{% if grade_plan.synthesis %} + a whole-task assessment (with additional summary calls if needed){% endif %} + one configuration request. The selected conversation and final responses provide shared context. Excerpts and missing media are marked; original evidence remains in the export. Changing the criteria may change the batch count.</p>{% endif %}
-    {% if grade_plan and grade_plan.error %}<p class="text-sm text-amber-800">{{ grade_plan.error }}</p>{% endif %}
-    <button class="rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white">Submit chunk for AI grading</button>
-    {% if grade_run and not grade_run.active and grade_run.status in ('failed', 'running', 'cancelled') and not grade_run.stale and not grade_run.context_outdated and grade_run.config == grader_config %}<button name="retry_run_id" value="{{ grade_run.id }}" class="rounded-xl border border-blue-700 px-4 py-2 text-sm font-semibold text-blue-700">Retry unfinished batches</button>{% endif %}
-    <button id="cancel-grading" type="button" hidden class="rounded-xl border border-stone-300 px-4 py-2 text-sm font-semibold">Cancel grading</button>
-    <p id="grading-status" aria-live="polite" class="text-sm text-stone-600"></p>
-  </form>
-  {% else %}<p class="text-sm text-stone-600">AI grading is disabled. An administrator can enable it in Settings → LLM Configuration. You can still review this chunk manually below.</p>{% endif %}
-  {% if not request.state.auth_enabled or request.state.auth_user.is_admin %}<a href="/settings#settings-llm" class="inline-block text-sm text-blue-700 underline">Configure LLM grader</a>{% endif %}
-  {% if grade_history %}<details><summary class="cursor-pointer text-sm font-semibold">Grader run history</summary><ul class="mt-2 space-y-1 text-sm">{% for run in grade_history %}<li><a href="{{ session_href }}/assessment/grader/{{ run.id }}.json" class="text-blue-700 underline">Export run {{ run.id }} · {{ run.status }} · {{ run.created_at }}</a></li>{% endfor %}</ul></details>{% endif %}
+
+  </div></details>{% endif %}
+  <details class="rounded-xl border border-stone-200 p-3"><summary class="cursor-pointer text-sm font-semibold">Grading settings and preparation</summary><div class="mt-3 space-y-3">
+    <p class="break-words text-xs text-stone-600">{{ 'Endpoint used' if frozen_grade else 'Current endpoint' }}: {{ grader_config.base_url }} · {{ grader_config.timeout_seconds }}-second timeout per call · {{ grader_config.max_input_chars }} input characters · {{ grader_config.max_output_tokens }} evidence output tokens · {{ grader_config.synthesis_output_tokens }} synthesis output tokens.</p>
+    {% if grade_run %}<p class="text-xs text-stone-500">Run {{ grade_run.id }} · {{ grade_run.created_at }} · {{ grade_run.config.model }} · Limits used for this run: {{ grade_run.config.timeout_seconds }} seconds per call · {{ grade_run.config.max_input_chars }} input characters · {{ grade_run.config.max_output_tokens }} output tokens.</p>{% endif %}
+    {% if grade_plan and grade_plan.consolidation %}<details><summary class="cursor-pointer text-sm font-semibold">Evidence preparation</summary><p class="mt-2 text-sm">{{ grade_plan.consolidation.changed_events }} records consolidated; {{ (grade_plan.consolidation.bytes_removed / 1024)|round(1) }} KiB removed. Original records and event references are retained.</p>{% if grade_plan.consolidation.diagnostic_lines_separated %}<p class="mt-2 text-sm">{{ grade_plan.consolidation.diagnostic_lines_separated }} pasted diagnostic lines remain in supporting evidence rather than repeated request context.</p>{% endif %}<p class="mt-2 text-sm">Largest records after preparation: {% for event in grade_plan.largest_events %}<a href="#event-{{ event.event_index }}" class="text-blue-700 underline">Event {{ event.event_index }}</a> ({{ (event.bytes / 1024)|round(1) }} KiB){% if not loop.last %}; {% endif %}{% endfor %}.</p></details>{% endif %}
+    {% if not request.state.auth_enabled or request.state.auth_user.is_admin %}<a href="/settings#settings-llm" class="text-sm text-blue-700 underline">Configure LLM grader</a>{% endif %}
+  </div></details>
+  {% if grade_history %}<details><summary class="cursor-pointer text-sm font-semibold">Grader run history</summary><ul class="mt-2 space-y-2 text-sm">{% for run in grade_history %}<li><a href="{{ session_href }}/assessment/grader/{{ run.id }}" class="text-blue-700 underline">Open run {{ run.id }} · {{ run.status }} · {{ run.created_at }}</a> · <a href="{{ session_href }}/assessment/grader/{{ run.id }}.json" class="text-blue-700 underline">Export JSON</a></li>{% endfor %}</ul></details>{% endif %}
 </section>

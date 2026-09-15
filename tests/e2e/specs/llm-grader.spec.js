@@ -80,6 +80,10 @@ test("configure a local grader, produce cited capability bars, and retain failed
     await page.getByRole("button", { name: "Review chunk & grade" }).click();
     const assessment = app.url(`/sessions/${sessionId}/assessment?start_turn=1&end_turn=3`);
     await expect(page).toHaveURL(assessment + "#llm-grader");
+    await page.getByText("Grading settings and preparation", { exact: true }).click();
+    await page.getByText("Evidence preparation", { exact: true }).click();
+    await expect(page.locator("#llm-grader")).toContainText("Largest records after preparation:");
+    await expect(page.locator("#llm-grader")).toContainText("Original records and event references are retained.");
     expect(calls).toHaveLength(0);
     const gradeEndpoint = app.url(`/sessions/${sessionId}/assessment/grade`);
     await page.route(gradeEndpoint, route => route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: "Evidence changed. Reload before requesting grading." }) }));
@@ -90,6 +94,8 @@ test("configure a local grader, produce cited capability bars, and retain failed
     await page.unroute(gradeEndpoint);
     await page.getByRole("button", { name: "Submit chunk for AI grading" }).click();
     await expect(page.getByRole("button", { name: "Grading…", exact: true })).toBeDisabled();
+    await expect(page.locator("#grading-conclusion")).toContainText("Estimated outcome: Unknown");
+    await page.getByText("Capability comparison", { exact: true }).click();
     await expect(page.getByRole("group", { name: "Estimated configured versus required intelligence" })).toBeVisible();
     await expect(page.locator("#llm-grader")).toContainText("4 / 5");
     await expect(page.locator("#llm-grader")).toContainText("2 / 5");
@@ -110,6 +116,16 @@ test("configure a local grader, produce cited capability bars, and retain failed
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
     await page.goto(app.url("/assessments"));
     await expect(page.getByRole("heading", { name: "Assessment dashboard", exact: true })).toBeVisible();
+    await expect(page.locator('article[data-run-id]')).toContainText('Turns 1–3');
+    await page.getByRole('link', {name: 'Open result', exact: true}).click();
+    await expect(page.locator('#grading-conclusion')).toBeVisible();
+    await expect(page.locator('#manual-review')).toHaveCount(0);
+    await page.locator('#grading-conclusion a').first().click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('dialog')).toContainText('Implement the small requested change.');
+    await page.getByRole('button', {name: 'Back to result', exact: true}).click();
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    await page.goto(app.url('/assessments'));
     await page.screenshot({ path: testInfo.outputPath("llm-grader-dashboard-mobile.png"), fullPage: true });
     await page.goto(assessment);
     invalidOutput = true;
@@ -119,6 +135,7 @@ test("configure a local grader, produce cited capability bars, and retain failed
     expect(exported.ok()).toBeTruthy();
     const exportedRun = await exported.json();
     expect(exportedRun.result.configuration.configured_level).toBe(4);
+    expect(exportedRun.result.consolidation.version).toBe("evidence-consolidation-v1");
     expect(JSON.stringify(exportedRun)).not.toContain("browser-test-key");
     invalidOutput = false;
     responseDelay = 10000;
@@ -144,7 +161,9 @@ test("configure a local grader, produce cited capability bars, and retain failed
     failBatch = 2;
     await page.getByRole("button", { name: "Submit chunk for AI grading", exact: true }).click();
     await expect(page.locator("#llm-grader").getByRole("alert")).toContainText("HTTP 503");
-    await expect(page.locator("#grading-batches")).toContainText("Batch 1 · Turns 1–1 · completed");
+    await expect(page.locator('#batch-details')).not.toHaveAttribute('open', '');
+    expect((await page.getByRole('button', {name: 'Retry unfinished batches', exact: true}).boundingBox()).y).toBeLessThan((await page.locator('#batch-details').boundingBox()).y);
+    await expect(page.locator("#grading-batches")).toContainText("Batch 1 · Turns 1–2 · completed");
     failBatch = null;
     await page.getByRole("button", { name: "Retry unfinished batches", exact: true }).click();
     await expect(page.getByRole("button", { name: "Grading…", exact: true })).toBeDisabled();
@@ -153,6 +172,7 @@ test("configure a local grader, produce cited capability bars, and retain failed
     await expect(page.locator("#grading-batches")).not.toContainText("pending");
     const batchCalls = calls.slice(beforeBatches).map(call => JSON.parse(call.messages[1].content));
     for (const data of batchCalls.filter(data => data.batch)) {
+      expect(data.task_overview).toBeUndefined();
       expect(data.task_context.requests.length).toBeGreaterThan(0);
       expect(data.task_context.requests[0].text).toContain("Implement the small");
       expect(data.task_context.requests.every(item => item.turn_number <= data.task_context.current_turn)).toBeTruthy();

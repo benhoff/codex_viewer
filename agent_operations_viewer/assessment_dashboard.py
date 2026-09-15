@@ -68,7 +68,7 @@ def dashboard_data(connection: sqlite3.Connection, *, owner: str, access: Projec
     """, query_params)]
     for item in systems:
         item["label"] = machine_display_name(item["source_host"], aliases.get(item["source_host"])) or "Unknown machine"
-        item["href"] = "/assessments?" + urlencode({"machine": item["source_host"], "project": project, "review": review, "days": days})
+        item["href"] = "/assessments?" + urlencode({"view": "sessions", "machine": item["source_host"], "project": project, "review": review, "days": days})
     total = sum(item["sessions"] for item in systems)
     pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     page = min(page, pages)
@@ -101,8 +101,9 @@ def dashboard_data(connection: sqlite3.Connection, *, owner: str, access: Projec
         except LookupError as exc:
             item["coverage"] = "not_indexed"
             item["limitation"] = str(exc)
-        item["assessment_href"] = session_href + "/assessment?" + urlencode({
-            "start_turn": 1, "end_turn": item["turn_count"] if source else 1}) if item["turn_count"] else None
+        item["assessment_href"] = (session_href + "/assessment?" + urlencode({
+            "start_turn": 1, "end_turn": item["turn_count"]}) if source else
+            session_href + "?view=conversation#chunk-picker") if item["turn_count"] else None
         item["review"] = None
         item["grade_run"] = read_run(connection, owner, item["id"], 1, item["turn_count"])
         if item["grade_run"]:
@@ -126,7 +127,7 @@ def dashboard_data(connection: sqlite3.Connection, *, owner: str, access: Projec
                 item["review"]["href"] = item["review"]["snapshot_href"]
         else:
             item.pop("review_json", None)
-    filters = {"machine": machine, "project": project, "review": review, "days": days}
+    filters = {"view": "sessions", "machine": machine, "project": project, "review": review, "days": days}
 
     def page_href(target: int) -> str:
         return "/assessments?" + urlencode({**filters, "page": target})
@@ -141,3 +142,73 @@ def dashboard_data(connection: sqlite3.Connection, *, owner: str, access: Projec
         "policy": policy, "generated_at": datetime.now(UTC).isoformat(),
         "scope": "All accessible synced sessions; reviews belong to the current user. Metrics cover this page only, selected session only; child work excluded.",
     }
+
+
+def grading_dashboard_data(connection, *, owner, access, active_run_ids=(), machine="",
+                           project="", status="all", days=0, page=1):
+    """Latest attempt per personal task range, without loading source snapshots."""
+    access_sql, access_params = project_access_condition_sql(access)
+    visible = access_sql or "1 = 1"
+    aliases = list_machine_display_aliases(connection)
+    machines = [dict(r) for r in connection.execute(
+        f"SELECT DISTINCT s.source_host {JOINS} WHERE {visible} ORDER BY s.source_host", access_params)]
+    for item in machines:
+        item["label"] = machine_display_name(item["source_host"], aliases.get(item["source_host"])) or "Unknown machine"
+    projects = [dict(r) for r in connection.execute(
+        f"SELECT DISTINCT {PROJECT_KEY} AS id, {PROJECT_LABEL} AS label {JOINS} WHERE {visible} ORDER BY label, id", access_params)]
+    conditions, params = [visible], list(access_params)
+    for value, expression in ((machine, "s.source_host"), (project, PROJECT_KEY)):
+        if value:
+            conditions.append(f"{expression} = ?")
+            params.append(value)
+    if days:
+        conditions.append("julianday(g.created_at) >= julianday(?)")
+        params.append((datetime.now(UTC) - timedelta(days=days)).isoformat())
+    # IDs come only from the current process's worker registry, never request text.
+    active_sql = ','.join(str(int(i)) for i in active_run_ids) or 'NULL'
+    cte = f"""WITH latest AS (
+        SELECT MAX(id) AS id FROM task_grader_runs WHERE owner_scope = ?
+        GROUP BY session_id, start_turn, end_turn
+    ), candidates AS (
+        SELECT g.id, s.id AS session_id, s.summary, s.source_host,
+               {PROJECT_KEY} AS project_id, {PROJECT_LABEL} AS project_label,
+               g.start_turn, g.end_turn, g.created_at,
+               CASE WHEN g.status = 'running' AND g.id NOT IN ({active_sql if active_run_ids else '0'})
+                    THEN 'interrupted' ELSE g.status END AS status
+        {JOINS} JOIN task_grader_runs g ON g.session_id = s.id
+        JOIN latest ON latest.id = g.id WHERE {' AND '.join(conditions)}
+    ) """
+    query_params = [owner, *params]
+    counts = {r['status']: r['count'] for r in connection.execute(
+        cte + "SELECT status, COUNT(*) AS count FROM candidates GROUP BY status", query_params)}
+    total = sum(counts.values()) if status == 'all' else counts.get(status, 0)
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = min(page, pages)
+    where = "" if status == 'all' else "WHERE c.status = ?"
+    rows = [dict(r) for r in connection.execute(cte + f"""
+        SELECT c.*, CASE WHEN c.status = 'completed' THEN json_extract(g.result_json, '$.demand.outcome') END AS outcome,
+               substr(json_extract(g.result_json, '$.demand.verification_notes'), 1, 400) AS explanation,
+               substr(json_extract(g.result_json, '$.error'), 1, 400) AS error,
+               COALESCE(json_array_length(g.result_json, '$.batches'), 0) AS total_batches,
+               (SELECT COUNT(*) FROM json_each(g.result_json, '$.batches') b
+                WHERE json_extract(b.value, '$.status') = 'completed') AS completed_batches
+        FROM candidates c JOIN task_grader_runs g ON g.id = c.id {where}
+        ORDER BY c.id DESC LIMIT ? OFFSET ?
+    """, [*query_params, *([status] if status != 'all' else []), PAGE_SIZE, (page - 1) * PAGE_SIZE])]
+    for item in rows:
+        base = '/sessions/' + quote(item['session_id'], safe='')
+        item['machine_label'] = machine_display_name(item['source_host'], aliases.get(item['source_host'])) or 'Unknown machine'
+        item['href'] = base + '/assessment?' + urlencode({'start_turn': item['start_turn'], 'end_turn': item['end_turn']}) + '#llm-grader'
+        item['result_href'] = base + f"/assessment/grader/{item['id']}"
+        if not item['total_batches']:
+            item['total_batches'] = 1
+            item['completed_batches'] = int(item['status'] == 'completed')
+    filters = {'view': 'runs', 'machine': machine, 'project': project, 'status': status, 'days': days}
+    def href(target):
+        return '/assessments?' + urlencode({**filters, 'page': target})
+    return {'runs': rows, 'machines': machines, 'projects': projects, 'filters': filters,
+            'counts': counts, 'total': total, 'page': page, 'pages': pages,
+            'previous_href': href(page - 1) if page > 1 else None,
+            'next_href': href(page + 1) if page < pages else None,
+            'export_href': '/assessments.json?' + urlencode({**filters, 'page': page}),
+            'scope': 'Latest grading attempt for each accessible personal task range. Outcomes describe the saved evidence; open a range to check for changes.'}

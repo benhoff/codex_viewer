@@ -403,19 +403,46 @@ displayed or included in review exports. Back up that file with the database.
 External providers require a key. Local mode
 supports localhost or a private IP endpoint and can run without a key.
 
+Open **Assessments** (`/assessments`) to track the latest AI grading attempt for
+each task range you submitted. Filter by status, project, machine or submission
+date. Running rows refresh as progress changes; interrupted workers are labeled
+**Interrupted**. **Open result** shows the run's frozen evidence and findings.
+**Review and resume** opens the current chunk, where eligible runs offer
+**Retry unfinished batches**. Older attempts have readable pages in run history.
+
+Use **Choose work to grade** (`/assessments?view=sessions`) to browse synced
+sessions, preview a full session, or select turns from its conversation. The
+assessment shows included requests and an estimated batch count before submission.
+Results lead with outcome, supporting findings, coverage limitations and a suggested
+next step. Click an event citation to inspect readable source evidence in a panel;
+close it or press Escape to return. Batch diagnostics, capability comparisons,
+cost details and optional manual review are collapsed by default. No manual review
+is required to submit work or inspect an AI result.
+
+The JSON dashboard uses the same views: `/assessments.json` now lists grading
+runs; `/assessments.json?view=sessions` retains the session metrics/review export.
+Both enforce the current user's owner scope and project access before pagination.
+
 Once enabled, **Submit chunk for AI grading** at the top of an assessment explicitly sends that selected
 range's text evidence to the displayed endpoint. Evidence that fits uses two calls:
 demand and outcome first, with structured model/effort/cost metadata withheld, then
 configured capability using model/effort observations only. Larger selections are
-automatically packed into sequential evidence batches within each turn, keeping a
+automatically packed into sequential evidence batches across adjacent turns, keeping a
 whole turn together where possible. An oversized turn is split at event boundaries; an oversized event
 is split into exact fragments with source indexes and character offsets. The viewer
 removes mirrored bookkeeping records, repeated instructions, duplicate display/detail
 text and tool transport wrappers. Requests, patches, command output, exit status and
 final responses remain; the export retains the original evidence snapshot.
+Deterministic rules compact exact repeated tool outputs, consecutive identical log
+messages, repeated lint diagnostics (retaining every location), exhaustive integer
+option ranges, and recognized generated search indexes/source maps. Markers retain
+provenance and identify omitted contents. Unknown formats and patches stay intact;
+generated artifacts explicitly named in requests or reviewer criteria are retained.
+Recognizable pasted diagnostics stay in primary evidence but are represented as
+attachments in repeated request context. No additional model calls perform this cleanup.
 Each evidence-extraction batch also carries quoted task requests from the selected range, including
 the initial goal and current request/corrections, plus the preceding tool call when
-it fits. Future turns are excluded from that context. Environment wrappers are not
+it fits. Turns after the batch are excluded from that context. Environment wrappers are not
 treated as requests. When reviewer criteria are blank, the grader uses the recorded
 requests to identify the task. Context is prepared locally without extra model calls.
 Long context is marked as truncated, omitted requests are counted, and complete
@@ -438,7 +465,8 @@ has no tools. Images and audio are explicitly marked unavailable; encoded media
 is never fragmented into text grading batches. Mixed text/media tool results retain
 their text. Original media remains in the frozen evidence export.
 
-The browser shows an estimated batch count before submission and progress while
+The browser shows an estimated batch count, consolidation savings, and links to the
+largest prepared records before submission, and progress while
 the explicitly submitted job runs in the background. You can leave the page and
 return. **Cancel grading** aborts the active HTTP socket, including while waiting
 for headers. The absolute per-call timeout also aborts the socket. The worker releases
@@ -448,7 +476,7 @@ and requests concise JSON. Schema/field violations, malformed JSON and
 `finish_reason: "length"` fail the stage; incomplete grades are never accepted.
 **Retry unfinished batches** continues a failed, cancelled or interrupted run without repeating
 completed batches, provided evidence, criteria, configuration, and prompt version are unchanged.
-Runs created before task-context batching remain available for review/export; submit
+Runs created before v6 deterministic consolidation remain available for review/export; submit
 a new run to use the new batch boundaries and context.
 A request interrupted before its result was saved may be sent again on an explicit
 retry. There are no automatic retries. Jobs run in the current viewer process;
@@ -474,16 +502,18 @@ estimated ordinal levels from 1 to 5, with confidence and a plausible required
 range. Missing, unfamiliar, or mixed configurations may stay unestablished.
 Differences are hypotheses for controlled experiments, not percentages of excess
 intelligence, proven savings, or predicted turnaround. Compare grader findings
-with your independent human review to calibrate them. Full-session estimates also
-appear in the assessment dashboard.
+with independent evidence to calibrate them. The assessment dashboard tracks
+submitted task ranges, including chunks smaller than a full session.
 
 Each personal grader run retains its evidence snapshot, prompts/rubric version, output schemas,
 configuration (without credentials), validated findings, and separately reported
 evaluator usage. Grading never overwrites a human review or adds its tokens to the
 task cost. Failures retain observed usage; provider usage for failed calls can be
-unknown. Runs remain inspectable via their JSON exports, and source changes mark
-estimates stale. Restarting during a run can leave an unfinished attempt; retrying
-creates a new run. Only one run is admitted per viewer process at a time.
+unknown. Runs remain inspectable via readable history pages and JSON exports;
+source changes mark estimates stale. Restarting during a run can leave an unfinished
+attempt. Explicit retry resumes it only when evidence, criteria, configuration and
+workflow still match; otherwise submit a new run. Only one run is admitted per
+viewer process at a time.
 
 The integration follows the [official Structured Outputs documentation](https://developers.openai.com/api/docs/guides/structured-outputs).
 

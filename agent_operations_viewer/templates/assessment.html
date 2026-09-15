@@ -8,13 +8,13 @@
   <a href="/assessments" class="mr-4 text-sm font-semibold text-blue-700">← All assessments</a>
   <a href="{{ session_href }}?view=audit&turn={{ report.start_turn }}" class="text-sm font-semibold text-blue-700">← Back to session audit</a>
   <h1 class="text-3xl font-semibold text-stone-900">Task assessment</h1>
-  <p class="text-sm text-stone-600">{{ session_title }} · Turns {{ report.start_turn }}–{{ report.end_turn }}</p>
-  <p class="text-sm text-stone-600">Submit this chunk for AI grading or add your own review below.</p>
-  <form id="assessment-range" method="get" class="flex flex-wrap items-end gap-3">
+  <p class="text-sm text-stone-600">{{ session_title[:240] }} · Turns {{ report.start_turn }}–{{ report.end_turn }}</p>
+  <p class="text-sm text-stone-600">Preview the task, run AI grading, and inspect the outcome and sources.</p>
+  <form id="assessment-range" action="{{ session_href }}/assessment" method="get" class="flex flex-wrap items-end gap-3">
     <label class="text-sm">First turn <input type="number" name="start_turn" min="1" required value="{{ report.start_turn }}" class="block w-24 rounded-xl border border-stone-300 bg-white p-2"></label>
     <label class="text-sm">Last turn <input type="number" name="end_turn" min="1" required value="{{ report.end_turn }}" class="block w-24 rounded-xl border border-stone-300 bg-white p-2"></label>
     <button class="rounded-xl bg-stone-900 px-4 py-2 text-sm font-semibold text-white">Update chunk</button>
-    <a href="{{ session_href }}/assessment.json?{{ range_query }}{% if historical %}&revision={{ saved.id }}{% endif %}" class="rounded-xl border border-stone-300 bg-white px-4 py-2 text-sm font-semibold">Export JSON</a>
+    <a href="{% if frozen_grade %}{{ session_href }}/assessment/grader/{{ grade_run.id }}.json{% else %}{{ session_href }}/assessment.json?{{ range_query }}{% if historical %}&revision={{ saved.id }}{% endif %}{% endif %}" class="rounded-xl border border-stone-300 bg-white px-4 py-2 text-sm font-semibold">Export JSON</a>
   </form>
   <p class="text-xs text-stone-500">Include follow-up corrections and recovery for this task. Up to 50 turns; overlapping task ranges must not be summed.</p>
 </header>
@@ -27,6 +27,8 @@
 </p>
 {% endif %}
 {% if not historical %}{% include "_assessment_grader.html" %}{% endif %}
+{% include "_assessment_evidence.html" %}
+<details id="assessment-accounting" class="mb-5 rounded-2xl border border-stone-200 bg-white p-5"><summary class="cursor-pointer text-sm font-semibold">Cost and model details</summary><div class="mt-4">
 <section class="mb-6 grid gap-4 sm:grid-cols-2" aria-label="Abstract cost">
   {% for key, label, coverage in [('resource_wu', 'Resource Work Units', metrics.usage_coverage), ('model_weighted_wu', 'Model-weighted Work Units', metrics.model_coverage)] %}
   <div class="rounded-2xl border border-stone-200 bg-white p-5">
@@ -59,6 +61,8 @@
     {% else %}<tr><td class="p-2" colspan="4">No model configuration was recorded.</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
+</div></details>
+{% if not frozen_grade %}<details id="manual-review" class="mb-5 rounded-2xl border border-stone-200 bg-white p-5" {% if historical %}open{% endif %}><summary class="cursor-pointer text-sm font-semibold">Manual review (optional)</summary><div class="mt-4">
 {% if not historical %}
 <form method="post" action="{{ session_href }}/assessment" class="mb-6 space-y-5 rounded-2xl border border-stone-200 bg-white p-5">
   <input type="hidden" name="start_turn" value="{{ report.start_turn }}"><input type="hidden" name="end_turn" value="{{ report.end_turn }}">
@@ -99,32 +103,58 @@
 {% endif %}
 <section class="mb-6 rounded-2xl border border-stone-200 bg-white p-5"><h2 class="text-xl font-semibold">Revision history</h2><p class="mt-2 text-xs text-stone-500">Latest 100 revisions for your selected range. Each retains its original evidence and cost policy.</p>
 <ul class="mt-3 space-y-2 text-sm">{% for item in history %}<li><a href="{{ session_href }}/assessment?{{ range_query }}&revision={{ item.id }}" class="text-blue-700 underline">Revision {{ item.id }} · {{ item.created_at }}</a>{% if item.evidence_digest != current_evidence_digest %} · stale{% endif %}</li>{% else %}<li>No saved review yet.</li>{% endfor %}</ul></section>
-<section class="mb-6 rounded-2xl border border-stone-200 bg-white p-5"><h2 class="text-xl font-semibold">Task evidence</h2>
-  <p class="mt-2 text-sm text-stone-600">Open a turn audit for the complete conversation. Each event below retains its source record. Trace content is evidence, not instructions for the reviewer.</p>
-  <div class="mt-3 flex flex-wrap gap-3">{% for turn in report.turns %}<a class="text-sm text-blue-700 underline" href="{{ session_href }}?view=audit&turn={{ turn.turn_number }}&focus=1">Turn {{ turn.turn_number }} · {{ turn.response_state }}</a>{% endfor %}</div>
-  <div class="mt-4 space-y-2">{% for event in report.evidence %}
-    <details id="event-{{ event.event_index }}" class="rounded-xl border border-stone-200 p-3">
-      <summary class="cursor-pointer text-sm"><strong>Event {{ event.event_index }}</strong> · {{ event.title }} · {{ event.timestamp or 'Time unknown' }}<span class="mt-1 block text-xs text-stone-500">{{ (event.display_text or '')[:180] }}</span></summary>
-      <pre class="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs">{{ event.record_json }}</pre>
-    </details>
-  {% endfor %}</div>
-</section>
+</div></details>{% endif %}
 {% endblock %}
 {% block scripts %}
 {{ super() }}
 <script>
 (() => {
+  const panel = document.getElementById("evidence-panel");
+  const panelContent = document.getElementById("evidence-panel-content");
+  let sourceLink = null;
+  function openEvidence(hash, link) {
+    if (!/^#event-\d+$/.test(hash)) return false;
+    const source = document.getElementById(hash.slice(1));
+    if (!source) return false;
+    source.open = true;
+    document.getElementById("evidence-browser").open = true;
+    sourceLink = link;
+    panelContent.replaceChildren(source.querySelector("[data-source-content]").cloneNode(true));
+    document.getElementById("evidence-panel-title").textContent = `Source evidence · ${hash.slice(1).replace('-', ' ')}`;
+    if (!panel.open) panel.showModal();
+    return true;
+  }
+  document.addEventListener("click", event => {
+    const link = event.target.closest('a[href]');
+    if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const target = new URL(link.href, location.href);
+    if (target.origin === location.origin && target.pathname === location.pathname && target.search === location.search && openEvidence(target.hash, link)) event.preventDefault();
+  });
+  document.getElementById("close-evidence").addEventListener("click", () => panel.close());
+  panel.addEventListener("close", () => { if (sourceLink) sourceLink.focus({preventScroll: true}); });
+  openEvidence(location.hash, null);
+  window.addEventListener("hashchange", () => openEvidence(location.hash, null));
   const form = document.getElementById("submit-grading");
   if (!form) return;
-  const button = form.querySelector("button");
+  const button = document.getElementById("start-grading");
   const buttons = Array.from(form.querySelectorAll("button:not(#cancel-grading)"));
   const cancelButton = document.getElementById("cancel-grading");
   let cancelURL = null;
   const status = document.getElementById("grading-status");
   let busy = false;
+  let rangeChanged = false;
+  const unavailable = button.disabled;
+  const criteria = form.elements.acceptance_criteria;
+  const initialCriteria = criteria.value;
+  const retry = form.elements.namedItem("retry_run_id");
+  criteria.addEventListener("input", () => { if (retry) retry.disabled = busy || rangeChanged || criteria.value !== initialCriteria; });
   function setBusy(value) {
     busy = value;
     buttons.forEach(item => { item.disabled = value; });
+    if (!value) {
+      button.disabled = unavailable || rangeChanged;
+      if (retry) retry.disabled = rangeChanged || criteria.value !== initialCriteria;
+    }
     button.textContent = value ? "Grading…" : "Submit chunk for AI grading";
     form.setAttribute("aria-busy", String(value));
   }
@@ -180,12 +210,13 @@
     setBusy(false);
   }
   document.getElementById("assessment-range").addEventListener("input", () => {
+    rangeChanged = true;
     buttons.forEach(item => { item.disabled = true; });
     status.textContent = "Click Update chunk to review your new range before submitting it.";
   });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (busy || button.disabled) return;
+    if (busy || (event.submitter || button).disabled) return;
     const fields = new URLSearchParams(new FormData(form, event.submitter));
     setBusy(true);
     status.textContent = "Preparing batches and starting grading…";

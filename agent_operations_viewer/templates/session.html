@@ -1391,8 +1391,11 @@
 
               {% if turn.detail_entries %}
                 {% if session_view_mode == 'conversation' %}
-                <div class="space-y-3">
-                  <p class="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">Work Log</p>
+                <details class="space-y-3" data-work-log ontoggle="this.querySelector('[data-work-log-arrow]').textContent = this.open ? '▴' : '▾'">
+                  <summary class="flex cursor-pointer list-none items-center gap-2 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                    <span>Work Log</span>
+                    <span data-work-log-arrow aria-hidden="true">▾</span>
+                  </summary>
                   {% for entry in turn.detail_entries %}
                     {% if entry.entry_type == 'group' %}
                       <details class="rounded-[1.2rem] border p-4 {% if entry.style == 'sky' %}border-sky-200 bg-sky-50/80{% elif entry.style == 'cyan' %}border-cyan-200 bg-cyan-50/80{% elif entry.style == 'amber' %}border-amber-200 bg-amber-50/80{% else %}border-stone-200 bg-white/80{% endif %}">
@@ -1418,7 +1421,7 @@
                       {% include "_work_event.html" %}
                     {% endif %}
                   {% endfor %}
-                </div>
+                </details>
                 {% endif %}
               {% endif %}
 
