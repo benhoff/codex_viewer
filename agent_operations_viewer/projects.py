@@ -1090,7 +1090,7 @@ def sync_project_registry(connection: sqlite3.Connection) -> None:
             p.visibility AS project_visibility,
             """
             + OVERRIDE_SELECT,
-        )
+        ).replace("FROM sessions AS s", "FROM session_browse AS s")
     ).fetchall()
 
     grouped: dict[str, dict[str, Any]] = {}
@@ -1222,13 +1222,15 @@ def sync_project_registry(connection: sqlite3.Connection) -> None:
                 current_group_key = ?,
                 display_label = ?,
                 updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND (current_group_key IS NOT ? OR display_label IS NOT ?)
             """,
             (
                 str(target["group_key"]),
                 str(target["display_label"]),
                 now,
                 project_id,
+                str(target["group_key"]),
+                str(target["display_label"]),
             ),
         )
 
@@ -1252,6 +1254,7 @@ def sync_project_registry(connection: sqlite3.Connection) -> None:
             DO UPDATE SET
                 project_id = excluded.project_id,
                 updated_at = excluded.updated_at
+            WHERE project_sources.project_id IS NOT excluded.project_id
             """,
             (source_key, project_id, now, now),
         )

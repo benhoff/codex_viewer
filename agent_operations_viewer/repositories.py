@@ -292,6 +292,8 @@ def _session_identity(row: sqlite3.Row) -> dict[str, str | None]:
 
 
 def sync_repository_registry(connection: sqlite3.Connection) -> None:
+    # The transactionally maintained projection avoids reading transcript-sized
+    # session rows while the caller holds the upload writer slot.
     rows = connection.execute(
         """
         SELECT
@@ -303,7 +305,7 @@ def sync_repository_registry(connection: sqlite3.Connection) -> None:
             s.inferred_project_key,
             o.override_remote_url,
             ps.project_id
-        FROM sessions AS s
+        FROM session_browse AS s
         LEFT JOIN ignored_project_sources AS i
             ON i.match_project_key = s.inferred_project_key
         LEFT JOIN project_overrides AS o
@@ -375,7 +377,7 @@ def sync_repository_registry(connection: sqlite3.Connection) -> None:
             )
         else:
             connection.execute(
-                "UPDATE sessions SET repository_id = NULL WHERE id = ?",
+                "UPDATE sessions SET repository_id = NULL WHERE id = ? AND repository_id IS NOT NULL",
                 (str(row["id"]),),
             )
             continue
@@ -409,8 +411,8 @@ def sync_repository_registry(connection: sqlite3.Connection) -> None:
                 display_value=source_key,
             )
         connection.execute(
-            "UPDATE sessions SET repository_id = ? WHERE id = ?",
-            (repository_id, str(row["id"])),
+            "UPDATE sessions SET repository_id = ? WHERE id = ? AND repository_id IS NOT ?",
+            (repository_id, str(row["id"]), repository_id),
         )
 
     project_rows = connection.execute("SELECT id FROM projects").fetchall()
@@ -420,7 +422,7 @@ def sync_repository_registry(connection: sqlite3.Connection) -> None:
             """
             SELECT DISTINCT s.repository_id
             FROM project_sources AS ps
-            JOIN sessions AS s
+            JOIN session_browse AS s
                 ON s.inferred_project_key = ps.match_project_key
             WHERE ps.project_id = ?
               AND s.repository_id IS NOT NULL

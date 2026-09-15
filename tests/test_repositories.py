@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from agent_operations_viewer.db import connect, init_db, write_transaction
+from agent_operations_viewer.projects import sync_project_registry
 from agent_operations_viewer.repositories import (
     list_repository_projects,
     normalize_repository_root,
@@ -98,6 +99,39 @@ class RepositoryRegistryTests(unittest.TestCase):
             [(str(row["alias_type"]), str(row["alias_value"])) for row in aliases],
         )
         self.assertFalse(needs_sync)
+
+    def test_unchanged_registry_sync_does_not_write_or_invalidate_browse_cache(self) -> None:
+        with connect(self.database_path) as connection:
+            with write_transaction(connection):
+                for name, root, remote in [
+                    ("remote", "/work/repo", "https://github.com/acme/repo.git"),
+                    ("local", "/work/local", None),
+                    ("unidentified", "", None),
+                ]:
+                    self._insert(connection, session_id=name, project_id=name,
+                                 project_key=f"project:{name}", host="builder",
+                                 root=root, remote=remote)
+                sync_project_registry(connection)
+            changes = connection.total_changes
+            revision = tuple(connection.execute("SELECT * FROM project_browse_revision").fetchone())
+            with write_transaction(connection):
+                sync_project_registry(connection)
+            self.assertEqual(connection.total_changes, changes)
+            self.assertEqual(tuple(connection.execute("SELECT * FROM project_browse_revision").fetchone()), revision)
+
+    def test_registry_refresh_only_updates_changed_session_mapping(self) -> None:
+        with connect(self.database_path) as connection:
+            with write_transaction(connection):
+                for name in ("unchanged", "changed"):
+                    self._insert(connection, session_id=name, project_id=name,
+                                 project_key=f"project:{name}", host="builder",
+                                 root=f"/work/{name}", remote=f"https://github.com/acme/{name}.git")
+                sync_project_registry(connection)
+                connection.execute("CREATE TEMP TABLE updated_sessions (id TEXT)")
+                connection.execute("CREATE TEMP TRIGGER track_repository_updates AFTER UPDATE OF repository_id ON sessions BEGIN INSERT INTO updated_sessions VALUES (NEW.id); END")
+                connection.execute("UPDATE sessions SET git_repository_url='https://github.com/acme/new.git' WHERE id='changed'")
+                sync_project_registry(connection)
+            self.assertEqual([row[0] for row in connection.execute("SELECT id FROM updated_sessions")], ["changed"])
 
     def test_same_basename_does_not_merge_distinct_remotes(self) -> None:
         with connect(self.database_path) as connection:
