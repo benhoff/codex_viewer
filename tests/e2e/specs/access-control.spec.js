@@ -94,9 +94,10 @@ test("private project data stays hidden until viewer access is granted", async (
 
     await expectPageLoad(page, app.url("/search?q=secret-app"), {
       expectedPathname: "/search",
-      expectedText: "Turn Hits",
+      expectedText: "Investigation Search",
     });
-    await expect(page.getByText(/No turns matched/i)).toBeVisible();
+    // Search may broaden to public matches; private results must stay absent.
+    await expect(page.locator(`a[href^="/sessions/${privateSession.session_id}"]`)).toHaveCount(0);
     await expect(page.getByRole("link", { name: "acme/secret-app" })).toHaveCount(0);
 
     await expectPageStatus(page, app.url("/acme/secret-app"), 404, "Project group not found");
@@ -132,7 +133,7 @@ test("private project data stays hidden until viewer access is granted", async (
 
     await expectPageLoad(page, app.url("/search?q=secret-app"), {
       expectedPathname: "/search",
-      expectedText: "Turn Hits",
+      expectedText: "Investigation Search",
     });
     await expect(page.getByRole("link", { name: "acme/secret-app" }).first()).toBeVisible();
 

@@ -1,0 +1,86 @@
+[
+  {
+    "round": 0,
+    "page": "root",
+    "ms": 270.14,
+    "status": 200,
+    "bytes": 111012
+  },
+  {
+    "round": 0,
+    "page": "project_activity",
+    "ms": 59.37,
+    "status": 200,
+    "bytes": 32761
+  },
+  {
+    "round": 0,
+    "page": "project_sessions",
+    "ms": 3.0,
+    "status": 200,
+    "bytes": 16227
+  },
+  {
+    "round": 1,
+    "page": "root",
+    "ms": 76.35,
+    "status": 200,
+    "bytes": 111012
+  },
+  {
+    "round": 1,
+    "page": "project_activity",
+    "ms": 38.36,
+    "status": 200,
+    "bytes": 32761
+  },
+  {
+    "round": 1,
+    "page": "project_sessions",
+    "ms": 2.86,
+    "status": 200,
+    "bytes": 16227
+  },
+  {
+    "round": 2,
+    "page": "root",
+    "ms": 78.61,
+    "status": 200,
+    "bytes": 111012
+  },
+  {
+    "round": 2,
+    "page": "project_activity",
+    "ms": 38.14,
+    "status": 200,
+    "bytes": 32761
+  },
+  {
+    "round": 2,
+    "page": "project_sessions",
+    "ms": 2.9,
+    "status": 200,
+    "bytes": 16227
+  },
+  {
+    "round": 3,
+    "page": "root",
+    "ms": 76.95,
+    "status": 200,
+    "bytes": 111012
+  },
+  {
+    "round": 3,
+    "page": "project_activity",
+    "ms": 39.32,
+    "status": 200,
+    "bytes": 32761
+  },
+  {
+    "round": 3,
+    "page": "project_sessions",
+    "ms": 3.15,
+    "status": 200,
+    "bytes": 16227
+  }
+]

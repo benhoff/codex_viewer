@@ -1,0 +1,364 @@
+{
+  "base": "http://127.0.0.1:8001",
+  "started_at": "2026-09-12T08:46:28.919951+00:00",
+  "samples": [
+    {
+      "path": "/api/health",
+      "utc": "2026-09-12T08:46:28.919977+00:00",
+      "status": 200,
+      "ttfb_ms": 3.2,
+      "location": null,
+      "bytes": 93,
+      "total_ms": 3.28
+    },
+    {
+      "path": "/",
+      "utc": "2026-09-12T08:46:29.223782+00:00",
+      "status": 200,
+      "ttfb_ms": 995.51,
+      "location": null,
+      "bytes": 112775,
+      "home_cleanup": {
+        "has_needs_attention": false,
+        "has_verification_failed": false,
+        "has_active_repos": true
+      },
+      "total_ms": 995.87
+    },
+    {
+      "path": "/settings",
+      "utc": "2026-09-12T08:46:30.520078+00:00",
+      "status": 200,
+      "ttfb_ms": 152.31,
+      "location": null,
+      "bytes": 61718,
+      "total_ms": 152.5
+    },
+    {
+      "path": "/machines",
+      "utc": "2026-09-12T08:46:30.973001+00:00",
+      "status": 200,
+      "ttfb_ms": 897.35,
+      "location": null,
+      "bytes": 68805,
+      "total_ms": 897.47
+    },
+    {
+      "path": "/queue",
+      "utc": "2026-09-12T08:46:32.170852+00:00",
+      "status": 200,
+      "ttfb_ms": 1498.7,
+      "location": null,
+      "bytes": 52002,
+      "total_ms": 1498.79
+    },
+    {
+      "path": "/benhoff/background-recorder",
+      "utc": "2026-09-12T08:46:33.970066+00:00",
+      "status": 200,
+      "ttfb_ms": 6322.88,
+      "location": null,
+      "bytes": 34451,
+      "total_ms": 6322.96
+    },
+    {
+      "path": "/benhoff/background-recorder/stream",
+      "utc": "2026-09-12T08:46:40.593434+00:00",
+      "status": 200,
+      "ttfb_ms": 1698.66,
+      "location": null,
+      "bytes": 170991,
+      "total_ms": 1698.84
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+      "utc": "2026-09-12T08:46:42.592688+00:00",
+      "status": 200,
+      "ttfb_ms": 1164.6,
+      "location": null,
+      "bytes": 7380571,
+      "total_ms": 1172.59
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae/assessment",
+      "utc": "2026-09-12T08:46:44.065704+00:00",
+      "status": 200,
+      "ttfb_ms": 197.69,
+      "location": null,
+      "bytes": 935944,
+      "total_ms": 198.66
+    },
+    {
+      "path": "/",
+      "utc": "2026-09-12T08:46:44.564749+00:00",
+      "status": 200,
+      "ttfb_ms": 1108.96,
+      "location": null,
+      "bytes": 112775,
+      "home_cleanup": {
+        "has_needs_attention": false,
+        "has_verification_failed": false,
+        "has_active_repos": true
+      },
+      "total_ms": 1109.25
+    },
+    {
+      "path": "/settings",
+      "utc": "2026-09-12T08:46:45.974390+00:00",
+      "status": 200,
+      "ttfb_ms": 59.34,
+      "location": null,
+      "bytes": 61714,
+      "total_ms": 59.47
+    },
+    {
+      "path": "/machines",
+      "utc": "2026-09-12T08:46:46.334288+00:00",
+      "status": 200,
+      "ttfb_ms": 911.03,
+      "location": null,
+      "bytes": 68801,
+      "total_ms": 911.12
+    },
+    {
+      "path": "/queue",
+      "utc": "2026-09-12T08:46:47.545860+00:00",
+      "status": 200,
+      "ttfb_ms": 1579.44,
+      "location": null,
+      "bytes": 52002,
+      "total_ms": 1579.53
+    },
+    {
+      "path": "/benhoff/background-recorder",
+      "utc": "2026-09-12T08:46:49.425771+00:00",
+      "status": 200,
+      "ttfb_ms": 1448.77,
+      "location": null,
+      "bytes": 34451,
+      "total_ms": 1448.85
+    },
+    {
+      "path": "/benhoff/background-recorder/stream",
+      "utc": "2026-09-12T08:46:51.174974+00:00",
+      "status": 200,
+      "ttfb_ms": 1504.43,
+      "location": null,
+      "bytes": 170991,
+      "total_ms": 1504.55
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+      "utc": "2026-09-12T08:46:52.979901+00:00",
+      "status": 200,
+      "ttfb_ms": 1224.22,
+      "location": null,
+      "bytes": 7380583,
+      "total_ms": 1233.08
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae/assessment",
+      "utc": "2026-09-12T08:46:54.513411+00:00",
+      "status": 200,
+      "ttfb_ms": 167.5,
+      "location": null,
+      "bytes": 935944,
+      "total_ms": 169.45
+    },
+    {
+      "path": "/",
+      "utc": "2026-09-12T08:46:54.983413+00:00",
+      "status": 200,
+      "ttfb_ms": 1081.89,
+      "location": null,
+      "bytes": 112875,
+      "home_cleanup": {
+        "has_needs_attention": false,
+        "has_verification_failed": false,
+        "has_active_repos": true
+      },
+      "total_ms": 1082.16
+    },
+    {
+      "path": "/settings",
+      "utc": "2026-09-12T08:46:56.366073+00:00",
+      "status": 200,
+      "ttfb_ms": 58.61,
+      "location": null,
+      "bytes": 61714,
+      "total_ms": 58.7
+    },
+    {
+      "path": "/machines",
+      "utc": "2026-09-12T08:46:56.725226+00:00",
+      "status": 200,
+      "ttfb_ms": 872.29,
+      "location": null,
+      "bytes": 68801,
+      "total_ms": 872.39
+    },
+    {
+      "path": "/queue",
+      "utc": "2026-09-12T08:46:57.898060+00:00",
+      "status": 200,
+      "ttfb_ms": 1653.05,
+      "location": null,
+      "bytes": 52002,
+      "total_ms": 1653.23
+    },
+    {
+      "path": "/benhoff/background-recorder",
+      "utc": "2026-09-12T08:46:59.851747+00:00",
+      "status": 200,
+      "ttfb_ms": 2878.42,
+      "location": null,
+      "bytes": 34451,
+      "total_ms": 2878.51
+    },
+    {
+      "path": "/benhoff/background-recorder/stream",
+      "utc": "2026-09-12T08:47:03.030676+00:00",
+      "status": 200,
+      "ttfb_ms": 1549.74,
+      "location": null,
+      "bytes": 170991,
+      "total_ms": 1549.86
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+      "utc": "2026-09-12T08:47:04.880956+00:00",
+      "status": 200,
+      "ttfb_ms": 1364.16,
+      "location": null,
+      "bytes": 7666575,
+      "total_ms": 1372.68
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae/assessment",
+      "utc": "2026-09-12T08:47:06.554053+00:00",
+      "status": 200,
+      "ttfb_ms": 157.87,
+      "location": null,
+      "bytes": 935944,
+      "total_ms": 158.52
+    },
+    {
+      "path": "/assessments",
+      "utc": "2026-09-12T08:47:07.012976+00:00",
+      "status": 200,
+      "ttfb_ms": 4322.88,
+      "location": null,
+      "bytes": 60711,
+      "total_ms": 4322.99
+    },
+    {
+      "path": "/search?q=test",
+      "utc": "2026-09-12T08:47:11.636536+00:00",
+      "error": "timed out",
+      "total_ms": 20020.51
+    }
+  ],
+  "summary": [
+    {
+      "path": "/api/health",
+      "attempts": 1,
+      "successes": 1,
+      "median_ms": 3.28,
+      "min_ms": 3.28,
+      "max_ms": 3.28,
+      "previous_median_ms": 4.28
+    },
+    {
+      "path": "/",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 1082.16,
+      "min_ms": 995.87,
+      "max_ms": 1109.25,
+      "previous_median_ms": 1510.65
+    },
+    {
+      "path": "/settings",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 59.47,
+      "min_ms": 58.7,
+      "max_ms": 152.5,
+      "previous_median_ms": 60.46
+    },
+    {
+      "path": "/machines",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 897.47,
+      "min_ms": 872.39,
+      "max_ms": 911.12,
+      "previous_median_ms": 959.96
+    },
+    {
+      "path": "/queue",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 1579.53,
+      "min_ms": 1498.79,
+      "max_ms": 1653.23,
+      "previous_median_ms": 1722.61
+    },
+    {
+      "path": "/benhoff/background-recorder",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 2878.51,
+      "min_ms": 1448.85,
+      "max_ms": 6322.96,
+      "previous_median_ms": 1657.83
+    },
+    {
+      "path": "/benhoff/background-recorder/stream",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 1549.86,
+      "min_ms": 1504.55,
+      "max_ms": 1698.84,
+      "previous_median_ms": 2295.19
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 1233.08,
+      "min_ms": 1172.59,
+      "max_ms": 1372.68,
+      "previous_median_ms": 1235.85
+    },
+    {
+      "path": "/sessions/01a0946a-e4cc-7a41-9883-5abfa6ce04ae/assessment",
+      "attempts": 3,
+      "successes": 3,
+      "median_ms": 169.45,
+      "min_ms": 158.52,
+      "max_ms": 198.66,
+      "previous_median_ms": 227.4
+    },
+    {
+      "path": "/assessments",
+      "attempts": 1,
+      "successes": 1,
+      "median_ms": 4322.99,
+      "min_ms": 4322.99,
+      "max_ms": 4322.99,
+      "previous_median_ms": 16687.32
+    },
+    {
+      "path": "/search?q=test",
+      "attempts": 1,
+      "successes": 0,
+      "median_ms": null,
+      "min_ms": null,
+      "max_ms": null,
+      "previous_median_ms": null
+    }
+  ],
+  "service_pid": 563787,
+  "service_restart_utc": "2026-09-12T08:35:03Z"
+}

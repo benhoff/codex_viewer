@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 import sqlite3
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse
+from fastapi.testclient import TestClient
 
 from agent_operations_viewer.db import connect, init_db, write_transaction
 from agent_operations_viewer.onboarding import read_onboarding_status, reconcile_onboarding_state
@@ -22,6 +24,9 @@ from agent_operations_viewer.web.routes import pages
 from tests.test_projects import insert_session
 from tests.test_route_auth_audit import make_test_settings
 from tests.test_search import insert_search_turn
+from tests.test_action_queue import raw_session_jsonl, event_msg, patch_records, command_records, turn_complete_record
+from agent_operations_viewer.importer import parse_session_text, upsert_parsed_session
+from agent_operations_viewer.web.app import create_app
 
 
 class PageLoadPerformanceTests(unittest.TestCase):
@@ -60,6 +65,42 @@ class PageLoadPerformanceTests(unittest.TestCase):
             status = read_onboarding_status(c, self.settings)
             self.assertFalse(status['machine_access_ready'])
             self.assertEqual(tuple(c.execute('SELECT * FROM onboarding_state').fetchone()), before)
+
+    def test_homepage_browses_activity_without_reading_task_failure_evidence(self):
+        timestamp = datetime.now(timezone.utc).isoformat()
+        raw = raw_session_jsonl('failed-check', cwd='/workspace/example', records=[
+            event_msg({'type': 'user_message', 'message': 'Update the styling.'}, timestamp=timestamp),
+            *patch_records('src/main.rs', timestamp_call=timestamp, timestamp_result=timestamp),
+            *command_records(['cargo', 'test'], timestamp_call=timestamp, timestamp_result=timestamp,
+                             exit_code=1, status='failed', stderr='test failure',
+                             aggregated_output='test suite failed', formatted_output='test suite failed'),
+            turn_complete_record('Tests failed after the patch.', timestamp=timestamp),
+        ])
+        parsed = parse_session_text(raw, Path('/tmp/failed-check.jsonl'), Path('/tmp'), 'builder',
+                                    file_size=len(raw.encode()), file_mtime_ns=0)
+        with closing(connect(self.settings.database_path)) as connection, write_transaction(connection):
+            upsert_parsed_session(connection, parsed)
+        app = create_app(self.settings, preserve_sync_on_start=True)
+
+        def activity_connection(path):
+            connection = connect(path)
+            def authorize(action, table, column, database, trigger):
+                return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_READ and table == 'events' else sqlite3.SQLITE_OK
+            connection.set_authorizer(authorize)
+            return connection
+
+        with TestClient(app) as client:
+            with patch('agent_operations_viewer.db.connect', side_effect=activity_connection):
+                response = client.get('/')
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn('data-active-repo', response.text)
+            self.assertIn('builder', response.text)
+            self.assertNotIn('Verification failed', response.text)
+            self.assertNotIn('Needs Attention', response.text)
+            self.assertNotIn('Machines Needing Attention', response.text)
+            audit = client.get('/sessions/failed-check?view=audit')
+            self.assertEqual(audit.status_code, 200, audit.text)
+            self.assertIn('Verification failed', audit.text)
 
     def test_page_reads_finish_while_an_upload_holds_both_write_locks(self):
         ready, release = threading.Event(), threading.Event()

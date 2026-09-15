@@ -1727,6 +1727,7 @@ def fetch_turn_stream(
     page_size: int = 40,
     group_key: str | None = None,
     detail_href_override: str | None = None,
+    session_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     normalized_page = max(int(page or 1), 1)
     normalized_page_size = max(10, min(int(page_size or 40), 100))
@@ -1739,10 +1740,14 @@ def fetch_turn_stream(
         extra_conditions.append(GROUP_KEY_MATCH_SQL)
         params.extend([normalized_group_key, normalized_group_key])
 
+    if session_ids is not None:
+        placeholders = ", ".join("?" for _ in session_ids)
+        extra_conditions.append(f"st.session_id IN ({placeholders})" if session_ids else "0")
+        params.extend(session_ids)
     where_clause = visible_session_where(extra_conditions)
     from_clause = f"""
         FROM session_turns AS st
-        JOIN sessions AS s
+        JOIN session_browse AS s
             ON s.id = st.session_id
         LEFT JOIN project_overrides AS o
             ON o.match_project_key = s.inferred_project_key
@@ -2733,26 +2738,8 @@ def _project_route_groups(
     *,
     project_access: ProjectAccessContext | None = None,
 ) -> list[GroupedProject]:
-    """Resolve routes without loading session previews, usage or other large text.
-
-    Keep every visible session's routing fields and the usual row ordering:
-    grouping uses the first row's identity, all hosts, and cross-project slug
-    collisions. These groups are only for routing, not dashboard summaries.
-    """
-    rows = connection.execute(joined_session_query(
-        visible_session_where(),
-        "ORDER BY COALESCE(s.session_timestamp, s.started_at, s.imported_at) DESC",
-        f"""
-        s.id, s.source_host, s.cwd, s.cwd_name,
-        s.git_repository_url, s.github_remote_url, s.github_org, s.github_repo, s.github_slug,
-        s.inferred_project_key, s.inferred_project_kind, s.inferred_project_label,
-        s.session_timestamp, s.started_at, s.imported_at, s.last_turn_timestamp,
-        p.id AS project_id, p.visibility AS project_visibility,
-        {OVERRIDE_SELECT},
-        NULL AS latest_turn_summary, NULL AS summary, 0 AS turn_count, 0 AS event_count
-        """,
-    )).fetchall()
-    return build_grouped_projects(filter_rows_for_project_access(rows, project_access))
+    from .project_browse import route_groups
+    return route_groups(connection, project_access)
 
 
 def resolve_project_detail_href(
@@ -2809,12 +2796,9 @@ def resolve_group_key_from_detail_path(
     *,
     project_access: ProjectAccessContext | None = None,
 ) -> str | None:
+    from .project_browse import project_catalog
     target = project_detail_href_for_route(owner_slug, project_slug)
-    groups = _project_route_groups(connection, project_access=project_access)
-    for group in groups:
-        if group.detail_href == target:
-            return group.key
-    return None
+    return project_catalog(connection, project_access).key_by_route.get(target)
 
 
 def fetch_group_source_project_keys(

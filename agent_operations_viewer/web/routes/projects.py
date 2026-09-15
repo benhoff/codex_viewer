@@ -55,6 +55,7 @@ def redirect_preserving_query(
 def render_group_detail(
     request: Request, key: str, *, sessions_page: int = 1, turns_page: int = 1, view: str = "activity"
 ) -> HTMLResponse:
+    from ...project_browse import browse_project_detail
     context = get_app_context(request)
     owner_scope = owner_scope_from_request(request)
     detail_path = str(request.url.path).rstrip("/")
@@ -64,13 +65,13 @@ def render_group_detail(
             auth_user=getattr(request.state, "auth_user", None),
             auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
         )
-        detail = fetch_group_detail(
+        detail = browse_project_detail(
             connection,
             key,
             sessions_page=sessions_page,
             sessions_page_size=min(context.settings.page_size, 6),
             project_access=project_access,
-            owner_scope=owner_scope,
+            view=view,
             detail_href=detail_path,
         )
         if detail is None:
@@ -87,7 +88,8 @@ def render_group_detail(
             page_size=10,
             group_key=key,
             detail_href_override=detail_path,
-        )
+            session_ids=detail["session_ids"],
+        ) if view != "sessions" else None
 
     return context.templates.TemplateResponse(
         request,
@@ -96,9 +98,6 @@ def render_group_detail(
             "request": request,
             "project_view": "sessions" if view == "sessions" else "activity",
             "group": detail["group"],
-            "signal_summary": detail["signal_summary"],
-            "project_action_groups": detail["project_action_groups"],
-            "recent_sessions": detail["recent_sessions"],
             "all_sessions_page": detail["all_sessions_page"],
             "host_summaries": detail["host_summaries"],
             "status_strip": detail["status_strip"],

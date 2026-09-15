@@ -74,7 +74,7 @@ test("project edit updates canonical routing and ACL propagation", async ({ page
 
     await expectPageLoad(page, app.url(`/search?q=${encodeURIComponent(projectSearchQuery)}`), {
       expectedPathname: "/search",
-      expectedText: "Turn Hits",
+      expectedText: "Investigation Search",
     });
     await expect(page.getByRole("link", { name: updatedProjectLabel }).first()).toBeVisible();
 
@@ -118,7 +118,7 @@ test("project edit updates canonical routing and ACL propagation", async ({ page
 
     await expectPageLoad(page, app.url(`/search?q=${encodeURIComponent(projectSearchQuery)}`), {
       expectedPathname: "/search",
-      expectedText: "Turn Hits",
+      expectedText: "Investigation Search",
     });
     await expect(page.getByRole("link", { name: updatedProjectLabel })).toHaveCount(0);
 
@@ -156,7 +156,7 @@ test("project edit updates canonical routing and ACL propagation", async ({ page
 
     await expectPageLoad(page, app.url(`/search?q=${encodeURIComponent(projectSearchQuery)}`), {
       expectedPathname: "/search",
-      expectedText: "Turn Hits",
+      expectedText: "Investigation Search",
     });
     await expect(page.getByRole("link", { name: updatedProjectLabel }).first()).toBeVisible();
 

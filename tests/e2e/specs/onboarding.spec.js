@@ -19,7 +19,7 @@ test("first-run setup opens the dashboard after token creation while verificatio
     label: "First machine token",
   });
   await expect(page.getByRole("heading", { name: "Copy this token now" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open Projects" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Projects", exact: true })).toBeVisible();
 
   await page.goto(app.url("/"));
   await expect(page).toHaveURL(app.url("/"));

@@ -1019,6 +1019,9 @@ ON session_turn_activity_daily(activity_date DESC);
 CREATE INDEX IF NOT EXISTS idx_session_search_chunks_turn
 ON session_search_chunks(session_id, turn_number, field, chunk_index);
 
+CREATE INDEX IF NOT EXISTS idx_session_turns_prompt_epoch
+ON session_turns(session_id, CAST(strftime('%s', prompt_timestamp) AS INTEGER));
+
 CREATE INDEX IF NOT EXISTS idx_session_turns_latest
 ON session_turns(latest_timestamp DESC, session_id DESC, turn_number DESC);
 
@@ -1915,6 +1918,8 @@ def init_db(database_path: Path, *, defer_backfills: bool = False) -> None:
             ensure_auth_state_row(connection)
             ensure_onboarding_state_row(connection)
             connection.executescript(INDEX_SQL)
+            from .project_browse import ensure_browse_schema
+            ensure_browse_schema(connection, rebuild=rebuilt_sessions)
         connection.execute("PRAGMA foreign_keys = ON")
 
     if not defer_backfills:
