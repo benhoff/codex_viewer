@@ -232,7 +232,7 @@ class StartupPerformanceTests(unittest.TestCase):
             return JSONResponse({"status": "ok"})
 
         with mock.patch(
-            "agent_operations_viewer.web.auth.run_in_threadpool",
+            "agent_operations_viewer.web.auth.run_in_auth_threadpool",
             side_effect=AssertionError("health check touched the database"),
         ):
             response = asyncio.run(middleware.dispatch(request, call_next))

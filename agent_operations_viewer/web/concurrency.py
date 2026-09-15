@@ -129,9 +129,15 @@ class _BoundedWorkExecutor:
             return len(self._inflight)
 
 
-# Reads/auth work has its own capacity so uploads cannot starve health checks,
-# manifests, or browser requests. Uploads use one worker because SQLite permits
-# one writer and a second concurrent upload only waits on the global write lock.
+# Browser authentication must not share workers with heartbeats or machine
+# nonce writes: those can all wait for the writer held by a session upload.
+_AUTH_EXECUTOR = _BoundedWorkExecutor(
+    name="browser-auth",
+    worker_count=2,
+    max_inflight=64,
+)
+# Uploads use one worker because SQLite permits one writer. History work can
+# include blocking sync writes, so its capacity is separate from browser auth.
 _HISTORY_EXECUTOR = _BoundedWorkExecutor(
     name="history-api",
     worker_count=4,
@@ -146,6 +152,14 @@ _UPLOAD_EXECUTOR = _BoundedWorkExecutor(
 # Kept as module-level aliases for diagnostics and backwards compatibility.
 HISTORY_WORK_QUEUE = _HISTORY_EXECUTOR.queue
 UPLOAD_WORK_QUEUE = _UPLOAD_EXECUTOR.queue
+
+
+async def run_in_auth_threadpool(
+    function: Callable[..., ResultT],
+    *args: Any,
+    **kwargs: Any,
+) -> ResultT:
+    return await _AUTH_EXECUTOR.run(function, *args, **kwargs)
 
 
 async def run_in_history_threadpool(

@@ -33,7 +33,11 @@ from ..search_api_tokens import (
     touch_search_api_token_usage,
 )
 from .context import get_settings, request_return_to
-from .concurrency import run_in_history_threadpool as run_in_threadpool
+from .concurrency import (
+    WorkQueueFull,
+    run_in_auth_threadpool,
+    run_in_history_threadpool as run_in_threadpool,
+)
 
 
 PUBLIC_PATHS = {
@@ -395,10 +399,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         try:
-            auth_status, user, request.state.search_api_token_id = await run_in_threadpool(
+            auth_status, user, request.state.search_api_token_id = await run_in_auth_threadpool(
                 _resolve_request_auth_state,
                 request,
                 settings,
+            )
+        except WorkQueueFull as exc:
+            # Middleware runs outside the application's exception handlers.
+            return JSONResponse(
+                status_code=503,
+                content={"detail": str(exc), "retryable": True},
+                headers={"Retry-After": "5"},
             )
         except ValueError as exc:
             if wants_html_response(request):
