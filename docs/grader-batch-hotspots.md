@@ -77,6 +77,10 @@ These are in-memory comparisons, not changes to the production planner:
 
 ## Recommended next changes
 
+These deterministic improvements are now implemented in v6. See the
+[consolidation validation](grader-consolidation-validation.md) for preservation
+rules, same-snapshot comparisons, tests and remaining hotspots.
+
 1. **Separate requests from attached diagnostics.** Keep the user's actual goal,
    corrections and final responses in shared context. Carry pasted logs/process
    dumps once as cited supporting evidence rather than repeating them as requests.

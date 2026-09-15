@@ -11,21 +11,25 @@ import random
 import re
 import sqlite3
 import time
+import subprocess
+import sys
+import types
 
 from agent_operations_viewer import llm_grader as g
 from agent_operations_viewer.task_assessment import task_source, report_for_source, DEFAULT_POLICY
 
 
-def plan(report, config):
+def plan(report, config, module=g):
     try:
-        inputs = g.grader_input(report, '', config)
+        inputs = module.grader_input(report, '', config)
         batches = inputs.get('demand_batches', [])
         return {'batches': len(batches) or 1,
+                'consolidation': {k: v for k, v in inputs.get('consolidation', {}).items() if k != 'events'},
                 'payload_bytes': sum(g.json_size(b) for b in batches) if batches else g.json_size(inputs['demand']),
                 'context_bytes': sum(g.json_size({k: b[k] for k in ('task_context', 'task_overview') if k in b}) for b in batches),
-                'dialogue_excerpted_at_synthesis': bool(batches) and g.json_size(inputs['synthesis']['events']) > min(
-                    g.evidence_budget({**config, 'max_output_tokens': config['synthesis_output_tokens']}, g.SYNTHESIS_PROMPT, g.DemandGrade),
-                    g.evidence_budget(config, g.EXTRACTION_PROMPT, g.EvidenceNotes)) // 2}
+                'dialogue_excerpted_at_synthesis': bool(batches) and module.json_size(inputs['synthesis']['events']) > min(
+                    module.evidence_budget({**config, 'max_output_tokens': config['synthesis_output_tokens']}, module.SYNTHESIS_PROMPT, module.DemandGrade),
+                    module.evidence_budget(config, module.EXTRACTION_PROMPT, module.EvidenceNotes)) // 2}
     except ValueError as exc:
         return {'error': str(exc)}
 
@@ -78,8 +82,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', default='data/codex_sessions.sqlite3')
     parser.add_argument('--output', default='/tmp/aov-batch-hotspots.json')
+    parser.add_argument('--ranges-from', help='Repeat the exact ranges in a previous JSON audit')
+    parser.add_argument('--compare-revision', help='Compare the grader at a local Git revision on the same data snapshot')
+    parser.add_argument('--plans-only', action='store_true', help='Skip the slower diagnostic alternatives')
     args = parser.parse_args()
     started = time.monotonic()
+    baseline = None
+    if args.compare_revision:
+        revision = subprocess.check_output(['git', 'rev-parse', '--verify', args.compare_revision], text=True).strip()
+        code = subprocess.check_output(['git', 'show', f'{revision}:agent_operations_viewer/llm_grader.py'], text=True)
+        baseline = types.ModuleType('agent_operations_viewer._grading_baseline')
+        baseline.__package__ = 'agent_operations_viewer'
+        sys.modules[baseline.__name__] = baseline
+        exec(compile(code, f'{revision}:llm_grader.py', 'exec'), baseline.__dict__)
+    saved_ranges = json.loads(Path(args.ranges_from).read_text())['ranges'] if args.ranges_from else None
     connection = sqlite3.connect(Path(args.database).resolve().as_uri() + '?mode=ro', uri=True)
     connection.row_factory = sqlite3.Row
     with connection:
@@ -94,6 +110,9 @@ def main():
         for project, _ in projects.most_common(8):
             s = next(s for s in sessions if s['inferred_project_label'] == project)
             chosen[s['id']] = s
+        if saved_ranges:
+            ids = {r['session_id'] for r in saved_ranges}
+            chosen = {s['id']: s for s in sessions if s['id'] in ids}
         results = []
         for n, s in enumerate(chosen.values(), 1):
             turns = [dict(r) for r in connection.execute('select turn_number,start_event_index,end_event_index from session_turns where session_id=? order by turn_number', (s['id'],))]
@@ -102,13 +121,18 @@ def main():
             last = turns[-1]['turn_number']
             heavy = max(turns, key=lambda t: t['end_event_index'] - t['start_event_index'])['turn_number']
             windows = list(dict.fromkeys([(1, min(5, last)), (max(1, last - 4), last), (heavy, heavy)]))
+            if saved_ranges:
+                windows = [(r['start'], r['end']) for r in saved_ranges if r['session_id'] == s['id']]
             for a, b in windows:
                 row = {'session_id': s['id'], 'project': s['inferred_project_label'], 'start': a, 'end': b}
                 try:
                     source = task_source(connection, s, a, b)
                     report = report_for_source(source, DEFAULT_POLICY)
                     row.update(plan(report, config))
-                    row.update(diagnose(report, config))
+                    if baseline:
+                        row['baseline'] = plan(report, config, baseline)
+                    if not args.plans_only:
+                        row.update(diagnose(report, config))
                 except (ValueError, LookupError) as exc:
                     row['error'] = str(exc)
                 results.append(row)
@@ -116,6 +140,8 @@ def main():
                 print(f'Planned {n}/{len(chosen)} sampled sessions ({len(results)} ranges)', flush=True)
     connection.close()
     document = {'at': datetime.now(UTC).isoformat(), 'seconds': round(time.monotonic() - started, 2),
+                'baseline_revision': revision if baseline else None,
+                'baseline_prompt_version': baseline.PROMPT_VERSION if baseline else None,
                 'prompt_version': g.PROMPT_VERSION, 'settings': {k:config[k] for k in ('max_input_chars', 'max_output_tokens', 'synthesis_output_tokens')},
                 'indexed_sessions': len(sessions), 'sampled_sessions': len(chosen), 'ranges': results}
     Path(args.output).write_text(json.dumps(document, indent=2))

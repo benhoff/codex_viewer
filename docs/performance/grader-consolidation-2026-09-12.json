@@ -1,0 +1,2801 @@
+{
+  "at": "2026-09-12T08:39:37.252882+00:00",
+  "seconds": 34.68,
+  "baseline_revision": "2699dd5e42a4f9ad8b58c740851d3678dcb8f45a",
+  "baseline_prompt_version": "capability-grader-v5-evidence-synthesis",
+  "prompt_version": "capability-grader-v6-deterministic-consolidation",
+  "settings": {
+    "max_input_chars": 20000,
+    "max_output_tokens": 512,
+    "synthesis_output_tokens": 1024
+  },
+  "indexed_sessions": 1155,
+  "sampled_sessions": 54,
+  "ranges": [
+    {
+      "session_id": "01a091fd-f2ab-73c1-a5d9-08ed2d129147",
+      "project": "benhoff/codex_viewer",
+      "start": 1,
+      "end": 5,
+      "batches": 59,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 18120,
+        "rules": {
+          "exact_repeat": 1
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 918648,
+      "context_bytes": 76008,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 66,
+        "consolidation": {},
+        "payload_bytes": 996044,
+        "context_bytes": 131878,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a091fd-f2ab-73c1-a5d9-08ed2d129147",
+      "project": "benhoff/codex_viewer",
+      "start": 11,
+      "end": 15,
+      "batches": 70,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1133082,
+      "context_bytes": 106584,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 75,
+        "consolidation": {},
+        "payload_bytes": 1210878,
+        "context_bytes": 183250,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a091fd-f2ab-73c1-a5d9-08ed2d129147",
+      "project": "benhoff/codex_viewer",
+      "start": 14,
+      "end": 14,
+      "batches": 30,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 501726,
+      "context_bytes": 25518,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 30,
+        "consolidation": {},
+        "payload_bytes": 502919,
+        "context_bytes": 26711,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a094af-1159-7b93-824e-56525bf4300f",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 1,
+      "batches": 25,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 394758,
+      "context_bytes": 30702,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 26,
+        "consolidation": {},
+        "payload_bytes": 403655,
+        "context_bytes": 38265,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+      "project": "benhoff/codex_viewer",
+      "start": 1,
+      "end": 5,
+      "batches": 58,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 2892,
+        "rules": {
+          "repeated_log": 1
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 902355,
+      "context_bytes": 82566,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 61,
+        "consolidation": {},
+        "payload_bytes": 965042,
+        "context_bytes": 141637,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+      "project": "benhoff/codex_viewer",
+      "start": 9,
+      "end": 13,
+      "batches": 60,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 506
+      },
+      "payload_bytes": 1008293,
+      "context_bytes": 208225,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "error": "This task needs more than 100 batches with task context. Select fewer turns."
+      }
+    },
+    {
+      "session_id": "01a0946a-e4cc-7a41-9883-5abfa6ce04ae",
+      "project": "benhoff/codex_viewer",
+      "start": 5,
+      "end": 5,
+      "batches": 23,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 356680,
+      "context_bytes": 20959,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 25,
+        "consolidation": {},
+        "payload_bytes": 362174,
+        "context_bytes": 26001,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a094a4-4d70-7932-95ff-4e033d266de3",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 3,
+      "batches": 80,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1261242,
+      "context_bytes": 92548,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 83,
+        "consolidation": {},
+        "payload_bytes": 1305246,
+        "context_bytes": 131570,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a094a4-4d70-7932-95ff-4e033d266de3",
+      "project": "my-laptop/background_recorder",
+      "start": 3,
+      "end": 3,
+      "batches": 60,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 929511,
+      "context_bytes": 53506,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 60,
+        "consolidation": {},
+        "payload_bytes": 934851,
+        "context_bytes": 58846,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a09454-a674-7141-977a-0b9385265baf",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 5,
+      "batches": 46,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 756532,
+      "context_bytes": 68947,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 50,
+        "consolidation": {},
+        "payload_bytes": 822849,
+        "context_bytes": 134230,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a09454-a674-7141-977a-0b9385265baf",
+      "project": "my-laptop/background_recorder",
+      "start": 6,
+      "end": 10,
+      "batches": 63,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 993843,
+      "context_bytes": 85904,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 70,
+        "consolidation": {},
+        "payload_bytes": 1052641,
+        "context_bytes": 141223,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a09454-a674-7141-977a-0b9385265baf",
+      "project": "my-laptop/background_recorder",
+      "start": 8,
+      "end": 8,
+      "batches": 51,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 782424,
+      "context_bytes": 51307,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 51,
+        "consolidation": {},
+        "payload_bytes": 789112,
+        "context_bytes": 57995,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0945a-f1e7-7a63-9be8-749ad466f68b",
+      "project": "benhoff/codex_viewer",
+      "start": 1,
+      "end": 4,
+      "batches": 43,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 689822,
+      "context_bytes": 48751,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 46,
+        "consolidation": {},
+        "payload_bytes": 721898,
+        "context_bytes": 80149,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0945a-f1e7-7a63-9be8-749ad466f68b",
+      "project": "benhoff/codex_viewer",
+      "start": 3,
+      "end": 3,
+      "batches": 26,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 419430,
+      "context_bytes": 22556,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 26,
+        "consolidation": {},
+        "payload_bytes": 421587,
+        "context_bytes": 24713,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a09204-e121-7e11-a6d6-65e9420bc0fc",
+      "project": "my-laptop/llama-running",
+      "start": 1,
+      "end": 5,
+      "batches": 16,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 233738,
+      "context_bytes": 36755,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 21,
+        "consolidation": {},
+        "payload_bytes": 335659,
+        "context_bytes": 137411,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a09204-e121-7e11-a6d6-65e9420bc0fc",
+      "project": "my-laptop/llama-running",
+      "start": 3,
+      "end": 7,
+      "batches": 41,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 676132,
+      "context_bytes": 140987,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 58,
+        "consolidation": {},
+        "payload_bytes": 928655,
+        "context_bytes": 389134,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a09204-e121-7e11-a6d6-65e9420bc0fc",
+      "project": "my-laptop/llama-running",
+      "start": 6,
+      "end": 6,
+      "batches": 27,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 453100,
+      "context_bytes": 17775,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 27,
+        "consolidation": {},
+        "payload_bytes": 456378,
+        "context_bytes": 21053,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a091d1-f5c1-7a42-8032-f7e1d33ebc27",
+      "project": "my-laptop/llama-running",
+      "start": 1,
+      "end": 3,
+      "batches": 9,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 130699,
+      "context_bytes": 9898,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 10,
+        "consolidation": {},
+        "payload_bytes": 141748,
+        "context_bytes": 20712,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a091d1-f5c1-7a42-8032-f7e1d33ebc27",
+      "project": "my-laptop/llama-running",
+      "start": 2,
+      "end": 2,
+      "batches": 4,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 67440,
+      "context_bytes": 2685,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 4,
+        "consolidation": {},
+        "payload_bytes": 68032,
+        "context_bytes": 3277,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0915b-2da9-7701-87e6-b672b34dae20",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 5,
+      "batches": 53,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 1285,
+        "rules": {
+          "exact_repeat": 1
+        },
+        "diagnostic_lines_separated": 9
+      },
+      "payload_bytes": 843697,
+      "context_bytes": 145970,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 87,
+        "consolidation": {},
+        "payload_bytes": 1516813,
+        "context_bytes": 806337,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a0915b-2da9-7701-87e6-b672b34dae20",
+      "project": "my-laptop/background_recorder",
+      "start": 5,
+      "end": 9,
+      "batches": 39,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 86
+      },
+      "payload_bytes": 584349,
+      "context_bytes": 93004,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 68,
+        "consolidation": {},
+        "payload_bytes": 1199346,
+        "context_bytes": 695674,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a0915b-2da9-7701-87e6-b672b34dae20",
+      "project": "my-laptop/background_recorder",
+      "start": 2,
+      "end": 2,
+      "batches": 21,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 359071,
+      "context_bytes": 79212,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 31,
+        "consolidation": {},
+        "payload_bytes": 527770,
+        "context_bytes": 244482,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a090d7-2f6b-7172-92be-87cf90694e53",
+      "project": "benhoff/codex_viewer",
+      "start": 1,
+      "end": 5,
+      "batches": 35,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 517207,
+      "context_bytes": 27479,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 38,
+        "consolidation": {},
+        "payload_bytes": 591270,
+        "context_bytes": 100864,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a090d7-2f6b-7172-92be-87cf90694e53",
+      "project": "benhoff/codex_viewer",
+      "start": 8,
+      "end": 12,
+      "batches": 50,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 722029,
+      "context_bytes": 67454,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 54,
+        "consolidation": {},
+        "payload_bytes": 781774,
+        "context_bytes": 121107,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a090d7-2f6b-7172-92be-87cf90694e53",
+      "project": "benhoff/codex_viewer",
+      "start": 7,
+      "end": 7,
+      "batches": 31,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 444927,
+      "context_bytes": 30425,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 31,
+        "consolidation": {},
+        "payload_bytes": 451026,
+        "context_bytes": 36524,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a09177-1543-7930-89d6-abcf12d61ef7",
+      "project": "my-laptop/llama-running",
+      "start": 1,
+      "end": 1,
+      "batches": 8,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 126528,
+      "context_bytes": 6204,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 8,
+        "consolidation": {},
+        "payload_bytes": 126922,
+        "context_bytes": 6598,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a090d3-013c-7011-9b76-1e915036653f",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 5,
+      "batches": 36,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 560511,
+      "context_bytes": 89511,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 60,
+        "consolidation": {},
+        "payload_bytes": 1001587,
+        "context_bytes": 517852,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a090d3-013c-7011-9b76-1e915036653f",
+      "project": "my-laptop/background_recorder",
+      "start": 6,
+      "end": 10,
+      "error": "This task needs more than 100 batches. Increase the per-batch input limit or select fewer turns. Largest records after consolidation: event 824 (146,493 bytes), event 825 (119,412 bytes), event 575 (45,157 bytes).",
+      "baseline": {
+        "error": "This task needs more than 100 batches with task context. Select fewer turns."
+      }
+    },
+    {
+      "session_id": "01a090d3-013c-7011-9b76-1e915036653f",
+      "project": "my-laptop/background_recorder",
+      "start": 7,
+      "end": 7,
+      "batches": 35,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 523410,
+      "context_bytes": 41076,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 35,
+        "consolidation": {},
+        "payload_bytes": 532743,
+        "context_bytes": 50409,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a08e03-a64e-7fd0-a464-06b7265a7acc",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 3,
+      "batches": 30,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 493976,
+      "context_bytes": 111434,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 50,
+        "consolidation": {},
+        "payload_bytes": 909813,
+        "context_bytes": 519199,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a08e03-a64e-7fd0-a464-06b7265a7acc",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 1,
+      "batches": 23,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 374632,
+      "context_bytes": 86668,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 36,
+        "consolidation": {},
+        "payload_bytes": 670773,
+        "context_bytes": 377196,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a08e06-478c-74c0-80a0-6bff15c0fe37",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 1,
+      "batches": 26,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 449497,
+      "context_bytes": 29341,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 26,
+        "consolidation": {},
+        "payload_bytes": 466611,
+        "context_bytes": 46455,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a08dfe-5251-7e51-8053-b657f01bc4e0",
+      "project": "princess/gitolite-admin",
+      "start": 1,
+      "end": 3,
+      "batches": 6,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 90875,
+      "context_bytes": 3409,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 7,
+        "consolidation": {},
+        "payload_bytes": 97171,
+        "context_bytes": 9481,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a08dfe-5251-7e51-8053-b657f01bc4e0",
+      "project": "princess/gitolite-admin",
+      "start": 2,
+      "end": 2,
+      "batches": 4,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 53051,
+      "context_bytes": 1981,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 4,
+        "consolidation": {},
+        "payload_bytes": 53535,
+        "context_bytes": 2465,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a08ce2-337e-79f3-86f3-fd39a61ac3d6",
+      "project": "my-laptop/hws",
+      "start": 1,
+      "end": 5,
+      "batches": 87,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1344888,
+      "context_bytes": 85417,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 90,
+        "consolidation": {},
+        "payload_bytes": 1450669,
+        "context_bytes": 190520,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a08ce2-337e-79f3-86f3-fd39a61ac3d6",
+      "project": "my-laptop/hws",
+      "start": 10,
+      "end": 14,
+      "batches": 32,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 3405,
+        "rules": {
+          "exact_repeat": 1
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 495133,
+      "context_bytes": 37205,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 35,
+        "consolidation": {},
+        "payload_bytes": 520522,
+        "context_bytes": 58619,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a08ce2-337e-79f3-86f3-fd39a61ac3d6",
+      "project": "my-laptop/hws",
+      "start": 1,
+      "end": 1,
+      "batches": 51,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 863571,
+      "context_bytes": 38991,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 53,
+        "consolidation": {},
+        "payload_bytes": 874433,
+        "context_bytes": 49401,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0852e-f920-76e0-9716-2aaa073aa5b8",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 1,
+      "batches": 8,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 110010,
+      "context_bytes": 6708,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 8,
+        "consolidation": {},
+        "payload_bytes": 110548,
+        "context_bytes": 7246,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0839e-924b-7802-89db-18aab60c0016",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 5,
+      "batches": 60,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 906989,
+      "context_bytes": 64084,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 64,
+        "consolidation": {},
+        "payload_bytes": 1011539,
+        "context_bytes": 167338,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0839e-924b-7802-89db-18aab60c0016",
+      "project": "my-laptop/background_recorder",
+      "start": 8,
+      "end": 12,
+      "batches": 83,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1279635,
+      "context_bytes": 110692,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 88,
+        "consolidation": {},
+        "payload_bytes": 1354092,
+        "context_bytes": 182094,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0839e-924b-7802-89db-18aab60c0016",
+      "project": "my-laptop/background_recorder",
+      "start": 10,
+      "end": 10,
+      "batches": 62,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 949846,
+      "context_bytes": 64876,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 63,
+        "consolidation": {},
+        "payload_bytes": 956373,
+        "context_bytes": 71177,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a083b6-8eb2-75c1-81b8-ea8a8cf814f5",
+      "project": "my-laptop/ArcXMessagingBridge",
+      "start": 1,
+      "end": 1,
+      "batches": 22,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 384211,
+      "context_bytes": 23435,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 22,
+        "consolidation": {},
+        "payload_bytes": 387159,
+        "context_bytes": 26383,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0839b-75cf-7e71-a670-e283b52f0699",
+      "project": "my-laptop/hws",
+      "start": 1,
+      "end": 1,
+      "batches": 9,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 160250,
+      "context_bytes": 9083,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 10,
+        "consolidation": {},
+        "payload_bytes": 163381,
+        "context_bytes": 11979,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0820d-4b9a-7b60-bdbe-aed036db007e",
+      "project": "my-laptop/ArcXMessagingBridge",
+      "start": 1,
+      "end": 2,
+      "batches": 38,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 426,
+        "rules": {
+          "repeated_log": 1
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 612593,
+      "context_bytes": 43667,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 39,
+        "consolidation": {},
+        "payload_bytes": 626572,
+        "context_bytes": 57115,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0820d-4b9a-7b60-bdbe-aed036db007e",
+      "project": "my-laptop/ArcXMessagingBridge",
+      "start": 2,
+      "end": 2,
+      "batches": 22,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 333370,
+      "context_bytes": 19297,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 22,
+        "consolidation": {},
+        "payload_bytes": 334881,
+        "context_bytes": 20808,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0818d-2f17-7950-9587-77250350ccd4",
+      "project": "my-laptop/src",
+      "start": 1,
+      "end": 5,
+      "batches": 13,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 190852,
+      "context_bytes": 10217,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 17,
+        "consolidation": {},
+        "payload_bytes": 207663,
+        "context_bytes": 26124,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0818d-2f17-7950-9587-77250350ccd4",
+      "project": "my-laptop/src",
+      "start": 5,
+      "end": 9,
+      "batches": 41,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 8
+      },
+      "payload_bytes": 694174,
+      "context_bytes": 48052,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 46,
+        "consolidation": {},
+        "payload_bytes": 775507,
+        "context_bytes": 127164,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0818d-2f17-7950-9587-77250350ccd4",
+      "project": "my-laptop/src",
+      "start": 7,
+      "end": 7,
+      "batches": 30,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 511477,
+      "context_bytes": 21360,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 30,
+        "consolidation": {},
+        "payload_bytes": 515713,
+        "context_bytes": 25596,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0812a-aa7d-7f40-9518-d9fe3aeda58a",
+      "project": "my-laptop/src",
+      "start": 1,
+      "end": 5,
+      "batches": 64,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1049716,
+      "context_bytes": 75969,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 71,
+        "consolidation": {},
+        "payload_bytes": 1106121,
+        "context_bytes": 129066,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0812a-aa7d-7f40-9518-d9fe3aeda58a",
+      "project": "my-laptop/src",
+      "start": 10,
+      "end": 14,
+      "batches": 29,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 496487,
+      "context_bytes": 29823,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 33,
+        "consolidation": {},
+        "payload_bytes": 516744,
+        "context_bytes": 49041,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a0812a-aa7d-7f40-9518-d9fe3aeda58a",
+      "project": "my-laptop/src",
+      "start": 11,
+      "end": 11,
+      "batches": 11,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 161441,
+      "context_bytes": 11811,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 11,
+        "consolidation": {},
+        "payload_bytes": 162951,
+        "context_bytes": 13321,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a08182-f135-7070-b16a-a822cd32988c",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 2,
+      "batches": 23,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 344421,
+      "context_bytes": 21710,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 23,
+        "consolidation": {},
+        "payload_bytes": 349092,
+        "context_bytes": 26381,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a08182-f135-7070-b16a-a822cd32988c",
+      "project": "my-laptop/background_recorder",
+      "start": 2,
+      "end": 2,
+      "batches": 11,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 167484,
+      "context_bytes": 8422,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 11,
+        "consolidation": {},
+        "payload_bytes": 168553,
+        "context_bytes": 9491,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a07785-cf3e-7ab0-97af-49c987026b4a",
+      "project": "benhoff/hws",
+      "start": 1,
+      "end": 5,
+      "batches": 89,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 409660,
+        "rules": {
+          "integer_choices": 1
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1396600,
+      "context_bytes": 121199,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "error": "This task needs more than 100 batches with task context. Select fewer turns."
+      }
+    },
+    {
+      "session_id": "01a07785-cf3e-7ab0-97af-49c987026b4a",
+      "project": "benhoff/hws",
+      "start": 26,
+      "end": 30,
+      "batches": 19,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 464,
+        "rules": {
+          "integer_choices": 1
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 277484,
+      "context_bytes": 37207,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 25,
+        "consolidation": {},
+        "payload_bytes": 381411,
+        "context_bytes": 138206,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a07785-cf3e-7ab0-97af-49c987026b4a",
+      "project": "benhoff/hws",
+      "start": 5,
+      "end": 5,
+      "batches": 24,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 409660,
+        "rules": {
+          "integer_choices": 1
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 369656,
+      "context_bytes": 23962,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 47,
+        "consolidation": {},
+        "payload_bytes": 823220,
+        "context_bytes": 59690,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a069ee-bdde-7fa0-a971-e81db48837a2",
+      "project": "my-laptop/hoff",
+      "start": 1,
+      "end": 5,
+      "batches": 89,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 757978,
+        "rules": {
+          "generated_artifact": 1
+        },
+        "diagnostic_lines_separated": 27
+      },
+      "payload_bytes": 1430618,
+      "context_bytes": 99832,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "error": "This task needs more than 100 batches. Increase the per-batch input limit or select fewer turns."
+      }
+    },
+    {
+      "session_id": "01a069ee-bdde-7fa0-a971-e81db48837a2",
+      "project": "my-laptop/hoff",
+      "start": 2,
+      "end": 2,
+      "batches": 37,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 757978,
+        "rules": {
+          "generated_artifact": 1
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 566659,
+      "context_bytes": 25609,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 80,
+        "consolidation": {},
+        "payload_bytes": 1413516,
+        "context_bytes": 74072,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a06490-7134-7830-a40a-ef3123926362",
+      "project": "my-laptop/background_recorder",
+      "start": 1,
+      "end": 4,
+      "batches": 89,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 32
+      },
+      "payload_bytes": 1399692,
+      "context_bytes": 94198,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "error": "This task needs more than 100 batches with task context. Select fewer turns."
+      }
+    },
+    {
+      "session_id": "01a06490-7134-7830-a40a-ef3123926362",
+      "project": "my-laptop/background_recorder",
+      "start": 2,
+      "end": 2,
+      "batches": 39,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 600035,
+      "context_bytes": 32018,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 39,
+        "consolidation": {},
+        "payload_bytes": 608968,
+        "context_bytes": 40951,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a04e77-c545-7102-b0a2-ac996f088911",
+      "project": "my-laptop/hws",
+      "start": 1,
+      "end": 5,
+      "batches": 22,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 318038,
+      "context_bytes": 30344,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 26,
+        "consolidation": {},
+        "payload_bytes": 348451,
+        "context_bytes": 59853,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a04e77-c545-7102-b0a2-ac996f088911",
+      "project": "my-laptop/hws",
+      "start": 97,
+      "end": 101,
+      "batches": 36,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 2,
+        "bytes_removed": 1210,
+        "rules": {
+          "exact_repeat": 2
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 533537,
+      "context_bytes": 68002,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 45,
+        "consolidation": {},
+        "payload_bytes": 723744,
+        "context_bytes": 252899,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a04e77-c545-7102-b0a2-ac996f088911",
+      "project": "my-laptop/hws",
+      "start": 83,
+      "end": 83,
+      "batches": 57,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 2,
+        "bytes_removed": 1083119,
+        "rules": {
+          "generated_artifact": 2
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 856639,
+      "context_bytes": 77768,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "error": "This task needs more than 100 batches. Increase the per-batch input limit or select fewer turns."
+      }
+    },
+    {
+      "session_id": "01a05e4d-4306-7b92-b24d-238d0a9a756d",
+      "project": "my-laptop/ArcXMessagingBridge",
+      "start": 1,
+      "end": 1,
+      "batches": 6,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 82438,
+      "context_bytes": 5629,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 6,
+        "consolidation": {},
+        "payload_bytes": 83494,
+        "context_bytes": 6685,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a05a51-5972-7bb3-bae8-d5dfdd498341",
+      "project": "benhoff/OpenArchiver",
+      "start": 1,
+      "end": 5,
+      "batches": 18,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 239436,
+      "context_bytes": 26238,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 22,
+        "consolidation": {},
+        "payload_bytes": 330692,
+        "context_bytes": 115194,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a05a51-5972-7bb3-bae8-d5dfdd498341",
+      "project": "benhoff/OpenArchiver",
+      "start": 4,
+      "end": 4,
+      "batches": 4,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 67437,
+      "context_bytes": 13687,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 5,
+        "consolidation": {},
+        "payload_bytes": 86909,
+        "context_bytes": 32935,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a02f62-aa0b-7513-969b-4ebd4c939486",
+      "project": "nanopct6-lts/wulf_linux_config_bare",
+      "start": 1,
+      "end": 1,
+      "batches": 18,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 1,
+        "bytes_removed": 2225,
+        "rules": {
+          "repeated_log": 1
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 293164,
+      "context_bytes": 17033,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 20,
+        "consolidation": {},
+        "payload_bytes": 304663,
+        "context_bytes": 25972,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "01a00aea-8f59-7f81-8f92-62dde0fb4bee",
+      "project": "sysadminsmedia/homebox",
+      "start": 1,
+      "end": 5,
+      "batches": 25,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 379151,
+      "context_bytes": 29615,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 28,
+        "consolidation": {},
+        "payload_bytes": 410910,
+        "context_bytes": 60561,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "01a00aea-8f59-7f81-8f92-62dde0fb4bee",
+      "project": "sysadminsmedia/homebox",
+      "start": 48,
+      "end": 52,
+      "error": "This task needs more than 100 batches. Increase the per-batch input limit or select fewer turns. Largest records after consolidation: event 8199 (547,365 bytes), event 8405 (239,170 bytes), event 8791 (196,339 bytes).",
+      "baseline": {
+        "error": "This task needs more than 100 batches with task context. Select fewer turns."
+      }
+    },
+    {
+      "session_id": "01a00aea-8f59-7f81-8f92-62dde0fb4bee",
+      "project": "sysadminsmedia/homebox",
+      "start": 24,
+      "end": 24,
+      "batches": 87,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1430762,
+      "context_bytes": 74507,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 87,
+        "consolidation": {},
+        "payload_bytes": 1439830,
+        "context_bytes": 83575,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019ff613-eaae-7a10-aa63-fb737d0c229f",
+      "project": "benhoff/background_recorder",
+      "start": 1,
+      "end": 5,
+      "batches": 69,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1061686,
+      "context_bytes": 61860,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 74,
+        "consolidation": {},
+        "payload_bytes": 1115386,
+        "context_bytes": 114430,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019ff613-eaae-7a10-aa63-fb737d0c229f",
+      "project": "benhoff/background_recorder",
+      "start": 15,
+      "end": 19,
+      "batches": 9,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 60
+      },
+      "payload_bytes": 140626,
+      "context_bytes": 8395,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 16,
+        "consolidation": {},
+        "payload_bytes": 272556,
+        "context_bytes": 138106,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019ff613-eaae-7a10-aa63-fb737d0c229f",
+      "project": "benhoff/background_recorder",
+      "start": 12,
+      "end": 12,
+      "batches": 28,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 414374,
+      "context_bytes": 19431,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 28,
+        "consolidation": {},
+        "payload_bytes": 421041,
+        "context_bytes": 26098,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019ff130-3981-7ec0-8946-ccecaae4cb95",
+      "project": "benhoff/wulf-linux-config",
+      "start": 1,
+      "end": 2,
+      "batches": 17,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 255787,
+      "context_bytes": 15706,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 17,
+        "consolidation": {},
+        "payload_bytes": 262884,
+        "context_bytes": 22803,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019ff130-3981-7ec0-8946-ccecaae4cb95",
+      "project": "benhoff/wulf-linux-config",
+      "start": 1,
+      "end": 1,
+      "batches": 16,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 250131,
+      "context_bytes": 15253,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 16,
+        "consolidation": {},
+        "payload_bytes": 255372,
+        "context_bytes": 20494,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019fee7c-4e55-7840-a3ef-ccaa71502dc3",
+      "project": "benhoff/hws",
+      "start": 1,
+      "end": 1,
+      "batches": 1,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {}
+      },
+      "payload_bytes": 12594,
+      "context_bytes": 0,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 1,
+        "consolidation": {},
+        "payload_bytes": 12594,
+        "context_bytes": 0,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019fe90e-a549-7990-b87c-093d410fe51b",
+      "project": "benhoff/dev_clipboard",
+      "start": 1,
+      "end": 2,
+      "batches": 25,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 399135,
+      "context_bytes": 21173,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 27,
+        "consolidation": {},
+        "payload_bytes": 410945,
+        "context_bytes": 32531,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019fe90e-a549-7990-b87c-093d410fe51b",
+      "project": "benhoff/dev_clipboard",
+      "start": 1,
+      "end": 1,
+      "batches": 24,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 370092,
+      "context_bytes": 20062,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 25,
+        "consolidation": {},
+        "payload_bytes": 377731,
+        "context_bytes": 27475,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019fe3b7-87f2-7041-a470-63ddf43b7646",
+      "project": "benhoff/PyPasteServer",
+      "start": 1,
+      "end": 1,
+      "batches": 3,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 36825,
+      "context_bytes": 921,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 3,
+        "consolidation": {},
+        "payload_bytes": 37479,
+        "context_bytes": 1575,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019fdc82-5e0f-7c21-8c50-009d44d9b009",
+      "project": "benhoff/speech_segmentation",
+      "start": 1,
+      "end": 5,
+      "batches": 91,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1433214,
+      "context_bytes": 95867,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 98,
+        "consolidation": {},
+        "payload_bytes": 1506058,
+        "context_bytes": 165748,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019fdc82-5e0f-7c21-8c50-009d44d9b009",
+      "project": "benhoff/speech_segmentation",
+      "start": 5,
+      "end": 9,
+      "batches": 58,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 936626,
+      "context_bytes": 67425,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 62,
+        "consolidation": {},
+        "payload_bytes": 980162,
+        "context_bytes": 109926,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019fdc82-5e0f-7c21-8c50-009d44d9b009",
+      "project": "benhoff/speech_segmentation",
+      "start": 4,
+      "end": 4,
+      "batches": 56,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 923352,
+      "context_bytes": 51559,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 58,
+        "consolidation": {},
+        "payload_bytes": 935492,
+        "context_bytes": 63247,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019fcf2c-facf-7823-a5b6-1b900e70f751",
+      "project": "benhoff/background_recorder",
+      "start": 1,
+      "end": 5,
+      "batches": 50,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 760246,
+      "context_bytes": 62039,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 54,
+        "consolidation": {},
+        "payload_bytes": 832969,
+        "context_bytes": 133185,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019fcf2c-facf-7823-a5b6-1b900e70f751",
+      "project": "benhoff/background_recorder",
+      "start": 2,
+      "end": 6,
+      "batches": 40,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 615901,
+      "context_bytes": 40718,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 46,
+        "consolidation": {},
+        "payload_bytes": 674154,
+        "context_bytes": 96942,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019fcf2c-facf-7823-a5b6-1b900e70f751",
+      "project": "benhoff/background_recorder",
+      "start": 2,
+      "end": 2,
+      "batches": 34,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 524460,
+      "context_bytes": 30856,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 34,
+        "consolidation": {},
+        "payload_bytes": 531264,
+        "context_bytes": 37526,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019f7652-a60c-74b1-9573-e244ebaf863d",
+      "project": "benhoff/wulf-linux-config",
+      "start": 1,
+      "end": 5,
+      "batches": 26,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 389553,
+      "context_bytes": 60822,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 30,
+        "consolidation": {},
+        "payload_bytes": 481563,
+        "context_bytes": 147870,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019f7652-a60c-74b1-9573-e244ebaf863d",
+      "project": "benhoff/wulf-linux-config",
+      "start": 28,
+      "end": 32,
+      "batches": 12,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 54
+      },
+      "payload_bytes": 171195,
+      "context_bytes": 24250,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 24,
+        "consolidation": {},
+        "payload_bytes": 385723,
+        "context_bytes": 231466,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019f7652-a60c-74b1-9573-e244ebaf863d",
+      "project": "benhoff/wulf-linux-config",
+      "start": 22,
+      "end": 22,
+      "batches": 16,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 257562,
+      "context_bytes": 16895,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 16,
+        "consolidation": {},
+        "payload_bytes": 259064,
+        "context_bytes": 18397,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019dd150-dbc6-7773-b486-b293aa348f9b",
+      "project": "arch/codex_viewer",
+      "start": 1,
+      "end": 1,
+      "batches": 31,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 486728,
+      "context_bytes": 24153,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 32,
+        "consolidation": {},
+        "payload_bytes": 500173,
+        "context_bytes": 36823,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019dd44e-4e7b-7823-955c-480b308d0902",
+      "project": "benhoff/background_recorder",
+      "start": 1,
+      "end": 1,
+      "batches": 18,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 294605,
+      "context_bytes": 10422,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 18,
+        "consolidation": {},
+        "payload_bytes": 299565,
+        "context_bytes": 15382,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019db780-fa98-7c70-a378-0c343da5cae1",
+      "project": "benhoff/wulf-linux-config",
+      "start": 1,
+      "end": 1,
+      "batches": 34,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 538897,
+      "context_bytes": 28762,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 35,
+        "consolidation": {},
+        "payload_bytes": 549672,
+        "context_bytes": 39311,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019a2d2b-63a5-76e3-b7bb-4c2f06d56bd4",
+      "project": "benhoff/background_recorder",
+      "start": 1,
+      "end": 5,
+      "batches": 26,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 385683,
+      "context_bytes": 26715,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 29,
+        "consolidation": {},
+        "payload_bytes": 435879,
+        "context_bytes": 76233,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019a2d2b-63a5-76e3-b7bb-4c2f06d56bd4",
+      "project": "benhoff/background_recorder",
+      "start": 7,
+      "end": 11,
+      "batches": 19,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 301395,
+      "context_bytes": 32406,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 22,
+        "consolidation": {},
+        "payload_bytes": 331834,
+        "context_bytes": 62167,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019a2d2b-63a5-76e3-b7bb-4c2f06d56bd4",
+      "project": "benhoff/background_recorder",
+      "start": 11,
+      "end": 11,
+      "batches": 15,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 235293,
+      "context_bytes": 9009,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 15,
+        "consolidation": {},
+        "payload_bytes": 235262,
+        "context_bytes": 8978,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019dad75-071e-72e0-8275-a21906c39959",
+      "project": "nanopct6-lts/codex_viewer",
+      "start": 1,
+      "end": 5,
+      "batches": 45,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 696327,
+      "context_bytes": 49683,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 49,
+        "consolidation": {},
+        "payload_bytes": 770196,
+        "context_bytes": 122648,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019dad75-071e-72e0-8275-a21906c39959",
+      "project": "nanopct6-lts/codex_viewer",
+      "start": 71,
+      "end": 75,
+      "batches": 39,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 557022,
+      "context_bytes": 46575,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 41,
+        "consolidation": {},
+        "payload_bytes": 624766,
+        "context_bytes": 113867,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019dad75-071e-72e0-8275-a21906c39959",
+      "project": "nanopct6-lts/codex_viewer",
+      "start": 18,
+      "end": 18,
+      "batches": 89,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1380875,
+      "context_bytes": 84516,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 93,
+        "consolidation": {},
+        "payload_bytes": 1429371,
+        "context_bytes": 131947,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019c1090-88e8-7bb0-a964-d99d03a0b944",
+      "project": "princess/swdev",
+      "start": 1,
+      "end": 1,
+      "batches": 1,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {}
+      },
+      "payload_bytes": 14324,
+      "context_bytes": 0,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 1,
+        "consolidation": {},
+        "payload_bytes": 14324,
+        "context_bytes": 0,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "019d5486-147c-7ef2-a4ed-95dd0999e8fc",
+      "project": "my-laptop/home-thermal-forecast",
+      "start": 1,
+      "end": 5,
+      "batches": 35,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 517153,
+      "context_bytes": 30876,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 37,
+        "consolidation": {},
+        "payload_bytes": 567452,
+        "context_bytes": 80016,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019d5486-147c-7ef2-a4ed-95dd0999e8fc",
+      "project": "my-laptop/home-thermal-forecast",
+      "start": 75,
+      "end": 79,
+      "batches": 45,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 672579,
+      "context_bytes": 51788,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 50,
+        "consolidation": {},
+        "payload_bytes": 752009,
+        "context_bytes": 130088,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019d5486-147c-7ef2-a4ed-95dd0999e8fc",
+      "project": "my-laptop/home-thermal-forecast",
+      "start": 41,
+      "end": 41,
+      "batches": 84,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1218387,
+      "context_bytes": 45765,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 85,
+        "consolidation": {},
+        "payload_bytes": 1232223,
+        "context_bytes": 59375,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019d3ede-3766-7a80-8a0a-b7e94bf50bca",
+      "project": "benhoff/hws",
+      "start": 1,
+      "end": 5,
+      "batches": 62,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 906447,
+      "context_bytes": 124943,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "error": "This task needs more than 100 batches with task context. Select fewer turns."
+      }
+    },
+    {
+      "session_id": "019d3ede-3766-7a80-8a0a-b7e94bf50bca",
+      "project": "benhoff/hws",
+      "start": 133,
+      "end": 137,
+      "batches": 4,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 72286,
+      "context_bytes": 5559,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 8,
+        "consolidation": {},
+        "payload_bytes": 87958,
+        "context_bytes": 20335,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019d3ede-3766-7a80-8a0a-b7e94bf50bca",
+      "project": "benhoff/hws",
+      "start": 81,
+      "end": 81,
+      "batches": 14,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 243853,
+      "context_bytes": 9765,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 14,
+        "consolidation": {},
+        "payload_bytes": 246457,
+        "context_bytes": 12369,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019c9eb1-5424-7e83-b6e6-2085b83f128f",
+      "project": "benhoff/background_recorder",
+      "start": 1,
+      "end": 5,
+      "batches": 41,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 780
+      },
+      "payload_bytes": 677503,
+      "context_bytes": 135112,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 75,
+        "consolidation": {},
+        "payload_bytes": 1305945,
+        "context_bytes": 747786,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019c9eb1-5424-7e83-b6e6-2085b83f128f",
+      "project": "benhoff/background_recorder",
+      "start": 61,
+      "end": 65,
+      "batches": 21,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 26
+      },
+      "payload_bytes": 318649,
+      "context_bytes": 25015,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 31,
+        "consolidation": {},
+        "payload_bytes": 476346,
+        "context_bytes": 176342,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019c9eb1-5424-7e83-b6e6-2085b83f128f",
+      "project": "benhoff/background_recorder",
+      "start": 20,
+      "end": 20,
+      "batches": 68,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 2,
+        "bytes_removed": 10394,
+        "rules": {
+          "legacy_transport": 2,
+          "exact_repeat": 2
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1027732,
+      "context_bytes": 84459,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 71,
+        "consolidation": {},
+        "payload_bytes": 1107633,
+        "context_bytes": 151585,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019c66d3-6d68-7212-ba1b-bafb24c19252",
+      "project": "benhoff/background_recorder",
+      "start": 1,
+      "end": 5,
+      "batches": 51,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 791465,
+      "context_bytes": 57995,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 54,
+        "consolidation": {},
+        "payload_bytes": 872455,
+        "context_bytes": 136937,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019c66d3-6d68-7212-ba1b-bafb24c19252",
+      "project": "benhoff/background_recorder",
+      "start": 75,
+      "end": 79,
+      "batches": 20,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 311433,
+      "context_bytes": 22207,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 25,
+        "consolidation": {},
+        "payload_bytes": 355485,
+        "context_bytes": 63763,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019c66d3-6d68-7212-ba1b-bafb24c19252",
+      "project": "benhoff/background_recorder",
+      "start": 39,
+      "end": 39,
+      "batches": 27,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 432174,
+      "context_bytes": 22469,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 27,
+        "consolidation": {},
+        "payload_bytes": 443973,
+        "context_bytes": 34268,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019b5c62-8c92-7482-b7cd-a81590946183",
+      "project": "benhoff/wulf-linux-config",
+      "start": 1,
+      "end": 1,
+      "batches": 1,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {}
+      },
+      "payload_bytes": 3194,
+      "context_bytes": 0,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 1,
+        "consolidation": {},
+        "payload_bytes": 3194,
+        "context_bytes": 0,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    },
+    {
+      "session_id": "0199b53e-4126-7803-ac55-272b0ebaa35e",
+      "project": "my-laptop/linkedin-content",
+      "start": 1,
+      "end": 2,
+      "batches": 5,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 62763,
+      "context_bytes": 16195,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 7,
+        "consolidation": {},
+        "payload_bytes": 117731,
+        "context_bytes": 69595,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "0199b53e-4126-7803-ac55-272b0ebaa35e",
+      "project": "my-laptop/linkedin-content",
+      "start": 2,
+      "end": 2,
+      "batches": 3,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 40318,
+      "context_bytes": 9996,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 4,
+        "consolidation": {},
+        "payload_bytes": 71271,
+        "context_bytes": 40165,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019d9e61-d689-7b52-8f71-1be9a780be47",
+      "project": "nanopct6-lts/codex_viewer",
+      "start": 1,
+      "end": 5,
+      "batches": 46,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 751939,
+      "context_bytes": 59504,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 51,
+        "consolidation": {},
+        "payload_bytes": 822333,
+        "context_bytes": 128638,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019d9e61-d689-7b52-8f71-1be9a780be47",
+      "project": "nanopct6-lts/codex_viewer",
+      "start": 242,
+      "end": 246,
+      "batches": 31,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 4,
+        "bytes_removed": 23023,
+        "rules": {
+          "legacy_transport": 3,
+          "exact_repeat": 4
+        },
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 499446,
+      "context_bytes": 50962,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 39,
+        "consolidation": {},
+        "payload_bytes": 613455,
+        "context_bytes": 135292,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019d9e61-d689-7b52-8f71-1be9a780be47",
+      "project": "nanopct6-lts/codex_viewer",
+      "start": 230,
+      "end": 230,
+      "batches": 74,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 1132165,
+      "context_bytes": 49078,
+      "dialogue_excerpted_at_synthesis": true,
+      "baseline": {
+        "batches": 74,
+        "consolidation": {},
+        "payload_bytes": 1145278,
+        "context_bytes": 62191,
+        "dialogue_excerpted_at_synthesis": true
+      }
+    },
+    {
+      "session_id": "019af4e5-e095-7dd2-9665-a0f60737902c",
+      "project": "nanopct6-lts/wulf_linux_config_bare",
+      "start": 1,
+      "end": 1,
+      "batches": 3,
+      "consolidation": {
+        "version": "evidence-consolidation-v1",
+        "changed_events": 0,
+        "bytes_removed": 0,
+        "rules": {},
+        "diagnostic_lines_separated": 0
+      },
+      "payload_bytes": 54101,
+      "context_bytes": 7367,
+      "dialogue_excerpted_at_synthesis": false,
+      "baseline": {
+        "batches": 4,
+        "consolidation": {},
+        "payload_bytes": 66173,
+        "context_bytes": 19215,
+        "dialogue_excerpted_at_synthesis": false
+      }
+    }
+  ]
+}
