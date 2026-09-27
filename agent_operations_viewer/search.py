@@ -1606,6 +1606,7 @@ def search_turn_hits_raw(
     facets: str | Sequence[str] | None = None,
     project_access: ProjectAccessContext | None = None,
     exclude_session_ids: Sequence[str] = (),
+    show_approval_reviews: bool = True,
 ) -> dict[str, Any]:
     """Return search-domain data without HTML or route-specific links."""
 
@@ -1671,6 +1672,9 @@ def search_turn_hits_raw(
         project_access=project_access,
         exclude_session_ids=exclude_session_ids,
     )
+    if not show_approval_reviews:
+        from .approval_reviews import HIDE_APPROVAL_REVIEWS_SQL
+        base_conditions.append(HIDE_APPROVAL_REVIEWS_SQL)
     coverage = _search_coverage(
         connection,
         base_conditions=base_conditions,

@@ -101,7 +101,7 @@ from ..auth import (
     safe_next_path,
     set_password_session,
 )
-from ..context import get_app_context, request_return_to
+from ..context import APPROVAL_REVIEWS_COOKIE, approval_reviews_visible, get_app_context, request_return_to
 from ..forms import parse_form_fields
 
 
@@ -1273,6 +1273,19 @@ async def action_queue_action(request: Request) -> Response:
     )
 
 
+@router.post("/preferences/approval-reviews")
+async def set_approval_reviews_preference(request: Request) -> RedirectResponse:
+    fields = await parse_form_fields(request)
+    response = RedirectResponse(url=safe_next_path(fields.get("return_to")), status_code=303)
+    response.set_cookie(
+        APPROVAL_REVIEWS_COOKIE, "1" if fields.get("show") == "1" else "0",
+        max_age=60 * 60 * 24 * 365, httponly=True, samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
 @router.get("/", response_class=HTMLResponse)
 def index(
     request: Request,
@@ -1294,11 +1307,13 @@ def index(
             auth_user=getattr(request.state, "auth_user", None),
             auth_enabled=bool(getattr(request.state, "auth_enabled", False)),
         )
-        catalog = project_catalog(connection, project_access)
+        show_approval_reviews = approval_reviews_visible(request)
+        catalog = project_catalog(connection, project_access, show_approval_reviews=show_approval_reviews)
         all_rows = catalog.rows
         has_filters = bool((q or "").strip() or (host or "").strip())
         rows = (
-            query_group_rows(connection, q=q, host=host, project_access=project_access)
+            query_group_rows(connection, q=q, host=host, project_access=project_access,
+                             show_approval_reviews=show_approval_reviews)
             if has_filters
             else all_rows
         )
@@ -1307,7 +1322,9 @@ def index(
             [row["id"] for row in rows],
             hot_window_start,
         )
-        repo_groups = build_grouped_projects(rows, route_rows=all_rows) if has_filters else catalog.groups
+        repo_groups = build_grouped_projects(
+            rows, route_rows=project_catalog(connection, project_access).rows,
+        ) if has_filters else catalog.groups
         stats = dashboard_stats(rows) if has_filters else dict(catalog.stats)
         stats["turns_today"] = count_session_turn_prompts_since(
             connection,
@@ -1407,6 +1424,7 @@ def search_results(
             page=page or 1,
             page_size=context.settings.page_size,
             project_access=project_access,
+            show_approval_reviews=approval_reviews_visible(request),
         )
 
     return context.templates.TemplateResponse(

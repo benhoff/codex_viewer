@@ -49,6 +49,7 @@
         <a href="{{ files_href }}" class="border-b-2 border-transparent pb-3 text-stone-500 hover:text-stone-900">Files</a>
         <a href="{{ environment_href }}" class="border-b-2 border-transparent pb-3 text-stone-500 hover:text-stone-900">Environment</a>
       </nav>
+      {% include "_approval_reviews_toggle.html" %}
     </header>
 
     {% if project_view == 'sessions' %}

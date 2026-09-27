@@ -35,3 +35,19 @@ def get_templates(request: Request) -> Jinja2Templates:
 
 def request_return_to(request: Request) -> str:
     return str(request.url.path) + (f"?{request.url.query}" if request.url.query else "")
+
+
+APPROVAL_REVIEWS_COOKIE = "aov_show_approval_reviews"
+
+
+def approval_reviews_visible(request: Request) -> bool:
+    return request.cookies.get(APPROVAL_REVIEWS_COOKIE) == "1"
+
+
+def approval_reviews_return_to(request: Request) -> str:
+    # Restart pagination when the visible result set changes; keep search/view.
+    from starlette.datastructures import QueryParams
+
+    query = QueryParams([(k, v) for k, v in request.query_params.multi_items()
+                         if k not in {"page", "sessions_page", "turns_page"}])
+    return request.url.path + (f"?{query}" if query else "")

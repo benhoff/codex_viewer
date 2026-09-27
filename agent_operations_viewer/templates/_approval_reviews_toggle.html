@@ -1,0 +1,8 @@
+{% set showing_approval_reviews = approval_reviews_visible(request) %}
+<form method="post" action="/preferences/approval-reviews" class="mt-3">
+  <input type="hidden" name="return_to" value="{{ approval_reviews_return_to(request) }}">
+  <input type="hidden" name="show" value="{{ '0' if showing_approval_reviews else '1' }}">
+  <button type="submit" role="switch" aria-checked="{{ 'true' if showing_approval_reviews else 'false' }}" class="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 hover:bg-stone-50">
+    <span aria-hidden="true">{{ '☑' if showing_approval_reviews else '☐' }}</span> Show approval reviews
+  </button>
+</form>

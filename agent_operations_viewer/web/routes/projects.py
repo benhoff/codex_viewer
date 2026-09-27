@@ -34,7 +34,7 @@ from ...projects import (
 from ...saved_turns import count_saved_turns_by_status, owner_scope_from_request
 from ...turn_index import reindex_session_turn_search_for_project_keys
 from ..auth import require_admin_user
-from ..context import get_app_context, request_return_to
+from ..context import approval_reviews_visible, get_app_context, request_return_to
 from ..forms import parse_form_fields
 
 
@@ -73,6 +73,7 @@ def render_group_detail(
             project_access=project_access,
             view=view,
             detail_href=detail_path,
+            show_approval_reviews=approval_reviews_visible(request),
         )
         if detail is None:
             raise HTTPException(status_code=404, detail="Project group not found")
@@ -89,6 +90,7 @@ def render_group_detail(
             group_key=key,
             detail_href_override=detail_path,
             session_ids=detail["session_ids"],
+            show_approval_reviews=approval_reviews_visible(request),
         ) if view != "sessions" else None
 
     return context.templates.TemplateResponse(
@@ -467,6 +469,7 @@ def group_stream_legacy(request: Request, owner_slug: str, project_slug: str, pa
             page=page,
             group_key=group_key,
             detail_href_override=str(request.url.path).rsplit("/stream", 1)[0],
+            show_approval_reviews=approval_reviews_visible(request),
         )
     return context.templates.TemplateResponse(
         request,
@@ -674,6 +677,7 @@ def group_stream(request: Request, owner_slug: str, project_slug: str, page: int
             page=page,
             group_key=group_key,
             detail_href_override=str(request.url.path).rsplit("/stream", 1)[0],
+            show_approval_reviews=approval_reviews_visible(request),
         )
     return context.templates.TemplateResponse(
         request,

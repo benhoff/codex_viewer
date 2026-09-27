@@ -11,6 +11,14 @@ It is optimized for the shortest path to useful output:
 - no `.env` file is required for first run
 - no token or agent daemon is required for first run
 
+Project browsing, session lists, turn timelines, and web search hide Codex approval
+review sessions by default. **Show approval reviews** restores them and remembers
+the choice in this browser. Detection uses the exact session metadata markers
+`thread_source: "guardian_review"` or `source.subagent.other: "guardian"`, not prompt
+text. Existing imports are classified on the next server startup; new imports and
+metadata updates are classified automatically. Raw history, direct session links,
+saved assessments, exports, and the search API remain available and unchanged.
+
 Design notes:
 
 - [Task cost and configuration assessment](docs/task-assessment-spec.md)

@@ -14,7 +14,7 @@ from ..projects import build_project_access_context
 from ..saved_turns import count_saved_turns, owner_scope_from_request
 from ..session_view import full_timestamp, humanize_timestamp
 from ..text_utils import shorten
-from .context import get_app_context
+from .context import approval_reviews_return_to, approval_reviews_visible, get_app_context
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
@@ -44,6 +44,8 @@ def build_templates(app_version: str) -> Jinja2Templates:
     env.filters["render_markdown"] = render_markdown
     env.filters["render_command_markup"] = render_command_markup
     env.globals["review_queue_open_count"] = review_queue_open_count
+    env.globals["approval_reviews_visible"] = approval_reviews_visible
+    env.globals["approval_reviews_return_to"] = approval_reviews_return_to
     env.globals["static_asset_url"] = (
         lambda request, path: versioned_static_url(request, path, app_version)
     )

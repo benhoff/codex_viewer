@@ -1598,8 +1598,12 @@ def query_group_rows(
     host: str | None = None,
     *,
     project_access: ProjectAccessContext | None = None,
+    show_approval_reviews: bool = True,
 ) -> list[sqlite3.Row]:
     conditions = []
+    if not show_approval_reviews:
+        from .approval_reviews import HIDE_APPROVAL_REVIEWS_SQL
+        conditions.append(HIDE_APPROVAL_REVIEWS_SQL)
     params: list[Any] = []
 
     if q:
@@ -1677,6 +1681,7 @@ def search_turn_hits(
     page: int = 1,
     page_size: int = 20,
     project_access: ProjectAccessContext | None = None,
+    show_approval_reviews: bool = False,
 ) -> dict[str, Any]:
     from .search import search_turn_hits_raw
 
@@ -1686,6 +1691,7 @@ def search_turn_hits(
         page=page,
         page_size=max(10, min(int(page_size or 20), 100)),
         project_access=project_access,
+        show_approval_reviews=show_approval_reviews,
     )
     href_by_group = resolve_project_detail_hrefs(
         connection,
@@ -1741,6 +1747,7 @@ def fetch_turn_stream(
     group_key: str | None = None,
     detail_href_override: str | None = None,
     session_ids: list[str] | None = None,
+    show_approval_reviews: bool = False,
 ) -> dict[str, Any]:
     normalized_page = max(int(page or 1), 1)
     normalized_page_size = max(10, min(int(page_size or 40), 100))
@@ -1748,6 +1755,8 @@ def fetch_turn_stream(
 
     params: list[Any] = []
     extra_conditions: list[str] = []
+    if not show_approval_reviews:
+        extra_conditions.append('s.is_approval_review = 0')
     normalized_group_key = trimmed(group_key)
     if normalized_group_key:
         extra_conditions.append(GROUP_KEY_MATCH_SQL)
