@@ -5,9 +5,10 @@ import hashlib
 import json
 import logging
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -41,7 +42,21 @@ class RemoteSyncError(RuntimeError):
 
 
 class RemoteSyncBusyError(RemoteSyncError):
-    pass
+    def __init__(self, message: str, retry_after_seconds: float = 5):
+        super().__init__(message)
+        self.retry_after_seconds = max(0, retry_after_seconds)
+        self.completed_outcomes = []
+
+
+def _retry_after_seconds(value: str | None) -> float:
+    try:
+        return max(0, float(value))
+    except (TypeError, ValueError):
+        try:
+            return max(0, (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return 5
+
 
 
 class RestartRequired(RuntimeError):
@@ -203,7 +218,8 @@ def json_request(
         detail = exc.read().decode("utf-8", errors="replace")
         if exc.code in {429, 503}:
             raise RemoteSyncBusyError(
-                f"Remote sync server is busy: {exc.code} {detail}"
+                f"Remote sync server is busy: {exc.code} {detail}",
+                retry_after_seconds=_retry_after_seconds(exc.headers.get("Retry-After") if exc.headers else None),
             ) from exc
         raise RemoteSyncError(f"Remote sync request failed: {exc.code} {detail}") from exc
     except TimeoutError as exc:
@@ -704,6 +720,9 @@ def _upload_prepared_chunk(
     for item in chunk:
         try:
             outcomes.append(_upload_one_prepared(settings, item))
+        except RemoteSyncBusyError as exc:
+            exc.completed_outcomes = outcomes
+            raise
         except Exception as exc:
             outcomes.append(
                 UploadOutcome(
@@ -734,10 +753,11 @@ def sync_sessions_remote(
     force: bool = False,
     *,
     candidate_paths: list[Path] | None = None,
-) -> dict[str, int]:
+) -> dict[str, int | float]:
     logger = logging.getLogger("agent_operations_viewer.remote_sync")
     manifest, ignored_keys, server_meta, actions = ({}, set(), {}, {}) if force else fetch_remote_manifest(settings)
     uploaded = 0
+    busy_retry_after = None
     skipped = 0
     failed = 0
     last_failed_source_path: str | None = None
@@ -1057,9 +1077,13 @@ def sync_sessions_remote(
                             batch_uploads_enabled=batch_uploads_enabled,
                         )
                     except RemoteSyncBusyError as exc:
+                        busy_retry_after = exc.retry_after_seconds
+                        completed = exc.completed_outcomes
+                        if completed:
+                            chunk_results.append((chunk[:len(completed)], completed, None))
                         deferred = [
                             item
-                            for remaining_chunk in chunks[chunk_index:]
+                            for remaining_chunk in [chunk[len(completed):], *chunks[chunk_index + 1:]]
                             for item in remaining_chunk
                         ]
                         summary = exception_summary(exc)
@@ -1078,24 +1102,42 @@ def sync_sessions_remote(
                     else:
                         chunk_results.append((chunk, outcomes, None))
             else:
+                # Only keep a bounded set of requests submitted. Once one
+                # reports backpressure, finish those already started and leave
+                # the remaining files for a later pass.
+                remaining = iter(chunks)
                 with ThreadPoolExecutor(max_workers=settings.remote_upload_workers) as executor:
-                    future_map = {
-                        executor.submit(
-                            _upload_prepared_chunk,
-                            settings,
-                            chunk,
-                            batch_uploads_enabled=batch_uploads_enabled,
-                        ): chunk
-                        for chunk in chunks
-                    }
-                    for future in as_completed(future_map):
-                        chunk = future_map[future]
-                        try:
-                            outcomes = future.result()
-                        except Exception as exc:
-                            chunk_results.append((chunk, None, exc))
-                        else:
-                            chunk_results.append((chunk, outcomes, None))
+                    pending = {}
+                    def submit_next():
+                        chunk = next(remaining, None)
+                        if chunk is not None:
+                            future = executor.submit(_upload_prepared_chunk, settings, chunk,
+                                                     batch_uploads_enabled=batch_uploads_enabled)
+                            pending[future] = chunk
+                    for _ in range(min(settings.remote_upload_workers, len(chunks))):
+                        submit_next()
+                    while pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        for future in done:
+                            chunk = pending.pop(future)
+                            try:
+                                outcomes = future.result()
+                            except RemoteSyncBusyError as exc:
+                                busy_retry_after = max(busy_retry_after or 0, exc.retry_after_seconds)
+                                completed = exc.completed_outcomes
+                                if completed:
+                                    chunk_results.append((chunk[:len(completed)], completed, None))
+                                chunk_results.append((chunk[len(completed):], None, exc))
+                            except Exception as exc:
+                                chunk_results.append((chunk, None, exc))
+                            else:
+                                chunk_results.append((chunk, outcomes, None))
+                        if busy_retry_after is None:
+                            for _ in done:
+                                submit_next()
+                    if busy_retry_after is not None:
+                        for chunk in remaining:
+                            chunk_results.append((chunk, None, RemoteSyncBusyError("Deferred while viewer is busy", busy_retry_after)))
 
             for chunk, outcomes, upload_error in chunk_results:
                 if upload_error is not None:
@@ -1179,4 +1221,6 @@ def sync_sessions_remote(
         acknowledged_raw_resend_token=raw_resend_token if raw_resend_token and failed == 0 else None,
         last_raw_resend_at=sync_completed_at if raw_resend_token and failed == 0 else None,
     )
+    if busy_retry_after is not None:
+        stats["retry_after_seconds"] = busy_retry_after
     return stats

@@ -14,10 +14,11 @@ from ..config import Settings
 from ..db import connection_scope, init_db, run_db_backfills
 from ..importer import sync_sessions
 from ..local_auth import fetch_auth_status
+from ..session_artifacts import prune_orphaned_session_artifacts
 from ..saved_turns import migrate_global_saved_turns_to_owner
 from ..server_settings import apply_server_settings
 from .auth import install_auth
-from .concurrency import WorkQueueFull
+from .concurrency import UploadAdmissionMiddleware, WorkQueueFull
 from .context import AppContext, set_app_context
 from .routes.machine_pairing import router as machine_pairing_router
 from .routes.pages import router as pages_router
@@ -67,6 +68,15 @@ def _start_post_startup_maintenance(settings: Settings) -> threading.Thread:
     return worker
 
 
+def _run_artifact_maintenance(settings: Settings, stop: threading.Event) -> None:
+    # A full disk walk belongs in infrequent maintenance, not every upload.
+    while not stop.wait(3600):
+        try:
+            prune_orphaned_session_artifacts(settings)
+        except Exception:
+            logger.exception("Artifact maintenance failed")
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -108,6 +118,7 @@ def create_app(
         )
 
     install_auth(app, app_settings)
+    app.add_middleware(UploadAdmissionMiddleware)
     templates = build_templates(app_settings.app_version)
     set_app_context(app, AppContext(settings=app_settings, templates=templates))
 
@@ -124,6 +135,18 @@ def create_app(
         app.state.post_startup_maintenance_thread = _start_post_startup_maintenance(
             app_settings
         )
+        app.state.artifact_maintenance_stop = threading.Event()
+        app.state.artifact_maintenance_thread = threading.Thread(
+            target=_run_artifact_maintenance,
+            args=(app_settings, app.state.artifact_maintenance_stop),
+            name="artifact-maintenance", daemon=True,
+        )
+        app.state.artifact_maintenance_thread.start()
+
+    @app.on_event("shutdown")
+    def stop_artifact_maintenance() -> None:
+        app.state.artifact_maintenance_stop.set()
+        app.state.artifact_maintenance_thread.join(timeout=1)
 
     app.include_router(pages_router)
     app.include_router(search_api_router)

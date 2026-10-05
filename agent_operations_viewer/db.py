@@ -104,6 +104,7 @@ SESSION_ARTIFACT_COLUMN_DEFS = {
     "stored_size": "INTEGER NOT NULL DEFAULT 0",
     "created_at": "TEXT NOT NULL",
     "updated_at": "TEXT NOT NULL",
+    "base_artifact_sha256": "TEXT",
 }
 
 REMOTE_AGENT_COLUMN_DEFS = {
@@ -670,6 +671,7 @@ CREATE TABLE IF NOT EXISTS server_settings (
 
 CREATE TABLE IF NOT EXISTS session_artifacts (
     sha256 TEXT PRIMARY KEY,
+    base_artifact_sha256 TEXT,
     storage_path TEXT NOT NULL,
     media_type TEXT NOT NULL DEFAULT 'application/x-ndjson',
     text_encoding TEXT NOT NULL DEFAULT 'utf-8',
@@ -988,12 +990,6 @@ BEGIN
       AND chunk_id = OLD.chunk_id;
 END;
 
-DROP TRIGGER IF EXISTS session_turn_search_delete_session;
-CREATE TRIGGER session_turn_search_delete_session
-AFTER DELETE ON sessions
-BEGIN
-    DELETE FROM session_turn_search WHERE session_id = OLD.id;
-END;
 """
 
 INDEX_SQL = """
@@ -1737,6 +1733,7 @@ def ensure_search_index_schema(connection: sqlite3.Connection) -> None:
         "turn_number",
     }
     if not required_turn_columns <= table_columns(connection, "session_turn_search"):
+        connection.execute("DROP TABLE IF EXISTS session_turn_search_rows")
         connection.execute("DROP TABLE IF EXISTS session_turn_search")
         connection.execute(
             """
@@ -1757,6 +1754,42 @@ def ensure_search_index_schema(connection: sqlite3.Connection) -> None:
         connection.execute(
             "UPDATE sessions SET turn_search_version = 0, search_indexed_at = NULL"
         )
+
+    # FTS metadata fields are UNINDEXED. Keep a small B-tree mapping so
+    # replacing one session never scans every stored search document.
+    if not table_exists(connection, "session_turn_search_rows"):
+        connection.execute("""
+            CREATE TABLE session_turn_search_rows (
+                search_rowid INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                turn_number INTEGER NOT NULL
+            )
+        """)
+        connection.execute("""
+            INSERT INTO session_turn_search_rows
+            SELECT rowid, session_id, CAST(turn_number AS INTEGER)
+            FROM session_turn_search
+        """)
+    connection.execute("""
+        CREATE INDEX IF NOT EXISTS idx_turn_search_rows_session_turn
+        ON session_turn_search_rows(session_id, turn_number)
+    """)
+    connection.execute("""
+        CREATE TRIGGER IF NOT EXISTS session_turn_search_rows_delete_fts
+        AFTER DELETE ON session_turn_search_rows
+        BEGIN
+            DELETE FROM session_turn_search WHERE rowid = OLD.search_rowid;
+        END
+    """)
+
+    connection.execute("DROP TRIGGER IF EXISTS session_turn_search_delete_session")
+    connection.execute("""
+        CREATE TRIGGER session_turn_search_delete_session
+        AFTER DELETE ON sessions
+        BEGIN
+            DELETE FROM session_turn_search_rows WHERE session_id = OLD.id;
+        END
+    """)
 
     chunk_schema_row = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'session_search_chunks'"

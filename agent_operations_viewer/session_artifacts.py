@@ -73,13 +73,15 @@ def store_session_artifact(
     artifact_sha256 = hashlib.sha256(raw_bytes).hexdigest()
     storage_path = artifact_storage_path(artifact_sha256)
     absolute_path = absolute_artifact_path(settings, storage_path)
+    existing = fetch_session_artifact(connection, artifact_sha256)
+    if existing is not None and absolute_path.exists():
+        return artifact_sha256
     compressed_payload = gzip.compress(raw_bytes, compresslevel=6)
     now = utc_now_iso()
 
     if not absolute_path.exists():
         _write_artifact_file(absolute_path, compressed_payload)
 
-    existing = fetch_session_artifact(connection, artifact_sha256)
     if existing is None:
         connection.execute(
             """
@@ -112,6 +114,7 @@ def store_session_artifact(
             """
             UPDATE session_artifacts
             SET
+                base_artifact_sha256 = NULL,
                 storage_path = ?,
                 media_type = ?,
                 text_encoding = ?,
@@ -135,6 +138,64 @@ def store_session_artifact(
     return artifact_sha256
 
 
+def store_session_artifact_tail(
+    connection: sqlite3.Connection,
+    settings: Settings,
+    *,
+    base_sha256: str,
+    tail_jsonl: str,
+    combined_sha256: str,
+    original_size: int,
+) -> str:
+    """Store only the append; immutable ancestors remain shared and readable."""
+    existing = fetch_session_artifact(connection, combined_sha256)
+    if existing is not None:
+        return combined_sha256
+    base = fetch_session_artifact(connection, base_sha256)
+    if base is None:
+        raise ValueError("Missing base artifact")
+    compressed = gzip.compress(tail_jsonl.encode(ARTIFACT_TEXT_ENCODING), compresslevel=6)
+    storage_path = artifact_storage_path(combined_sha256)
+    # Replace a possible file left by a rolled-back full import of the same
+    # digest: the database row determines whether this is a full file or tail.
+    _write_artifact_file(absolute_artifact_path(settings, storage_path), compressed)
+    now = utc_now_iso()
+    connection.execute("""
+        INSERT INTO session_artifacts (
+            sha256, base_artifact_sha256, storage_path, original_size,
+            stored_size, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (combined_sha256, base_sha256, storage_path, original_size,
+          int(base["stored_size"]) + len(compressed), now, now))
+    return combined_sha256
+
+
+def _artifact_chain(connection, artifact_sha256):
+    chain, seen = [], set()
+    current = artifact_sha256
+    while current:
+        if current in seen:
+            raise ValueError("Artifact chain contains a cycle")
+        seen.add(current)
+        artifact = fetch_session_artifact(connection, current)
+        if artifact is None:
+            return None
+        chain.append(artifact)
+        current = str(artifact["base_artifact_sha256"] or "")
+    return list(reversed(chain))
+
+
+LIVE_ARTIFACTS_SQL = """
+    WITH RECURSIVE live(sha256) AS (
+        SELECT raw_artifact_sha256 FROM sessions WHERE raw_artifact_sha256 IS NOT NULL
+        UNION
+        SELECT a.base_artifact_sha256 FROM session_artifacts a
+        JOIN live ON a.sha256 = live.sha256
+        WHERE a.base_artifact_sha256 IS NOT NULL
+    )
+"""
+
+
 def _managed_artifact_path(settings: Settings, artifact_sha256: str, storage_path: str) -> Path | None:
     normalized_sha256 = artifact_sha256.strip().lower()
     if len(normalized_sha256) != 64 or any(character not in "0123456789abcdef" for character in normalized_sha256):
@@ -148,8 +209,7 @@ def _managed_artifact_path(settings: Settings, artifact_sha256: str, storage_pat
 def prune_orphaned_session_artifacts(settings: Settings) -> int:
     """Remove raw artifacts that are not referenced by a current session.
 
-    This deliberately runs in its own write transaction after session ingestion
-    commits. Holding the write lock while unlinking prevents another writer from
+    This runs in infrequent maintenance or after a local import pass. Holding the write lock while unlinking prevents another writer from
     adopting an artifact between the reference check and file removal.
     """
     from .db import connection_scope, write_transaction
@@ -162,14 +222,9 @@ def prune_orphaned_session_artifacts(settings: Settings) -> int:
     with connection_scope(settings.database_path) as connection:
         with write_transaction(connection):
             orphan_rows = connection.execute(
-                """
-                SELECT sha256, storage_path
-                FROM session_artifacts AS artifact
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM sessions AS session
-                    WHERE session.raw_artifact_sha256 = artifact.sha256
-                )
+                LIVE_ARTIFACTS_SQL + """
+                SELECT sha256, storage_path FROM session_artifacts
+                WHERE sha256 NOT IN (SELECT sha256 FROM live)
                 """
             ).fetchall()
 
@@ -197,15 +252,9 @@ def prune_orphaned_session_artifacts(settings: Settings) -> int:
             if removable_rows:
                 before_changes = connection.total_changes
                 connection.executemany(
-                    """
-                    DELETE FROM session_artifacts
-                    WHERE sha256 = ?
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM sessions
-                          WHERE sessions.raw_artifact_sha256 = session_artifacts.sha256
-                      )
-                    """,
+                    # The same write transaction has held the writer since
+                    # selecting these orphans; no other writer can adopt them.
+                    "DELETE FROM session_artifacts WHERE sha256 = ?",
                     removable_rows,
                 )
                 removed_rows = connection.total_changes - before_changes
@@ -260,6 +309,20 @@ def prune_orphaned_session_artifacts(settings: Settings) -> int:
     return removed_rows + removed_untracked_files
 
 
+def iter_session_artifact_bytes(connection, settings, artifact_sha256):
+    """Stream immutable pieces without expanding an entire transcript in RAM."""
+    chain = _artifact_chain(connection, artifact_sha256)
+    if chain is None:
+        raise FileNotFoundError("Missing artifact ancestor")
+    for artifact in chain:
+        path = absolute_artifact_path(settings, str(artifact["storage_path"]))
+        compression = str(artifact["compression"] or "").strip().lower()
+        opener = gzip.open if compression == ARTIFACT_COMPRESSION else open
+        with opener(path, "rb") as source:
+            while block := source.read(256 * 1024):
+                yield block
+
+
 def load_session_artifact_text(
     connection: sqlite3.Connection,
     settings: Settings,
@@ -268,17 +331,11 @@ def load_session_artifact_text(
     artifact = fetch_session_artifact(connection, artifact_sha256)
     if artifact is None:
         return None
-    artifact_path = absolute_artifact_path(settings, str(artifact["storage_path"]))
-    if not artifact_path.exists():
+    try:
+        raw_bytes = b"".join(iter_session_artifact_bytes(connection, settings, artifact_sha256))
+    except FileNotFoundError:
         return None
-
-    stored_bytes = artifact_path.read_bytes()
-    compression = str(artifact["compression"] or "").strip().lower()
-    if compression == ARTIFACT_COMPRESSION:
-        raw_bytes = gzip.decompress(stored_bytes)
-    else:
-        raw_bytes = stored_bytes
-    encoding = str(artifact["text_encoding"] or ARTIFACT_TEXT_ENCODING).strip() or ARTIFACT_TEXT_ENCODING
+    encoding = str(artifact["text_encoding"] or "").strip() or ARTIFACT_TEXT_ENCODING
     return raw_bytes.decode(encoding)
 
 

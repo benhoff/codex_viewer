@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 import logging
+import random
 from pathlib import Path
 import signal
 import threading
@@ -11,7 +12,12 @@ import time
 from agent_operations_viewer.config import Settings
 
 from .file_watch import SessionFileWatcher
-from .remote_sync import RemoteSyncError, RestartRequired, sync_sessions_remote
+from .remote_sync import RemoteSyncBusyError, RemoteSyncError, RestartRequired, sync_sessions_remote
+
+
+def _busy_retry_delay(attempt: int, retry_after: float, interval: float) -> float:
+    delay = max(retry_after, min(300, max(5, interval) * 2 ** min(attempt - 1, 6)))
+    return delay + random.uniform(0, min(5, delay * 0.2))
 
 
 def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start: bool = False) -> int:
@@ -53,13 +59,21 @@ def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start:
         )
 
     first_run = True
+    busy_attempts = 0
+    cooldown_deadline = 0.0
+    rescan_pending = False
     next_sync_deadline = time.monotonic()
     try:
         while not stop_event.is_set():
+            if cooldown_deadline:
+                if stop_event.wait(max(0, cooldown_deadline - time.monotonic())):
+                    break
+                cooldown_deadline = 0.0
+                rescan_pending = True
             force = rebuild_on_start and first_run
             candidate_paths: list[Path] | None = None
 
-            if not first_run and watcher is not None and not force:
+            if not first_run and watcher is not None and not force and not rescan_pending:
                 timeout_seconds = max(0.0, next_sync_deadline - time.monotonic())
                 candidate_paths = watcher.wait_for_changes(
                     stop_event,
@@ -71,6 +85,7 @@ def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start:
                 if stop_event.wait(max(0.0, next_sync_deadline - time.monotonic())):
                     break
 
+            rescan_pending = False
             try:
                 stats = sync_sessions_remote(
                     daemon_settings,
@@ -80,6 +95,13 @@ def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start:
             except RestartRequired as exc:
                 logger.info("Agent update completed, restarting daemon: %s", exc)
                 return 75
+            except RemoteSyncBusyError as exc:
+                first_run = False
+                busy_attempts += 1
+                delay = _busy_retry_delay(busy_attempts, exc.retry_after_seconds, interval_seconds)
+                logger.warning("Viewer busy, pausing uploads for %.1fs: %s", delay, exc)
+                cooldown_deadline = next_sync_deadline = time.monotonic() + delay
+                continue
             except RemoteSyncError as exc:
                 first_run = False
                 logger.warning("Remote sync unavailable, will retry in %ss: %s", interval_seconds, exc)
@@ -93,7 +115,15 @@ def run_sync_daemon(settings: Settings, interval_seconds: int, rebuild_on_start:
 
             logger.info("Sync pass finished: %s", json.dumps(stats, sort_keys=True))
             first_run = False
-            next_sync_deadline = time.monotonic() + interval_seconds
+            retry_after = stats.get("retry_after_seconds")
+            if retry_after is not None:
+                busy_attempts += 1
+                delay = _busy_retry_delay(busy_attempts, float(retry_after), interval_seconds)
+                cooldown_deadline = next_sync_deadline = time.monotonic() + delay
+                logger.warning("Viewer busy, pausing uploads for %.1fs", delay)
+            else:
+                busy_attempts = 0
+                next_sync_deadline = time.monotonic() + interval_seconds
     finally:
         if watcher is not None:
             watcher.close()

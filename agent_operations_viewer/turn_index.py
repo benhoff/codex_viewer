@@ -1373,6 +1373,28 @@ def backfill_session_search_chunks(
     return len(session_ids)
 
 
+def _insert_session_turn_search_rows(
+    connection: sqlite3.Connection,
+    inserts: Sequence[tuple[Any, ...]],
+) -> None:
+    mapping = []
+    for values in inserts:
+        cursor = connection.execute(
+            """
+            INSERT INTO session_turn_search (
+                project_text, prompt_text, response_text, event_text,
+                command_text, path_text, commit_id_text, tool_output_text,
+                session_id, turn_number
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        mapping.append((cursor.lastrowid, values[-2], int(values[-1])))
+    connection.executemany(
+        "INSERT INTO session_turn_search_rows VALUES (?, ?, ?)", mapping
+    )
+
+
 def replace_session_turn_search(
     connection: sqlite3.Connection,
     session_id: str,
@@ -1389,7 +1411,7 @@ def replace_session_turn_search(
     )
     project_text = _session_turn_search_project_text(metadata)
     connection.execute(
-        "DELETE FROM session_turn_search WHERE session_id = ?",
+        "DELETE FROM session_turn_search_rows WHERE session_id = ?",
         (normalized_session_id,),
     )
     inserts = _session_turn_search_inserts(
@@ -1399,23 +1421,7 @@ def replace_session_turn_search(
         commit_id_text=_trimmed(_event_value(metadata, "git_commit_hash")),
     )
     if inserts:
-        connection.executemany(
-            """
-            INSERT INTO session_turn_search (
-                project_text,
-                prompt_text,
-                response_text,
-                event_text,
-                command_text,
-                path_text,
-                commit_id_text,
-                tool_output_text,
-                session_id,
-                turn_number
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            inserts,
-        )
+        _insert_session_turn_search_rows(connection, inserts)
     connection.execute(
         "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
         (TURN_SEARCH_VERSION, normalized_session_id),
@@ -1441,7 +1447,7 @@ def replace_session_turn_suffix(
 
     suffix_params = (normalized_session_id, normalized_start)
     connection.execute(
-        "DELETE FROM session_turn_search WHERE session_id = ? AND CAST(turn_number AS INTEGER) >= ?",
+        "DELETE FROM session_turn_search_rows WHERE session_id = ? AND turn_number >= ?",
         suffix_params,
     )
     connection.execute(
@@ -1469,23 +1475,7 @@ def replace_session_turn_suffix(
         commit_id_text=_trimmed(_event_value(metadata, "git_commit_hash")),
     )
     if turn_search_inserts:
-        connection.executemany(
-            """
-            INSERT INTO session_turn_search (
-                project_text,
-                prompt_text,
-                response_text,
-                event_text,
-                command_text,
-                path_text,
-                commit_id_text,
-                tool_output_text,
-                session_id,
-                turn_number
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            turn_search_inserts,
-        )
+        _insert_session_turn_search_rows(connection, turn_search_inserts)
 
     chunk_records = _session_search_chunk_records(
         normalized_session_id,
@@ -1549,7 +1539,7 @@ def backfill_session_turn_search(
     rows_by_session = _fetch_turn_search_events(connection, session_ids)
     metadata_by_session = _fetch_session_turn_search_metadata(connection, session_ids)
     connection.execute(
-        f"DELETE FROM session_turn_search WHERE session_id IN ({placeholders})",
+        f"DELETE FROM session_turn_search_rows WHERE session_id IN ({placeholders})",
         session_ids,
     )
 
@@ -1568,23 +1558,7 @@ def backfill_session_turn_search(
         )
 
     if inserts:
-        connection.executemany(
-            """
-            INSERT INTO session_turn_search (
-                project_text,
-                prompt_text,
-                response_text,
-                event_text,
-                command_text,
-                path_text,
-                commit_id_text,
-                tool_output_text,
-                session_id,
-                turn_number
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            inserts,
-        )
+        _insert_session_turn_search_rows(connection, inserts)
 
     connection.executemany(
         "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
@@ -1616,7 +1590,7 @@ def reindex_session_turn_search_for_project_keys(
     metadata_by_session = _fetch_session_turn_search_metadata(connection, session_ids)
     for session_id in session_ids:
         connection.execute(
-            "DELETE FROM session_turn_search WHERE session_id = ?",
+            "DELETE FROM session_turn_search_rows WHERE session_id = ?",
             (session_id,),
         )
         turns = compute_session_turn_index(rows_by_session.get(session_id, []))
@@ -1630,23 +1604,7 @@ def reindex_session_turn_search_for_project_keys(
             ),
         )
         if inserts:
-            connection.executemany(
-                """
-                INSERT INTO session_turn_search (
-                    project_text,
-                    prompt_text,
-                    response_text,
-                    event_text,
-                    command_text,
-                    path_text,
-                    commit_id_text,
-                    tool_output_text,
-                    session_id,
-                    turn_number
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                inserts,
-            )
+            _insert_session_turn_search_rows(connection, inserts)
         connection.execute(
             "UPDATE sessions SET turn_search_version = ? WHERE id = ?",
             (TURN_SEARCH_VERSION, session_id),

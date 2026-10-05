@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import codecs
+from dataclasses import dataclass
 import gzip
+import hashlib
 import json
 from pathlib import Path
 
@@ -20,6 +23,7 @@ from ...importer import (
     upsert_parsed_session,
 )
 from ...session_parsing import (
+    normalize_jsonl_line,
     parse_codex_session_tail_events,
     parse_session_text,
     parsed_session_from_payload,
@@ -32,8 +36,10 @@ from ...onboarding import (
 )
 from ...projects import ignored_project_keys, sync_project_registry
 from ...session_artifacts import (
+    iter_session_artifact_bytes,
     load_session_artifact_text,
-    prune_orphaned_session_artifacts,
+    raw_session_sha256,
+    store_session_artifact_tail,
     store_session_artifact,
     utc_now_iso,
 )
@@ -249,7 +255,6 @@ def _process_sync_session(
             )
             reconcile_onboarding_state(connection, settings)
 
-    prune_orphaned_session_artifacts(settings)
 
     return {
         "status": "ok",
@@ -295,7 +300,6 @@ def _process_raw_sync_session(
         with write_transaction(connection):
             results = store_raw_sync_sessions_batch(connection, settings, [(parsed, raw_jsonl)])
 
-    prune_orphaned_session_artifacts(settings)
     return results[0]
 
 
@@ -346,8 +350,6 @@ def _process_raw_sync_sessions_batch(
                     store_raw_sync_sessions_batch(connection, settings, [parsed_item])
                 )
 
-    prune_orphaned_session_artifacts(settings)
-
     return {
         "status": "ok",
         "mode": "raw_batch",
@@ -384,14 +386,17 @@ def _process_raw_sync_session_tail(
     header_host: str,
 ) -> dict[str, object]:
     with connection_scope(settings.database_path) as connection:
+        # Historical artifact reads and whole-transcript hashes do not need
+        # the SQLite writer. Revalidate the base after acquiring it below.
+        prepared_base = _prepare_tail_base(connection, settings, payload)
         with write_transaction(connection):
             result = store_raw_sync_session_tail(
                 connection,
                 settings,
                 payload,
                 header_host=header_host,
+                prepared_base=prepared_base,
             )
-    prune_orphaned_session_artifacts(settings)
     return result
 
 
@@ -431,12 +436,78 @@ def _parse_raw_sync_payload(
     return parsed, raw_jsonl
 
 
+@dataclass(frozen=True)
+class PreparedTailBase:
+    artifact_sha256: str
+    base_size: int
+    base_line_count: int
+    base_ends_newline: bool
+    content_sha256: str
+    combined_sha256: str
+
+
+def _prepare_tail_base(connection, settings, payload):
+    if not isinstance(payload.get("tail_jsonl"), str):
+        return None
+    existing = connection.execute("""
+        SELECT file_size, content_sha256, raw_artifact_sha256, raw_meta_json FROM sessions
+        WHERE source_host = ? AND source_path = ?
+    """, (str(payload.get("source_host") or ""), str(payload.get("source_path") or ""))).fetchone()
+    if existing is None or existing["file_size"] != payload.get("base_file_size") or existing["content_sha256"] != payload.get("base_content_sha256"):
+        return None
+    try:
+        if json.loads(existing["raw_meta_json"]).get("transcript_format") == "claude":
+            return None  # Claude retains the full-import compatibility path.
+    except (ValueError, AttributeError):
+        pass
+    sha = str(existing["raw_artifact_sha256"] or "")
+    if not sha:
+        return None
+    raw_hash, content_hash = hashlib.sha256(), hashlib.sha256()
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    pending = ""
+    line_count = 0
+    base_size = 0
+    last_byte = b""
+
+    def feed(block):
+        nonlocal pending, line_count
+        raw_hash.update(block)
+        lines = (pending + decoder.decode(block)).splitlines(keepends=True)
+        pending = lines.pop() if lines else ""
+        for line in lines:
+            line_count += 1
+            normalized = normalize_jsonl_line(line, line_count)
+            if normalized is not None:
+                content_hash.update(normalized.encode("utf-8"))
+
+    try:
+        for block in iter_session_artifact_bytes(connection, settings, sha):
+            base_size += len(block)
+            last_byte = block[-1:]
+            feed(block)
+    except FileNotFoundError:
+        return None
+    base_line_count = line_count + bool(pending)
+    feed(payload["tail_jsonl"].encode("utf-8"))
+    pending += decoder.decode(b"", final=True)
+    for line in pending.splitlines(keepends=True):
+        line_count += 1
+        normalized = normalize_jsonl_line(line, line_count)
+        if normalized is not None:
+            content_hash.update(normalized.encode("utf-8"))
+    return PreparedTailBase(sha, base_size, base_line_count,
+                            last_byte in (b"\n", b"\r"),
+                            content_hash.hexdigest(), raw_hash.hexdigest())
+
+
 def store_raw_sync_session_tail(
     connection,
     settings,
     payload: dict[str, object],
     *,
     header_host: str = "",
+    prepared_base: PreparedTailBase | None = None,
 ) -> dict[str, object]:
     source_host = str(payload.get("source_host") or "").strip()
     source_root = str(payload.get("source_root") or "").strip()
@@ -482,13 +553,22 @@ def store_raw_sync_session_tail(
     artifact_sha256 = str(existing["raw_artifact_sha256"] or "").strip()
     if not artifact_sha256:
         return {"status": "base_mismatch", "reason": "missing-raw-artifact"}
-    base_raw_jsonl = load_session_artifact_text(connection, settings, artifact_sha256)
-    if base_raw_jsonl is None:
-        return {"status": "base_mismatch", "reason": "missing-raw-artifact"}
-    if len(base_raw_jsonl.encode("utf-8")) != base_file_size:
+    if prepared_base is not None and prepared_base.artifact_sha256 == artifact_sha256:
+        base_size = prepared_base.base_size
+        base_line_count = prepared_base.base_line_count
+        base_ends_newline = prepared_base.base_ends_newline
+        combined_raw_jsonl = None
+    else:
+        prepared_base = None
+        base_raw_jsonl = load_session_artifact_text(connection, settings, artifact_sha256)
+        if base_raw_jsonl is None:
+            return {"status": "base_mismatch", "reason": "missing-raw-artifact"}
+        base_size = len(base_raw_jsonl.encode("utf-8"))
+        base_line_count = len(base_raw_jsonl.splitlines(keepends=True))
+        base_ends_newline = base_raw_jsonl.endswith(("\n", "\r"))
+        combined_raw_jsonl = base_raw_jsonl + tail_jsonl
+    if base_size != base_file_size:
         return {"status": "base_mismatch", "reason": "artifact-size-mismatch"}
-
-    combined_raw_jsonl = base_raw_jsonl + tail_jsonl
     try:
         raw_meta = json.loads(str(existing["raw_meta_json"] or "{}"))
     except json.JSONDecodeError:
@@ -519,7 +599,7 @@ def store_raw_sync_session_tail(
         }
 
     tail_parse_jsonl = tail_jsonl
-    if base_raw_jsonl and not base_raw_jsonl.endswith(("\n", "\r")):
+    if base_size and not base_ends_newline:
         if tail_parse_jsonl.startswith("\r\n"):
             tail_parse_jsonl = tail_parse_jsonl[2:]
         elif tail_parse_jsonl.startswith(("\n", "\r")):
@@ -528,15 +608,16 @@ def store_raw_sync_session_tail(
         tail_events = parse_codex_session_tail_events(
             tail_parse_jsonl,
             Path(source_path),
-            start_line_index=len(base_raw_jsonl.splitlines(keepends=True)),
+            start_line_index=base_line_count,
         )
     except ValueError:
         return {"status": "base_mismatch", "reason": "non-append-tail"}
-    combined_content_sha256 = session_content_sha256(combined_raw_jsonl)
-    combined_artifact_sha256 = store_session_artifact(
-        connection,
-        settings,
-        combined_raw_jsonl,
+    combined_content_sha256 = prepared_base.content_sha256 if prepared_base is not None else session_content_sha256(combined_raw_jsonl)
+    combined_sha256 = prepared_base.combined_sha256 if prepared_base is not None else raw_session_sha256(combined_raw_jsonl)
+    combined_artifact_sha256 = store_session_artifact_tail(
+        connection, settings, base_sha256=artifact_sha256,
+        tail_jsonl=tail_jsonl, combined_sha256=combined_sha256,
+        original_size=file_size,
     )
     return append_parsed_session_tail(
         connection,

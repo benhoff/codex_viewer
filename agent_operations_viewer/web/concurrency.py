@@ -10,6 +10,7 @@ from typing import Any, Callable, Hashable, TypeVar
 
 
 ResultT = TypeVar("ResultT")
+_UPLOAD_RESERVATION = contextvars.ContextVar("upload_reservation", default=None)
 
 
 class WorkQueueFull(RuntimeError):
@@ -49,7 +50,7 @@ class _BoundedWorkExecutor:
         self.max_inflight = max(1, int(max_inflight))
         self.poll_interval_seconds = max(0.01, float(poll_interval_seconds))
         self.queue: Queue[_HistoryWorkItem] = Queue(maxsize=self.max_inflight)
-        self._inflight: dict[Hashable, _HistoryWorkItem] = {}
+        self._inflight: dict[Hashable, _HistoryWorkItem | None] = {}
         self._inflight_lock = threading.Lock()
 
         for worker_index in range(max(1, int(worker_count))):
@@ -92,7 +93,10 @@ class _BoundedWorkExecutor:
         with self._inflight_lock:
             if dedupe_key is not None and inflight_key in self._inflight:
                 raise WorkQueueFull(self.name, duplicate=True)
-            if len(self._inflight) >= self.max_inflight:
+            reservation = _UPLOAD_RESERVATION.get() if self is _UPLOAD_EXECUTOR else None
+            if reservation in self._inflight and self._inflight[reservation] is None:
+                self._inflight.pop(reservation)
+            elif len(self._inflight) >= self.max_inflight:
                 raise WorkQueueFull(self.name)
             self._inflight[inflight_key] = item
             try:
@@ -182,3 +186,42 @@ async def run_in_upload_threadpool(
         dedupe_key=dedupe_key,
         **kwargs,
     )
+
+
+class UploadAdmissionMiddleware:
+    """Reserve upload capacity before auth, body reads, or decompression.
+
+    Submission transfers ownership to the worker. A disconnected request must
+    not release a slot while its database work is still running.
+    """
+
+    paths = {"/api/sync/session", "/api/sync/session-raw",
+             "/api/sync/sessions-raw", "/api/sync/session-tail"}
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "POST" or scope.get("path", "").rstrip("/") not in self.paths:
+            return await self.app(scope, receive, send)
+        reservation = object()
+        executor = _UPLOAD_EXECUTOR
+        with executor._inflight_lock:
+            busy = len(executor._inflight) >= executor.max_inflight
+            if not busy:
+                executor._inflight[reservation] = None
+        if busy:
+            from starlette.responses import JSONResponse
+            response = JSONResponse(
+                {"detail": "The session-upload work queue is at capacity", "retryable": True},
+                status_code=503, headers={"Retry-After": "5"},
+            )
+            return await response(scope, receive, send)
+        token = _UPLOAD_RESERVATION.set(reservation)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _UPLOAD_RESERVATION.reset(token)
+            with executor._inflight_lock:
+                if executor._inflight.get(reservation, False) is None:
+                    executor._inflight.pop(reservation)

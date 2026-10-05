@@ -2381,7 +2381,7 @@ class RolloutParsingTests(unittest.TestCase):
 
         batch_calls = [call for call in calls if call[1] == "/api/sync/sessions-raw"]
         single_calls = [call for call in calls if call[1] == "/api/sync/session-raw"]
-        self.assertEqual(stats, {"uploaded": 0, "skipped": 0, "failed": 3})
+        self.assertEqual(stats, {"uploaded": 0, "skipped": 0, "failed": 3, "retry_after_seconds": 5})
         self.assertEqual(len(batch_calls), 1)
         self.assertEqual(len(single_calls), 0)
 
